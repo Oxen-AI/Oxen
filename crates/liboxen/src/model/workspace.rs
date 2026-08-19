@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
 
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACES_DIR};
 use crate::model::{Commit, LocalRepository};
@@ -14,6 +15,9 @@ pub struct WorkspaceConfig {
     pub is_editable: bool,
     pub workspace_name: Option<String>,
     pub workspace_id: Option<String>,
+    /// `None` for a workspace whose config predates the server recording creation time.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub created_at: Option<OffsetDateTime>,
 }
 
 /// In-process model for workspace state. Not part of any API wire shape — use `WorkspaceView` to
@@ -30,6 +34,8 @@ pub struct Workspace {
     // .oxen/workspaces/<workspace_ id>/.oxen/WORKSPACE_CONFIG
     pub is_editable: bool,
     pub commit: Commit,
+    /// `None` for a workspace created before the server recorded creation time.
+    pub created_at: Option<OffsetDateTime>,
 }
 
 impl Workspace {
@@ -75,6 +81,7 @@ impl From<Workspace> for WorkspaceView {
             name: workspace.name,
             id: workspace.id,
             commit: workspace.commit,
+            created_at: workspace.created_at,
         }
     }
 }
@@ -86,4 +93,7 @@ pub struct WorkspaceView {
     pub name: Option<String>,
     pub id: String,
     pub commit: Commit,
+    /// `None` for a workspace created before the server recorded creation time.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub created_at: Option<OffsetDateTime>,
 }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
@@ -19,6 +20,9 @@ pub struct WorkspaceResponse {
     pub id: String,
     pub name: Option<String>,
     pub commit: Commit,
+    /// `None` for a workspace created before the server recorded creation time.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub created_at: Option<OffsetDateTime>,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -27,6 +31,9 @@ pub struct WorkspaceResponseWithStatus {
     pub name: Option<String>,
     pub commit: Commit,
     pub status: String,
+    /// `None` for a workspace created before the server recorded creation time.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub created_at: Option<OffsetDateTime>,
 }
 
 #[derive(Deserialize, Serialize, Debug, ToSchema)]

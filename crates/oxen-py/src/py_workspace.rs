@@ -3,6 +3,8 @@ use liboxen::config::UserConfig;
 use liboxen::model::NewCommitBody;
 use pyo3::prelude::*;
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use uuid::Uuid;
 
 use crate::error::PyOxenError;
@@ -19,6 +21,7 @@ pub struct PyWorkspace {
     pub commit_id: String,
     pub id: String,
     pub name: Option<String>,
+    pub created_at: Option<OffsetDateTime>,
 }
 
 #[pyclass]
@@ -70,6 +73,7 @@ impl PyWorkspace {
                 id: workspace.id,
                 name: workspace.name,
                 commit_id: workspace.commit.id,
+                created_at: workspace.created_at,
             });
         }
 
@@ -90,6 +94,7 @@ impl PyWorkspace {
             id: workspace.id,
             name: workspace.name,
             commit_id: workspace.commit.id,
+            created_at: workspace.created_at,
         })
     }
 
@@ -115,6 +120,12 @@ impl PyWorkspace {
 
     fn commit_id(&self) -> String {
         self.commit_id.clone()
+    }
+
+    /// RFC 3339 creation time, or None for a workspace created before the server recorded it.
+    fn created_at(&self) -> Option<String> {
+        self.created_at
+            .and_then(|created_at| created_at.format(&Rfc3339).ok())
     }
 
     fn status(&self, path: PathBuf) -> Result<PyStagedData, PyOxenError> {

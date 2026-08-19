@@ -138,6 +138,7 @@ pub async fn create_with_path(
             name: val.workspace.name,
             commit: val.workspace.commit,
             status: val.status.status_message,
+            created_at: val.workspace.created_at,
         }),
         Err(err) => Err(OxenError::basic_str(format!(
             "error parsing response from {url}\n\nErr {err:?} \n\n{body}"

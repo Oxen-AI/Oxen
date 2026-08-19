@@ -124,6 +124,14 @@ class Workspace:
         return self._workspace.commit_id()
 
     @property
+    def created_at(self) -> Optional[str]:
+        """
+        Get the RFC 3339 time the workspace was created, or None for a workspace
+        created before the server recorded it.
+        """
+        return self._workspace.created_at()
+
+    @property
     def repo(self) -> "RemoteRepo":
         """
         Get the remote repo that the workspace is tied to.

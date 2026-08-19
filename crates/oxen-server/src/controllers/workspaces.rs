@@ -119,6 +119,7 @@ pub async fn get_or_create(
                 id: workspace_id,
                 name: workspace.name.clone(),
                 commit: workspace.commit,
+                created_at: workspace.created_at,
             },
         }));
     }
@@ -126,7 +127,7 @@ pub async fn get_or_create(
     let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
 
     // Create the workspace
-    repositories::workspaces::create_with_name(
+    let workspace = repositories::workspaces::create_with_name(
         &repo,
         &commit,
         &workspace_id,
@@ -141,6 +142,7 @@ pub async fn get_or_create(
             id: workspace_id,
             name: data.name.clone(),
             commit,
+            created_at: workspace.created_at,
         },
     }))
 }
@@ -179,6 +181,7 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
             id: workspace.id,
             name: workspace.name,
             commit: workspace.commit,
+            created_at: workspace.created_at,
         },
     }))
 }
@@ -230,6 +233,7 @@ pub async fn list(
                 id: workspace.id,
                 name: workspace.name,
                 commit: workspace.commit,
+                created_at: workspace.created_at,
             }],
             None => vec![],
         }
@@ -240,6 +244,7 @@ pub async fn list(
                 id: workspace.id,
                 name: workspace.name,
                 commit: workspace.commit,
+                created_at: workspace.created_at,
             })
             .collect()
     };
@@ -319,6 +324,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
             id: workspace_id,
             name: workspace.name,
             commit: workspace.commit,
+            created_at: workspace.created_at,
         },
     }))
 }
