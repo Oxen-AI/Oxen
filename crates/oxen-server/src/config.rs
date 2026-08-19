@@ -11,7 +11,10 @@ use serde::Deserialize;
 /// TOML deserialization target for the server's `--config` flag.
 ///
 /// Future top-level keys (auth options, telemetry settings, etc.) land here without restructuring.
+/// An unrecognized table fails startup rather than being skipped: a misspelled section would
+/// otherwise leave the server silently running the default policy the admin meant to replace.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub storage: StoragePolicy,
@@ -61,6 +64,18 @@ mod tests {
         assert!(
             err.to_string().contains("s3 bucket cannot be empty"),
             "expected EmptyS3Bucket message, got: {err}",
+        );
+    }
+
+    /// A misspelled section must stop startup rather than leaving the server on a default the
+    /// admin meant to replace.
+    #[test]
+    fn rejects_an_unrecognized_section() {
+        let err = toml::from_str::<Config>("[storaje]\nbackends = [\"local\"]\n")
+            .expect_err("an unrecognized section must be rejected");
+        assert!(
+            err.to_string().contains("unknown field"),
+            "expected an unknown-field error, got: {err}",
         );
     }
 }
