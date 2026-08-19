@@ -223,15 +223,15 @@ impl LocalRepository {
         })
     }
 
-    /// Builds the local repo a clone writes to. It adopts the remote's Merkle node backend, so a
-    /// clone of an LMDB-backed repo is itself LMDB-backed. A remote that reports no backend — a
-    /// server predating the field — resolves to the create-time default.
+    /// Builds the local repo a clone writes to, on the LMDB Merkle node backend. A local repo's
+    /// backend is independent of the remote's, and the filesystem backend is deprecated (see
+    /// docs/deprecations.md), so a clone never takes the remote's.
     pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
         Self::from_remote_with_backend(repo, path, None)
     }
 
-    /// [`Self::from_remote`] with an explicit backend that wins over the one the remote reports,
-    /// for a clone that asks for a specific local backend.
+    /// [`Self::from_remote`] with an explicit backend, for a clone that asks for a specific local
+    /// backend.
     pub fn from_remote_with_backend(
         repo: RemoteRepository,
         path: &Path,
@@ -240,9 +240,7 @@ impl LocalRepository {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None)?;
-        let resolved_backend = backend
-            .or(repo.merkle_node_backend)
-            .unwrap_or(DEFAULT_MERKLE_NODE_BACKEND);
+        let resolved_backend = backend.unwrap_or(MerkleNodeBackend::Lmdb);
         let (merkle_node_store, merkle_node_backend) =
             create_merkle_node_store(&path, Some(resolved_backend))?;
         Ok(LocalRepository {
@@ -947,7 +945,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_remote_adopts_the_remotes_merkle_backend() -> Result<(), OxenError> {
+    fn test_from_remote_ignores_the_remotes_merkle_backend() -> Result<(), OxenError> {
+        // Whatever the remote is on, the clone lands on LMDB. Cloning a filesystem-backed
+        // remote must not produce a filesystem-backed local repo.
         for backend in [MerkleNodeBackend::Lmdb, MerkleNodeBackend::Filesystem] {
             let temp_dir = TempDir::new()?;
             let repo = LocalRepository::from_remote(
@@ -955,7 +955,7 @@ mod tests {
                 temp_dir.path(),
             )?;
 
-            assert_eq!(repo.merkle_node_backend(), backend);
+            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
         }
 
         Ok(())
@@ -963,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_from_remote_backend_override_beats_the_remote() -> Result<(), OxenError> {
-        // Both directions, so the test can't pass by coincidence with the create-time default.
+        // Both directions, so the test can't pass by coincidence with LMDB.
         for (remote_backend, requested) in [
             (MerkleNodeBackend::Filesystem, MerkleNodeBackend::Lmdb),
             (MerkleNodeBackend::Lmdb, MerkleNodeBackend::Filesystem),
@@ -986,24 +986,29 @@ mod tests {
         let temp_dir = TempDir::new()?;
         let repo = LocalRepository::from_remote(remote_repo_reporting(None), temp_dir.path())?;
 
-        assert_eq!(repo.merkle_node_backend(), DEFAULT_MERKLE_NODE_BACKEND);
+        assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
 
         Ok(())
     }
 
-    /// The adopted backend has to reach `config.toml`, since that is what a later load resolves
-    /// from — clone saves the repo right after building it.
+    /// The resolved backend has to reach `config.toml`, since that is what a later load resolves
+    /// from — clone saves the repo right after building it. Asserted against an explicitly
+    /// requested backend that differs from the default, so the round trip can't pass by accident.
     #[test]
-    fn test_from_remote_persists_the_adopted_backend() -> Result<(), OxenError> {
+    fn test_from_remote_persists_the_resolved_backend() -> Result<(), OxenError> {
         let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::from_remote(
+        let repo = LocalRepository::from_remote_with_backend(
             remote_repo_reporting(Some(MerkleNodeBackend::Lmdb)),
             temp_dir.path(),
+            Some(MerkleNodeBackend::Filesystem),
         )?;
         repo.save()?;
 
         let reloaded = LocalRepository::from_dir(temp_dir.path())?;
-        assert_eq!(reloaded.merkle_node_backend(), MerkleNodeBackend::Lmdb);
+        assert_eq!(
+            reloaded.merkle_node_backend(),
+            MerkleNodeBackend::Filesystem
+        );
 
         Ok(())
     }

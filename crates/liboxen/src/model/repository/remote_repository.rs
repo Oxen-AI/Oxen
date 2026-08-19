@@ -16,8 +16,9 @@ pub struct RemoteRepository {
     pub is_empty: bool,
     /// The server's version-store backend for this repo (local filesystem or S3).
     pub storage_kind: StorageKind,
-    /// The repo's Merkle node backend (filesystem / lmdb). A clone adopts it for the local repo it
-    /// creates. `None` from a server that predates the field.
+    /// The remote repo's Merkle node backend (filesystem / lmdb), reported for display. A clone
+    /// does not adopt it: the local repo defaults to LMDB unless the caller passes an explicit
+    /// backend. `None` from a server that predates the field.
     pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 

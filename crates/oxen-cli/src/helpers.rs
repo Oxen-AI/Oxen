@@ -2,6 +2,7 @@ use liboxen::api;
 use liboxen::command::migrate::ALL_MIGRATIONS;
 use liboxen::config::AuthConfig;
 use liboxen::constants;
+use liboxen::core::db::merkle_node::MerkleNodeBackend;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::util;
@@ -82,6 +83,20 @@ pub async fn check_remote_version_blocking(
     Ok(())
 }
 
+/// Rejects an explicit request for the filesystem merkle backend, which is deprecated in 0.54.0
+/// and removed in 0.55.0. See docs/deprecations.md.
+pub fn reject_deprecated_merkle_backend(
+    backend: Option<MerkleNodeBackend>,
+) -> Result<(), OxenError> {
+    if backend == Some(MerkleNodeBackend::Filesystem) {
+        return Err(OxenError::basic_str(
+            "The filesystem merkle backend is deprecated and is removed in Oxen 0.55.0. \
+             Omit --merkle-backend to use LMDB.",
+        ));
+    }
+    Ok(())
+}
+
 pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenError> {
     let migrations_needed = {
         let mut migrations_needed = vec![];
@@ -96,7 +111,10 @@ pub fn check_repo_migration_needed(repo: &LocalRepository) -> Result<(), OxenErr
     if migrations_needed.is_empty() {
         return Ok(());
     }
-    let warning = "\nWarning: 🐂 This repo requires a migration to the latest Oxen version. \n\nPlease run the following to update:".to_string().yellow();
+    let warning =
+        "\nWarning: 🐂 This repo needs a migration before Oxen can use it. \n\nPlease run:"
+            .to_string()
+            .yellow();
     eprintln!("{warning}\n");
     for migration in migrations_needed {
         eprintln!(
@@ -138,8 +156,47 @@ fn path_relative_to_repo_from(
 
 #[cfg(test)]
 mod tests {
-    use super::path_relative_to_repo_from;
+    use super::{
+        MerkleNodeBackend, check_repo_migration_needed, path_relative_to_repo_from,
+        reject_deprecated_merkle_backend,
+    };
+    use liboxen::error::OxenError;
+    use liboxen::test;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn selector_rejects_the_deprecated_filesystem_backend() {
+        assert!(
+            reject_deprecated_merkle_backend(Some(MerkleNodeBackend::Filesystem)).is_err(),
+            "asking for the filesystem backend should be refused"
+        );
+        // LMDB and "no preference" both pass through.
+        assert!(reject_deprecated_merkle_backend(Some(MerkleNodeBackend::Lmdb)).is_ok());
+        assert!(reject_deprecated_merkle_backend(None).is_ok());
+    }
+
+    #[test]
+    fn filesystem_backed_repo_is_blocked_until_migrated() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let repo = test::init_fs_merkle_backend(dir)?;
+            assert!(
+                matches!(
+                    check_repo_migration_needed(&repo),
+                    Err(OxenError::MigrationRequired(_))
+                ),
+                "a filesystem-backed repo should refuse guarded commands"
+            );
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn lmdb_backed_repo_is_not_blocked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|repo| {
+            check_repo_migration_needed(&repo)?;
+            Ok(())
+        })
+    }
 
     fn assert_repo_relative(current_dir: &str, repo: &str, input: &str, expected: &str) {
         let got =
