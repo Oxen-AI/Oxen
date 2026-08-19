@@ -29,16 +29,24 @@ pub struct PyWorkspaceResponse {
     pub id: String,
     pub name: Option<String>,
     pub commit_id: String,
+    pub created_at: Option<OffsetDateTime>,
 }
 
 #[pymethods]
 impl PyWorkspaceResponse {
+    /// RFC 3339 creation time, or None for a workspace created before the server recorded it.
+    fn created_at(&self) -> Option<String> {
+        self.created_at
+            .and_then(|created_at| created_at.format(&Rfc3339).ok())
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Workspace(id='{}', name='{}', commit_id='{}')",
+            "Workspace(id='{}', name='{}', commit_id='{}', created_at='{}')",
             self.id,
             self.name.as_deref().unwrap_or("None"),
-            self.commit_id
+            self.commit_id,
+            self.created_at().unwrap_or_else(|| "None".to_string())
         )
     }
 
