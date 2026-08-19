@@ -24,6 +24,7 @@ use crate::repositories;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
+use http::StatusCode;
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use std::fs::File;
@@ -34,7 +35,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use tokio::time::sleep;
+use std::time::Duration;
+use tokio::time::{sleep, timeout};
 use tracing::level_filters::LevelFilter;
 use walkdir::WalkDir;
 
@@ -165,9 +167,38 @@ pub async fn create_or_clear_remote_repo(
     let host = repo_new.host();
     let url = api::endpoint::url_from_host(&host, &remote_name);
 
-    let _ = api::client::repositories::delete_from_url(url).await;
-    sleep(std::time::Duration::from_millis(500)).await;
+    // A repo that was never there is the common case and not a failure; anything else means the
+    // delete itself went wrong, and saying so beats waiting out the poll below for a worse message.
+    match api::client::repositories::delete_from_url(url.clone()).await {
+        Ok(_) => {}
+        Err(OxenError::HttpStatusError { status, .. }) if status == StatusCode::NOT_FOUND => {}
+        Err(err) => return Err(err),
+    }
+    wait_until_remote_repo_deleted(&url).await?;
     api::client::repositories::create_from_local(repo, repo_new).await
+}
+
+/// Returns once the remote repo at `url` reports 404, so a recreate cannot race a slow delete.
+/// Errors if the repo is still there after 30s, or if the existence check itself fails.
+async fn wait_until_remote_repo_deleted(url: &str) -> Result<(), OxenError> {
+    const TIMEOUT: Duration = Duration::from_secs(30);
+    const POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+    let poll = async {
+        loop {
+            match api::client::repositories::get_by_url(url).await {
+                Err(OxenError::RemoteRepoNotFound(_)) => return Ok(()),
+                Err(err) => return Err(err),
+                Ok(_) => sleep(POLL_INTERVAL).await,
+            }
+        }
+    };
+
+    timeout(TIMEOUT, poll).await.unwrap_or_else(|_| {
+        Err(OxenError::internal_error(format!(
+            "remote repo {url} still exists {TIMEOUT:?} after delete"
+        )))
+    })
 }
 
 pub async fn add_n_files_m_dirs(
