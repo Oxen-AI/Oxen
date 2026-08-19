@@ -30,25 +30,12 @@ impl RunCmd for WorkspaceStatusCmd {
     fn args(&self) -> Command {
         Command::new(NAME)
             .about("See at what files are ready to be added or committed")
-            // DEPRECATED: (start) announce migration now + remove in the next release
-            .arg(
-                Arg::new("workspace")
-                    .long("workspace")
-                    .required_unless_present("workspace-name")
-                    .required_unless_present("workspace-id")
-                    .conflicts_with("workspace-name")
-                    .conflicts_with("workspace-id")
-                    .help("DEPRECATED OPTION -- renamed to '--workspace-id'"),
-            )
-            // DEPRECATED: (end)
             .arg(
                 Arg::new("workspace-id")
                     .long("workspace-id")
                     .short('w')
                     .required_unless_present("workspace-name")
-                    .required_unless_present("workspace") // DEPRECATED: remove
                     .conflicts_with("workspace-name")
-                    .conflicts_with("workspace") // DEPRECATED: remove
                     .help("The workspace_id of the workspace"),
             )
             .arg(
@@ -56,8 +43,6 @@ impl RunCmd for WorkspaceStatusCmd {
                     .long("workspace-name")
                     .short('n')
                     .required_unless_present("workspace-id")
-                    .required_unless_present("workspace") // DEPRECATED: remove
-                    .conflicts_with("workspace") // DEPRECATED: remove
                     .conflicts_with("workspace-id")
                     .help("The name of the workspace"),
             )
@@ -91,21 +76,7 @@ impl RunCmd for WorkspaceStatusCmd {
     async fn run(&self, args: &ArgMatches) -> Result<(), anyhow::Error> {
         let directory = args.get_one::<String>("path").map(PathBuf::from);
 
-        // let workspace_id = args.get_one::<String>("workspace-id");
-        // DEPRECATED: (start) remove this logic and replace with the above commented-out line once we remove '--workspace'
-        let workspace_id = match args.get_one::<String>("workspace-id") {
-            None => match args.get_one::<String>("workspace") {
-                None => None,
-                something => {
-                    eprintln!(
-                        "DEPRECATION WARNING: '--workspace' option has been renamed to '--workspace-id'. '--workspace' will be **REMOVED** in a future release!"
-                    );
-                    something
-                }
-            },
-            something => something,
-        };
-        // DEPRECATED: (end)
+        let workspace_id = args.get_one::<String>("workspace-id");
         let workspace_name = args.get_one::<String>("workspace-name");
         let workspace_identifier = match workspace_id {
             Some(id) => id,
