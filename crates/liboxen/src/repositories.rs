@@ -51,6 +51,7 @@ pub mod size;
 pub mod stats;
 pub mod status;
 pub mod tree;
+pub mod verify;
 pub mod workspaces;
 
 pub use add::add;
