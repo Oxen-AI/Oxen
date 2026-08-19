@@ -23,6 +23,7 @@ use crate::repositories;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
+use http::StatusCode;
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use std::fs::File;
@@ -164,7 +165,13 @@ pub async fn create_or_clear_remote_repo(
     let host = repo_new.host();
     let url = api::endpoint::url_from_host(&host, &remote_name);
 
-    let _ = api::client::repositories::delete_from_url(url.clone()).await;
+    // A repo that was never there is the common case and not a failure; anything else means the
+    // delete itself went wrong, and saying so beats waiting out the poll below for a worse message.
+    match api::client::repositories::delete_from_url(url.clone()).await {
+        Ok(_) => {}
+        Err(OxenError::HttpStatusError { status, .. }) if status == StatusCode::NOT_FOUND => {}
+        Err(err) => return Err(err),
+    }
     wait_until_remote_repo_deleted(&url).await?;
     api::client::repositories::create_from_local(repo, repo_new).await
 }
