@@ -520,14 +520,6 @@ async fn push_commits(
                             &vec![commit],
                         )
                         .await?;
-
-                        // This call will be removed in ENG-994
-                        api::client::commits::mark_commits_as_synced(
-                            remote_repo,
-                            HashSet::from([commit_hash]),
-                        )
-                        .await?;
-                        log::debug!("marked commits as synced {commit_hash}");
                         Ok::<(), OxenError>(())
                     }
                     .await;
