@@ -29,7 +29,7 @@ use crate::model::{Branch, Commit, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
-use crate::view::{ErrorFileInfo, FileWithHash};
+use crate::view::ErrorFileInfo;
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
 const MAX_CONTENT_LENGTH: u64 = 1024 * 1024 * 1024; // 1GB limit
@@ -91,70 +91,6 @@ pub async fn add_version_file(
     .await?;
 
     Ok(dst_path.to_path_buf())
-}
-
-pub async fn add_version_files(
-    repo: &LocalRepository,
-    workspace: &Workspace,
-    files_with_hash: &[FileWithHash],
-    directory: impl AsRef<str>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let version_store = repo.version_store();
-
-    let directory = directory.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
-    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-
-    let mut err_files: Vec<ErrorFileInfo> = vec![];
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    let dir = workspace.dir();
-    for item in files_with_hash.iter() {
-        let target_path = PathBuf::from(directory).join(&item.path);
-        // The returned guard keeps any S3-materialized temp file alive until staging reads it below.
-        let version_path = match version_store.materialize(&item.hash, &dir).await {
-            Ok(path) => path,
-            Err(e) => {
-                let error = format!("Failed to resolve version path: {e}");
-                log::error!("{error}");
-                err_files.push(ErrorFileInfo {
-                    hash: item.hash.clone(),
-                    path: Some(item.path.clone()),
-                    error,
-                });
-                continue;
-            }
-        };
-        match stage_file_with_hash(
-            workspace,
-            &version_path,
-            &target_path,
-            &item.hash,
-            &staged_db_manager,
-            &seen_dirs,
-        )
-        .await
-        {
-            Ok(_) => {
-                // Add parents to staged db
-                // let parent_dirs = item.parents;
-            }
-            Err(e) => {
-                let error = format!("Failed to add file to staged db: {e}");
-                log::error!("{error}");
-                err_files.push(ErrorFileInfo {
-                    hash: item.hash.clone(),
-                    path: Some(item.path.clone()),
-                    error,
-                });
-                continue;
-            }
-        }
-    }
-    log::debug!(
-        "add_version_files complete with {:?} err_files",
-        err_files.len()
-    );
-    Ok(err_files)
 }
 
 /// Stage a batch of version files into the workspace. Each entry is a destination path (already

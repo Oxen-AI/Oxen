@@ -148,7 +148,6 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         // Workspaces - files
         crate::controllers::workspaces::files::get,
         crate::controllers::workspaces::files::add,
-        crate::controllers::workspaces::files::add_version_files,
         crate::controllers::workspaces::files::rm_files,
         // Workspace Data Frames
         crate::controllers::workspaces::data_frames::put_schema_metadata,
