@@ -144,13 +144,13 @@ async fn resolve_branch_heads(
 
     let walk_repo = repo.clone();
     let (heads, dangling) = tokio::task::spawn_blocking(
-        move || -> Result<(Vec<Commit>, Vec<DanglingBranch>), OxenError> {
+        move || -> Result<(Vec<Commit>, Findings<DanglingBranch>), OxenError> {
             let mut heads = Vec::new();
-            let mut dangling = Vec::new();
+            let mut dangling = Findings::default();
             for branch in branches {
                 match repositories::commits::get_by_id(&walk_repo, &branch.commit_id)? {
                     Some(commit) => heads.push(commit),
-                    None => dangling.push(DanglingBranch {
+                    None => dangling.record(DanglingBranch {
                         branch: branch.name,
                         commit_id: branch.commit_id,
                     }),
@@ -161,26 +161,28 @@ async fn resolve_branch_heads(
     )
     .await??;
 
-    for branch in dangling {
-        report.dangling_branches.record(branch);
-    }
+    report.dangling_branches = dangling;
     Ok(heads)
 }
 
 /// Every reachable commit hashes to the id it is filed under, and every parent it names resolves.
 async fn check_commits(repo: &LocalRepository, report: &mut VerifyReport) -> Result<(), OxenError> {
-    type CommitFindings = (usize, Vec<DanglingParent>, Vec<MisaddressedCommit>);
+    type CommitFindings = (
+        usize,
+        Findings<DanglingParent>,
+        Findings<MisaddressedCommit>,
+    );
 
     let walk_repo = repo.clone();
     let (commits_checked, dangling, misaddressed) =
         tokio::task::spawn_blocking(move || -> Result<CommitFindings, OxenError> {
             let commits = repositories::commits::list_all(&walk_repo)?;
-            let mut dangling = Vec::new();
-            let mut misaddressed = Vec::new();
+            let mut dangling = Findings::default();
+            let mut misaddressed = Findings::default();
 
             for commit in &commits {
                 if let Some(finding) = misaddressed_commit(commit)? {
-                    misaddressed.push(finding);
+                    misaddressed.record(finding);
                 }
                 for parent_id in &commit.parent_ids {
                     let resolves = match parent_id.parse::<MerkleHash>() {
@@ -190,7 +192,7 @@ async fn check_commits(repo: &LocalRepository, report: &mut VerifyReport) -> Res
                         Err(_) => false,
                     };
                     if !resolves {
-                        dangling.push(DanglingParent {
+                        dangling.record(DanglingParent {
                             commit_id: commit.id.clone(),
                             parent_id: parent_id.clone(),
                         });
@@ -202,12 +204,8 @@ async fn check_commits(repo: &LocalRepository, report: &mut VerifyReport) -> Res
         .await??;
 
     report.commits_checked = commits_checked;
-    for parent in dangling {
-        report.dangling_parents.record(parent);
-    }
-    for commit in misaddressed {
-        report.misaddressed_commits.record(commit);
-    }
+    report.dangling_parents = dangling;
+    report.misaddressed_commits = misaddressed;
     Ok(())
 }
 
@@ -345,6 +343,26 @@ mod tests {
                 "expected exactly one version blob, found {n}"
             ))),
         }
+    }
+
+    #[test]
+    fn test_findings_count_everything_but_keep_a_bounded_sample() {
+        let mut findings = Findings::default();
+        for i in 0..(SAMPLE_LIMIT * 3) {
+            findings.record(i);
+        }
+
+        assert_eq!(findings.count, SAMPLE_LIMIT * 3, "every finding is counted");
+        assert_eq!(
+            findings.sample.len(),
+            SAMPLE_LIMIT,
+            "a badly damaged repository does not grow the report"
+        );
+        assert_eq!(
+            findings.sample,
+            (0..SAMPLE_LIMIT).collect::<Vec<_>>(),
+            "the sample is the first findings seen"
+        );
     }
 
     #[tokio::test]
