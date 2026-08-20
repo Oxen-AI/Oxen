@@ -41,12 +41,16 @@ impl PyWorkspaceResponse {
     }
 
     fn __repr__(&self) -> String {
+        let created_at = self.created_at().map_or_else(
+            || "None".to_string(),
+            |created_at| format!("'{created_at}'"),
+        );
         format!(
-            "Workspace(id='{}', name='{}', commit_id='{}', created_at='{}')",
+            "Workspace(id='{}', name='{}', commit_id='{}', created_at={})",
             self.id,
             self.name.as_deref().unwrap_or("None"),
             self.commit_id,
-            self.created_at().unwrap_or_else(|| "None".to_string())
+            created_at
         )
     }
 
