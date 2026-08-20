@@ -219,11 +219,13 @@ pub fn transfer_namespace(
         )));
     }
 
-    // A repo carrying no identity keeps none.
+    // The config is written before the move, so the rename is the last fallible step and a failure
+    // leaves the repo where it was. A repo carrying no identity keeps none.
     let mut config = RepositoryConfig::from_file(util::fs::config_filepath(&from_dir))?;
     if let Some(identity) = config.identity.as_mut() {
         identity.namespace = to_namespace_is_a_name.then(|| to_namespace.to_string());
     }
+    config.save(util::fs::config_filepath(&from_dir))?;
 
     // ensure DB instance is closed before we move the repo
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&from_dir)?;
@@ -232,8 +234,6 @@ pub fn transfer_namespace(
 
     util::fs::create_dir_all(&to_dir)?;
     util::fs::rename(&from_dir, &to_dir)?;
-
-    config.save(util::fs::config_filepath(&to_dir))?;
 
     let updated_repo =
         get_by_namespace_and_name(sync_dir, to_namespace, repo_name, server_s3_opts)?;
