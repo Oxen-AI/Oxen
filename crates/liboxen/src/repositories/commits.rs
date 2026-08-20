@@ -288,6 +288,44 @@ mod tests {
 
     use super::*;
 
+    // Repair paths must be handed the commit being pushed rather than an end of this list: two
+    // push paths reverse it before use and one does not. Pinned so a swap between these two
+    // functions fails loudly instead of quietly retargeting a repair.
+    #[tokio::test]
+    async fn test_commit_list_ordering_is_newest_first() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let mut commits = Vec::new();
+            for name in ["one", "two", "three"] {
+                util::fs::write_to_path(repo.path.join(format!("{name}.txt")), name)?;
+                repositories::add(&repo, &repo.path).await?;
+                commits.push(repositories::commit(&repo, &format!("add {name}"))?);
+            }
+            let (first, last) = (&commits[0], &commits[2]);
+
+            let from = repositories::commits::list_from(&repo, &last.id)?;
+            assert_eq!(
+                from.first().map(|c| c.id.as_str()),
+                Some(last.id.as_str()),
+                "list_from must yield the head commit first"
+            );
+            assert_eq!(
+                from.last().map(|c| c.id.as_str()),
+                Some(first.id.as_str()),
+                "list_from must yield the oldest commit last"
+            );
+
+            let between = repositories::commits::list_between(&repo, first, last)?;
+            assert_eq!(
+                between.first().map(|c| c.id.as_str()),
+                Some(last.id.as_str()),
+                "list_between must yield the head commit first, before any caller reverses it"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     // A directory's stored entry count has to agree with what the directory actually holds,
     // including after a subdirectory is removed. Both counts are asserted so neither can drift
     // past the other unnoticed.
