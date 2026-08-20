@@ -72,7 +72,7 @@ The `--config` flag is optional. When omitted, the server uses a conservative de
 $ oxen-server start --config /etc/oxen/server.toml
 ```
 
-The full schema for the file is a single `[storage]` table:
+The only table a self-hosted server configures is `[storage]`, and it is optional. A table the server does not recognize stops startup with an error rather than being skipped, so a misspelled section cannot leave the server quietly running a default you meant to replace.
 
 ```toml
 [storage]
@@ -153,6 +153,22 @@ type = "local"
 [storage.settings]
 path = "/mnt/nfs/oxen-data"
 ```
+
+#### The `[identity]` section
+
+Repositories the server creates also carry an `[identity]` section:
+
+```toml
+[identity]
+repo_uuid = "0c0e2a8e-93a4-4a9f-9f1e-2b9b3f0f9a11"
+namespace = "my-namespace"
+name = "my-repo"
+```
+
+- **`repo_uuid`** — the repository's immutable identity, written when the repo is created and never changed afterwards, including when the repo moves to another namespace. Do not edit it by hand.
+- **`namespace`** / **`name`** — the human-readable names, recorded so a repository directory can be identified without consulting anything else. They track renames and carry no authority: nothing is addressed by them.
+
+Repositories created before `oxen-server` recorded identity have no `[identity]` section and continue to work normally.
 
 `oxen-server` continues to read the legacy form on every load — `type` is treated as `kind` and `[storage.settings] path` is promoted to `versions_path` — so an upgrade does not force a migration. No admin action is required.
 

@@ -4,6 +4,7 @@
 //!
 
 use crate::api::requests::RepoNew;
+use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::core;
 use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
@@ -11,6 +12,7 @@ use crate::core::refs::with_ref_manager;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
+use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
 use crate::util;
@@ -192,11 +194,17 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
         })
 }
 
+/// Move a repository into `to_namespace`, recording it as the namespace the repository is in when
+/// `to_namespace_is_a_name` says the destination is a human-readable name rather than a UUID.
+///
+/// Where it is not a name, the recorded name is cleared instead, so no repository is left
+/// describing the namespace it came from. A repository carrying no identity keeps none.
 pub fn transfer_namespace(
     sync_dir: &Path,
     repo_name: &str,
     from_namespace: &str,
     to_namespace: &str,
+    to_namespace_is_a_name: bool,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
@@ -211,20 +219,23 @@ pub fn transfer_namespace(
         )));
     }
 
+    // A repo carrying no identity keeps none.
+    let mut config = RepositoryConfig::from_file(util::fs::config_filepath(&from_dir))?;
+    if let Some(identity) = config.identity.as_mut() {
+        identity.namespace = to_namespace_is_a_name.then(|| to_namespace.to_string());
+    }
+
     // ensure DB instance is closed before we move the repo
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&from_dir)?;
     core::staged::remove_from_cache_with_children(&from_dir)?;
     core::refs::remove_from_cache(&from_dir)?;
 
     util::fs::create_dir_all(&to_dir)?;
-    util::fs::rename(&from_dir, &to_dir)?;
 
-    // Update path in config
-    {
-        let repo = LocalRepository::from_dir_with_server_opts(&to_dir, server_s3_opts)?;
-        repo.save()?;
-        // ensure drop(repo)
-    }
+    // Written once nothing else can fail, and before the move, so the rename is the only step
+    // whose failure leaves the repo describing a namespace it is not in.
+    config.save(util::fs::config_filepath(&from_dir))?;
+    util::fs::rename(&from_dir, &to_dir)?;
 
     let updated_repo =
         get_by_namespace_and_name(sync_dir, to_namespace, repo_name, server_s3_opts)?;
@@ -241,9 +252,11 @@ fn is_valid_repo_name(name: &str) -> bool {
     VALID_NAME_RE.is_match(name)
 }
 
+/// Create a repository under `root_dir`, recording `identity` as who it is.
 pub async fn create(
     root_dir: &Path,
     mut new_repo: RepoNew,
+    identity: Option<RepoIdentity>,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     // Validate repo name
@@ -286,6 +299,7 @@ pub async fn create(
                 .merkle_node_backend
                 .unwrap_or(DEFAULT_MERKLE_NODE_BACKEND),
         ),
+        identity,
         ..Default::default()
     };
     let local_repo = LocalRepository::new_with_server_opts(&repo_dir, config, server_s3_opts)?;
@@ -383,17 +397,23 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
 #[cfg(test)]
 mod tests {
     use crate::api::requests::RepoNew;
+    use crate::config::RepositoryConfig;
     use crate::config::UserConfig;
     use crate::constants;
     use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
-    use crate::model::{Commit, LocalRepository};
+    use crate::model::{Commit, LocalRepository, RepoIdentity};
     use crate::repositories;
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
+
+    /// The identity a server that owns its namespaces would record for a new repo.
+    fn server_identity(namespace: &str, name: &str) -> Option<RepoIdentity> {
+        Some(RepoIdentity::minted(namespace, name))
+    }
 
     #[tokio::test]
     async fn test_delete_removes_custom_versions_path_outside_repo() -> Result<(), OxenError> {
@@ -442,6 +462,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_records_identity_under_oxen_server() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+
+            let identity = repo.identity.clone().expect("create records identity");
+            assert_eq!(identity.name.as_deref(), Some("cats"));
+
+            // The config on disk is the authoritative record, so it has to hold the same thing.
+            drop(repo);
+            let reloaded = LocalRepository::from_dir(sync_dir.join("ox").join("cats"))?;
+            assert_eq!(reloaded.identity.as_ref(), Some(&identity));
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Create `ox/cats` with `identity`, then move it to `bessie`.
+    async fn transferred(
+        sync_dir: &Path,
+        identity: Option<RepoIdentity>,
+        to_namespace_is_a_name: bool,
+    ) -> Result<LocalRepository, OxenError> {
+        let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+        drop(repositories::create(sync_dir, repo_new, identity, None).await?);
+        repositories::transfer_namespace(
+            sync_dir,
+            "cats",
+            "ox",
+            "bessie",
+            to_namespace_is_a_name,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_transfer_namespace_moves_the_namespace_hint() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let identity = server_identity("ox", "cats");
+            let repo_uuid = identity.as_ref().map(|identity| identity.repo_uuid);
+
+            let moved = transferred(&sync_dir, identity, true).await?;
+
+            let moved_identity = moved.identity.as_ref().expect("identity survives the move");
+            assert_eq!(moved_identity.namespace.as_deref(), Some("bessie"));
+            assert_eq!(
+                moved.repo_uuid(),
+                repo_uuid,
+                "a namespace move must not change the repo's identity"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A repo created before the server recorded identity must come out of a move still carrying
+    /// none, rather than gaining a name hint with no UUID beside it.
+    #[tokio::test]
+    async fn test_transfer_namespace_leaves_a_repo_without_identity_alone() -> Result<(), OxenError>
+    {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            assert_eq!(transferred(&sync_dir, None, true).await?.identity, None);
+            Ok(())
+        })
+        .await
+    }
+
+    /// The hint is written only once nothing else can fail, so a transfer that cannot even start
+    /// leaves the repo describing the namespace it is still in.
+    #[tokio::test]
+    async fn test_transfer_namespace_leaves_the_hint_alone_when_the_move_cannot_start()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+            let repo_path = repo.path.clone();
+            drop(repo);
+
+            // A file where the destination namespace directory belongs, so the transfer fails
+            // creating it, after the point the hint used to be written.
+            util::fs::write_to_path(sync_dir.join("bessie"), "not a directory")?;
+
+            let result =
+                repositories::transfer_namespace(&sync_dir, "cats", "ox", "bessie", true, None);
+            assert!(result.is_err(), "the transfer must fail");
+
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_path))?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(
+                identity.namespace.as_deref(),
+                Some("ox"),
+                "a transfer that never moved anything must not have rewritten the hint"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Under an auth provider the destination is a UUID, so recording it would put a UUID in a
+    /// field that means a human-readable name.
+    #[tokio::test]
+    async fn test_transfer_namespace_clears_the_hint_when_the_destination_is_not_a_name()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let moved = transferred(&sync_dir, server_identity("ox", "cats"), false).await?;
+
+            let identity = moved.identity.as_ref().expect("identity survives the move");
+            assert_eq!(identity.namespace, None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_local_repository_api_create_empty_with_commit() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let namespace: &str = "test-namespace";
@@ -457,7 +600,7 @@ mod tests {
                 timestamp,
             };
             let repo_new = RepoNew::from_root_commit(namespace, name, root_commit);
-            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -480,7 +623,7 @@ mod tests {
 
             // A client can send `"files": []`, which must behave like sending no files at all.
             let repo_new = RepoNew::from_files(namespace, name, vec![], None);
-            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
             assert!(repo.path.exists());
             assert!(
@@ -506,7 +649,7 @@ mod tests {
                 user,
             }];
             let repo_new = RepoNew::from_files(namespace, name, files, None);
-            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -527,7 +670,7 @@ mod tests {
             let namespace: &str = "test-namespace";
             let name: &str = "test-repo-name";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
@@ -579,7 +722,7 @@ mod tests {
             let namespace = "test-namespace";
             let name = "repo with spaces";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let result = repositories::create(&sync_dir, repo_new, None).await;
+            let result = repositories::create(&sync_dir, repo_new, None, None).await;
 
             assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
@@ -600,7 +743,7 @@ mod tests {
             let namespace = "-invalid-namespace";
             let name = "valid-repo";
             let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let result = repositories::create(&sync_dir, repo_new, None).await;
+            let result = repositories::create(&sync_dir, repo_new, None, None).await;
 
             assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
@@ -619,7 +762,7 @@ mod tests {
     async fn test_create_defaults_to_lmdb_backend() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ns", "repo", None);
-            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
             assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
             Ok(())
         })
@@ -632,7 +775,7 @@ mod tests {
             // Requests the non-default backend, so this fails if the request is ignored.
             let mut repo_new = RepoNew::from_namespace_name("ns", "repo", None);
             repo_new.merkle_node_backend = Some(MerkleNodeBackend::Filesystem);
-            let repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
             assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Filesystem);
             Ok(())
         })
@@ -782,7 +925,7 @@ mod tests {
                 timestamp,
             };
             let repo_new = RepoNew::from_root_commit(old_namespace, name, root_commit);
-            let _repo = repositories::create(&sync_dir, repo_new, None).await?;
+            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
             let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
             let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
@@ -801,6 +944,7 @@ mod tests {
                 name,
                 old_namespace,
                 new_namespace,
+                true,
                 None,
             )?;
 

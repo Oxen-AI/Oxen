@@ -1,4 +1,5 @@
 use crate::app_data::OxenAppData;
+use crate::config::identity_policy::IdentitySource;
 use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{app_data, path_param};
@@ -12,7 +13,7 @@ use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
-use liboxen::model::{Branch, ParsedResource};
+use liboxen::model::{Branch, ParsedResource, RepoIdentity};
 use liboxen::repositories;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
@@ -143,6 +144,7 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 is_empty: branch_count == 0,
                 storage_kind: repository.storage_config().kind,
                 merkle_node_backend: Some(repository.merkle_node_backend()),
+                repo_uuid: repository.repo_uuid(),
             },
             size,
             data_types,
@@ -444,7 +446,14 @@ async fn create_repo_response(
     data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
     let namespace = data.namespace.clone();
     let name = data.name.clone();
-    match repositories::create(&app_data.path, data, app_data.config.storage.s3()).await {
+    let identity = match app_data.config.identity.repo_uuids_assigned_by() {
+        IdentitySource::OxenServer => Some(RepoIdentity::minted(&namespace, &name)),
+        IdentitySource::AuthProvider => RepoIdentity::from_supplied(data.repo_uuid, &name),
+    };
+    if identity.is_none() {
+        log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
+    }
+    match repositories::create(&app_data.path, data, identity, app_data.config.storage.s3()).await {
         Ok(repo) => {
             // The repository exists by this point, so a failed lookup only degrades the
             // response's latest_commit to None rather than failing the creation.
@@ -466,6 +475,7 @@ async fn create_repo_response(
                     min_version: Some("0.36.0".to_string()),
                     storage_kind: repo.storage_config().kind,
                     merkle_node_backend: Some(repo.merkle_node_backend()),
+                    repo_uuid: repo.repo_uuid(),
                 },
             }))
         }
@@ -596,6 +606,11 @@ pub async fn transfer_namespace(
         &name,
         &from_namespace,
         &to_namespace,
+        app_data
+            .config
+            .identity
+            .repo_uuids_assigned_by()
+            .supplies_names(),
         app_data.config.storage.s3(),
     )?;
 
@@ -610,6 +625,7 @@ pub async fn transfer_namespace(
             is_empty: repositories::is_empty(&repo).await?,
             storage_kind: repo.storage_config().kind,
             merkle_node_backend: Some(repo.merkle_node_backend()),
+            repo_uuid: repo.repo_uuid(),
         },
     }))
 }

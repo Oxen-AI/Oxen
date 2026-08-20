@@ -10,6 +10,7 @@ use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
 use crate::storage::StorageKind;
+use uuid::Uuid;
 
 /// Only used between client and server for creating a new remote repository.
 ///
@@ -40,6 +41,10 @@ pub struct RepoNew {
     /// Which engine backs the repo's Merkle node store. `None` uses the server's default.
     #[serde(default)]
     pub merkle_node_backend: Option<MerkleNodeBackend>,
+    /// The immutable UUID to address the new repo's storage by. Supplied by an external control
+    /// plane that owns repository identity; `None` leaves the choice to the server.
+    #[serde(default)]
+    pub repo_uuid: Option<Uuid>,
 }
 
 impl std::fmt::Display for RepoNew {
@@ -90,6 +95,7 @@ impl RepoNew {
             files: None,
             storage_kind,
             merkle_node_backend: None,
+            repo_uuid: None,
         })
     }
 
@@ -118,6 +124,7 @@ impl RepoNew {
             files: None,
             storage_kind,
             merkle_node_backend: None,
+            repo_uuid: None,
         }
     }
 
@@ -138,6 +145,7 @@ impl RepoNew {
             files: None,
             storage_kind,
             merkle_node_backend: None,
+            repo_uuid: None,
         }
     }
 
@@ -157,6 +165,7 @@ impl RepoNew {
             files: None,
             storage_kind: None,
             merkle_node_backend: None,
+            repo_uuid: None,
         }
     }
 
@@ -177,6 +186,7 @@ impl RepoNew {
             files: Some(files),
             storage_kind,
             merkle_node_backend: None,
+            repo_uuid: None,
         }
     }
 
@@ -206,6 +216,7 @@ impl RepoNew {
             files: None,
             storage_kind: None,
             merkle_node_backend: None,
+            repo_uuid: None,
         })
     }
 }

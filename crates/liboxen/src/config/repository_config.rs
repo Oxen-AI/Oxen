@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::constants::DEFAULT_VNODE_SIZE;
 use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
 use crate::error::OxenError;
-use crate::model::{LocalRepository, Remote};
+use crate::model::{LocalRepository, Remote, RepoIdentity};
 use crate::storage::StorageConfig;
 use crate::util;
 use crate::util::fs::AtomicFile;
@@ -55,6 +55,10 @@ pub struct RepositoryConfig {
     /// filesystem, an existing LMDB env means LMDB, and neither means filesystem (see
     /// `create_merkle_node_store`).
     pub merkle_node_backend: Option<MerkleNodeBackend>,
+    /// Who this repository is, independent of where it sits. `None` for repos created before the
+    /// server recorded identity, which carry none until the backfill migration writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<RepoIdentity>,
 }
 
 impl Default for RepositoryConfig {
@@ -77,6 +81,7 @@ impl Default for RepositoryConfig {
             workspace_name: None,
             workspaces: None,
             merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
+            identity: None,
         }
     }
 }
@@ -135,6 +140,7 @@ mod tests {
     use super::*;
     use crate::storage::StorageKind;
     use std::path::PathBuf;
+    use uuid::Uuid;
 
     fn parse(toml_str: &str) -> RepositoryConfig {
         toml::from_str(toml_str).expect("test fixture must parse")
@@ -240,6 +246,44 @@ mod tests {
         assert_eq!(
             storage.versions_path,
             Some(PathBuf::from("/preferred/path"))
+        );
+    }
+
+    /// A config predating identity carries none, rather than one that claims default UUIDs.
+    #[test]
+    fn missing_identity_deserializes_to_none() {
+        assert!(parse("remotes = []\n").identity.is_none());
+    }
+
+    /// TOML puts every key after a table header inside that table, so a scalar serialized after
+    /// `[identity]` would silently land inside it and fail to parse back as itself.
+    #[test]
+    fn identity_round_trips_alongside_the_other_sections() {
+        let identity = RepoIdentity {
+            repo_uuid: Uuid::new_v4(),
+            namespace: Some("ox".to_string()),
+            name: Some("cats".to_string()),
+        };
+        let config = RepositoryConfig {
+            storage: Some(StorageConfig {
+                kind: StorageKind::S3,
+                versions_path: None,
+            }),
+            identity: Some(identity.clone()),
+            ..Default::default()
+        };
+
+        let serialized = config.to_toml().expect("serialize");
+        let parsed = RepositoryConfig::from_toml(&serialized).expect("re-parse");
+
+        assert_eq!(parsed.identity.as_ref(), Some(&identity));
+        assert_eq!(
+            parsed.storage.expect("storage survives").kind,
+            StorageKind::S3
+        );
+        assert_eq!(
+            parsed.merkle_node_backend, config.merkle_node_backend,
+            "a scalar must not be swallowed by a preceding table"
         );
     }
 
