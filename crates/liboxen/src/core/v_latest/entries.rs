@@ -541,7 +541,8 @@ pub fn list_tabular_files_in_repo(
 }
 
 pub fn count_for_commit(repo: &LocalRepository, commit: &Commit) -> Result<usize, OxenError> {
-    let tree = repositories::tree::get_root_with_children(repo, commit)?.unwrap();
+    let tree = repositories::tree::get_root_with_children(repo, commit)?
+        .ok_or_else(|| OxenError::commit_id_does_not_exist(&commit.id))?;
     let (entries, _) = repositories::tree::list_files_and_dirs(&tree)?;
     Ok(entries.len())
 }
@@ -550,7 +551,8 @@ pub fn list_for_commit(
     repo: &LocalRepository,
     commit: &Commit,
 ) -> Result<Vec<CommitEntry>, OxenError> {
-    let tree = repositories::tree::get_root_with_children(repo, commit)?.unwrap();
+    let tree = repositories::tree::get_root_with_children(repo, commit)?
+        .ok_or_else(|| OxenError::commit_id_does_not_exist(&commit.id))?;
     let (entries, _) = repositories::tree::list_files_and_dirs(&tree)?;
     Ok(entries
         .into_iter()
