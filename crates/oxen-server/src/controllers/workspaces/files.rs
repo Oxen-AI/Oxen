@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};
-use crate::params::{app_data, client_must_use_multipart_staging, path_param};
+use crate::params::{app_data, path_param};
 use crate::tasks;
 
 use liboxen::constants::stream_segment_size;
@@ -17,8 +17,7 @@ use liboxen::util;
 use liboxen::util::hasher;
 use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{
-    ErrorFileInfo, ErrorFilesResponse, FilePathsResponse, FileWithHash, StatusMessage,
-    StatusMessageDescription,
+    ErrorFileInfo, FilePathsResponse, FileWithHash, StatusMessage, StatusMessageDescription,
 };
 
 use actix_multipart::Multipart;
@@ -253,85 +252,6 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
         paths: ret_files,
-    }))
-}
-
-/// Stage files to workspace
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/batch/{directory}",
-    description = "Stage file nodes to a workspace. Do not upload file contents to the repository.",
-    tag = "Workspace Files",
-    params(
-        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
-        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
-        ("directory" = String, Path, description = "The directory to stage the files into", example = "data/train")
-    ),
-    request_body(
-        content = Vec<FileWithHash>,
-        description = "List of files and their pre-calculated hashes (must exist in version store).",
-        example = json!([
-            {
-                "path": "images/train/dog.jpg",
-                "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-            }
-        ])
-    ),
-    responses(
-        (status = 200, description = "Files staged successfully", body = ErrorFilesResponse),
-        (status = 404, description = "Workspace not found")
-    )
-)]
-pub async fn add_version_files(
-    req: HttpRequest,
-    payload: web::Json<Vec<FileWithHash>>,
-) -> Result<HttpResponse, OxenHttpError> {
-    // Add file to staging
-    let app_data = app_data(&req)?;
-
-    // This JSON endpoint, where the client pre-hashes content and the server stages metadata
-    // without reading it, is deprecated in favor of the multipart files endpoint (which lets the
-    // server compute all metadata). Reject up-to-date clients so they use the multipart path.
-    if client_must_use_multipart_staging(&req, app_data.test_mode) {
-        return Err(OxenHttpError::EndpointDeprecated(
-            "The JSON workspace-staging endpoint is deprecated. Upload file contents to the \
-             multipart workspace files endpoint (POST /workspaces/{id}/files/{path}) so the \
-             server can compute file metadata."
-                .into(),
-        ));
-    }
-
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let directory = path_param(&req, "directory")?.to_string();
-
-    let repo = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
-        return Ok(HttpResponse::NotFound()
-            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
-    };
-    let files_with_hash: Vec<FileWithHash> = payload.into_inner();
-    log::debug!(
-        "Calling add version files from the core workspace logic with {} files",
-        files_with_hash.len(),
-    );
-    let err_files = core::v_latest::workspaces::files::add_version_files(
-        &repo,
-        &workspace,
-        &files_with_hash,
-        &directory,
-    )
-    .await?;
-
-    log::debug!("Staging complete with {:?} err files", err_files.len());
-
-    // Return the error files for retry
-    Ok(HttpResponse::Ok().json(ErrorFilesResponse {
-        status: StatusMessage::resource_created(),
-        err_files,
     }))
 }
 
@@ -995,43 +915,6 @@ mod tests {
         );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
-        Ok(())
-    }
-
-    #[actix_web::test]
-    async fn test_add_version_files_returns_426_for_up_to_date_client() -> Result<(), OxenError> {
-        liboxen::test::init_test_env();
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Workspace-Deprecated-Staging";
-
-        // An up-to-date client (User-Agent at/above the deprecation release) is steered to the
-        // multipart endpoint with a 426. The gate fires before the repo/workspace lookup, so no
-        // repo setup is needed; test_mode must be off (the default) for the gate to be active.
-        let workspace_id = uuid::Uuid::new_v4().to_string();
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/versions/data");
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .insert_header((header::USER_AGENT, "Oxen/0.99.0 (test; tokio)"))
-            .set_json(serde_json::json!([]))
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
-            .to_request();
-
-        let app = actix_web::test::init_service(
-            App::new()
-                .app_data(OxenAppData::new(sync_dir.clone()))
-                .route(
-                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/versions/{directory}",
-                    web::post().to(controllers::workspaces::files::add_version_files),
-                ),
-        )
-        .await;
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::UPGRADE_REQUIRED);
-
-        test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 
