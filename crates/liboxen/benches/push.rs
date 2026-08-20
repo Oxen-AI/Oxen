@@ -75,16 +75,15 @@ async fn setup_repo_for_push_benchmark(
             .collect();
         dirs.push(files_dir.clone());
 
-        let large_file_percentage: f64;
         let min_repo_size_for_scaling = 1000.0;
         let max_repo_size_for_scaling = 100000.0;
         let max_large_file_ratio = 0.5;
         let min_large_file_ratio = 0.01;
 
-        if (repo_size as f64) <= min_repo_size_for_scaling {
-            large_file_percentage = max_large_file_ratio;
+        let large_file_percentage: f64 = if (repo_size as f64) <= min_repo_size_for_scaling {
+            max_large_file_ratio
         } else if (repo_size as f64) >= max_repo_size_for_scaling {
-            large_file_percentage = min_large_file_ratio;
+            min_large_file_ratio
         } else {
             let log_repo_size = (repo_size as f64).log10();
             let log_min_repo_size = min_repo_size_for_scaling.log10();
@@ -93,9 +92,9 @@ async fn setup_repo_for_push_benchmark(
             let normalized_log_repo_size =
                 (log_repo_size - log_min_repo_size) / (log_max_repo_size - log_min_repo_size);
 
-            large_file_percentage = max_large_file_ratio
-                - (max_large_file_ratio - min_large_file_ratio) * normalized_log_repo_size;
-        }
+            max_large_file_ratio
+                - (max_large_file_ratio - min_large_file_ratio) * normalized_log_repo_size
+        };
 
         // Note: If we want to have the push benchmark actually push to remotes with the proper repo_size,
         //       We would need to do this every iteration, which would be slow

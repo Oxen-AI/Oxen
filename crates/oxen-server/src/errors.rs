@@ -649,10 +649,8 @@ impl error::ResponseError for OxenHttpError {
                         let error_json = json!({
                             "error": {
                                 "type": "schema_error",
-                                "title":
-                                    "Incompatible Schemas",
-                                "detail":
-                                    format!("{}", error)
+                                "title": "Incompatible Schemas",
+                                "detail": error.to_string(),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,
