@@ -1,6 +1,7 @@
 # test_workspace_commit.py
 
 import os
+from datetime import datetime
 from oxen import RemoteRepo, Workspace
 from pathlib import PurePath
 
@@ -18,7 +19,10 @@ def test_commit_to_new_workspace(
 
     image_path_1 = os.path.join(shared_datadir, images_1)
     workspace.add(image_path_1)
-    assert len(remote_repo.list_workspaces()) == 1
+    workspaces = remote_repo.list_workspaces()
+    assert len(workspaces) == 1
+    created_at = datetime.fromisoformat(workspaces[0].created_at())
+    assert created_at.tzinfo is not None
 
     # Commit the changes
     workspace.commit("Adding a new image to the feature branch")

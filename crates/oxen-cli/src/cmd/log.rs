@@ -74,7 +74,7 @@ impl LogCmd {
         let commits = commits.iter().take(num_commits);
 
         // Fri, 21 Oct 2022 16:08:39 -0700
-        let format = format_description::parse(
+        let format = format_description::parse_borrowed::<1>(
             "[weekday], [day] [month repr:long] [year] [hour]:[minute]:[second] [offset_hour sign:mandatory]",
         ).unwrap();
 

@@ -161,6 +161,7 @@ impl PyRemoteRepo {
                 id: w.id.clone(),
                 name: w.name.clone(),
                 commit_id: w.commit.id.clone(),
+                created_at: w.created_at,
             })
             .collect())
     }

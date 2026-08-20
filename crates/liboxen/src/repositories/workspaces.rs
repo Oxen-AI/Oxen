@@ -14,6 +14,7 @@ use crate::util;
 use crate::model::{Commit, LocalRepository, Workspace, workspace::WorkspaceConfig};
 use crate::util::fs::AtomicFile;
 use crate::view::entries::EMetadataEntry;
+use time::OffsetDateTime;
 
 pub mod data_frames;
 pub mod df;
@@ -95,6 +96,7 @@ pub fn get_by_dir(
         )?,
         commit,
         is_editable: config.is_editable,
+        created_at: config.created_at,
     }))
 }
 
@@ -232,11 +234,13 @@ fn create_on_disk(
     let workspace_repo = init_workspace_repo(base_repo, &workspace_dir)?;
 
     // Serialize the workspace config to TOML
+    let created_at = OffsetDateTime::now_utc();
     let workspace_config = WorkspaceConfig {
         workspace_commit_id: commit.id.clone(),
         is_editable,
         workspace_name: workspace_name.clone(),
         workspace_id: Some(workspace_id.to_string()),
+        created_at: Some(created_at),
     };
 
     let toml_string = match toml::to_string(&workspace_config) {
@@ -260,6 +264,7 @@ fn create_on_disk(
         workspace_repo,
         commit: commit.clone(),
         is_editable,
+        created_at: Some(created_at),
     })
 }
 
@@ -1342,6 +1347,65 @@ mod tests {
 
             let idx = workspace_name_index::get_index(&repo)?;
             assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_create_records_created_at() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let before = OffsetDateTime::now_utc();
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "ws-created-at", true)?;
+            let after = OffsetDateTime::now_utc();
+
+            let created_at = workspace
+                .created_at
+                .expect("a freshly created workspace records created_at");
+            assert!(
+                created_at >= before && created_at <= after,
+                "created_at {created_at} should sit between {before} and {after}"
+            );
+
+            // Survives the round trip through the on-disk config.
+            let reloaded = repositories::workspaces::get(&repo, "ws-created-at")?
+                .expect("workspace should be found by id");
+            assert_eq!(reloaded.created_at, workspace.created_at);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_config_without_created_at_still_loads_and_commits() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create(&repo, &commit, "ws-legacy", true)?;
+
+            // A config written before the server recorded creation time has no `created_at` key.
+            let config_path = workspace.config_path();
+            let contents = util::fs::read_from_path(&config_path)?;
+            let legacy: String = contents
+                .lines()
+                .filter(|line| !line.starts_with("created_at"))
+                .map(|line| format!("{line}\n"))
+                .collect();
+            assert!(!legacy.contains("created_at"));
+            AtomicFile::new(&config_path).write(legacy.as_bytes())?;
+
+            let reloaded = repositories::workspaces::get(&repo, "ws-legacy")?
+                .expect("a workspace without created_at should still load");
+            assert_eq!(reloaded.created_at, None);
+
+            // Rewriting the config must not choke on the absent timestamp.
+            repositories::workspaces::update_commit(&reloaded, &commit.id)?;
+            let after_update = repositories::workspaces::get(&repo, "ws-legacy")?
+                .expect("workspace should still load after its commit is updated");
+            assert_eq!(after_update.created_at, None);
 
             Ok(())
         })
