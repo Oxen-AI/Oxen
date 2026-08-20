@@ -319,7 +319,7 @@ pub async fn list_missing_files(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/mark_commits_as_synced",
     tag = "Commits",
-    description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request, and will be removed in a future release.",
+    description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request. Removed in 0.59.0; the Oxen client stopped calling it in 0.54.0.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -351,8 +351,9 @@ pub async fn mark_commits_as_synced(
     // `IS_SYNCED` marker file that `list_missing` would later consult to skip re-uploading commit
     // metadata. The marker was load-bearing for skipping duplicate metadata uploads but became a
     // silent-data-loss vector when stale (see sibling no-op note on `list_missing`). It now accepts
-    // the request and returns OK without writing anything, preserving protocol compatibility with
-    // until we delete this endpoint entirely in the near future as part of ENG-994
+    // the request and returns OK without writing anything, preserving protocol compatibility for
+    // clients that still send it. Clients from 0.54.0 on do not; the endpoint goes in 0.59.0, once
+    // no client in the field still sends the POST. See docs/deprecations.md.
     log::debug!(
         "mark_commits_as_synced received {} commit hashes (no-op)",
         hashes.len()
