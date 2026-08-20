@@ -219,13 +219,11 @@ pub fn transfer_namespace(
         )));
     }
 
-    // The config is written before the move, so the rename is the last fallible step and a failure
-    // leaves the repo where it was. A repo carrying no identity keeps none.
+    // A repo carrying no identity keeps none.
     let mut config = RepositoryConfig::from_file(util::fs::config_filepath(&from_dir))?;
     if let Some(identity) = config.identity.as_mut() {
         identity.namespace = to_namespace_is_a_name.then(|| to_namespace.to_string());
     }
-    config.save(util::fs::config_filepath(&from_dir))?;
 
     // ensure DB instance is closed before we move the repo
     merkle_tree::merkle_tree_node_cache::remove_from_cache(&from_dir)?;
@@ -233,6 +231,10 @@ pub fn transfer_namespace(
     core::refs::remove_from_cache(&from_dir)?;
 
     util::fs::create_dir_all(&to_dir)?;
+
+    // Written once nothing else can fail, and before the move, so the rename is the only step
+    // whose failure leaves the repo describing a namespace it is not in.
+    config.save(util::fs::config_filepath(&from_dir))?;
     util::fs::rename(&from_dir, &to_dir)?;
 
     let updated_repo =
@@ -395,6 +397,7 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
 #[cfg(test)]
 mod tests {
     use crate::api::requests::RepoNew;
+    use crate::config::RepositoryConfig;
     use crate::config::UserConfig;
     use crate::constants;
     use crate::core::db::merkle_node::MerkleNodeBackend;
@@ -525,6 +528,41 @@ mod tests {
     {
         test::run_empty_dir_test_async(|sync_dir| async move {
             assert_eq!(transferred(&sync_dir, None, true).await?.identity, None);
+            Ok(())
+        })
+        .await
+    }
+
+    /// The hint is written only once nothing else can fail, so a transfer that cannot even start
+    /// leaves the repo describing the namespace it is still in.
+    #[tokio::test]
+    async fn test_transfer_namespace_leaves_the_hint_alone_when_the_move_cannot_start()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+            let repo_path = repo.path.clone();
+            drop(repo);
+
+            // A file where the destination namespace directory belongs, so the transfer fails
+            // creating it, after the point the hint used to be written.
+            util::fs::write_to_path(sync_dir.join("bessie"), "not a directory")?;
+
+            let result =
+                repositories::transfer_namespace(&sync_dir, "cats", "ox", "bessie", true, None);
+            assert!(result.is_err(), "the transfer must fail");
+
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_path))?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(
+                identity.namespace.as_deref(),
+                Some("ox"),
+                "a transfer that never moved anything must not have rewritten the hint"
+            );
+
             Ok(())
         })
         .await
