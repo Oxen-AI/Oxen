@@ -92,7 +92,11 @@ pub struct UncheckedVersion {
 }
 
 /// What a [`verify_repo`] pass found.
+///
+/// Travels over the wire, so a class absent from the JSON reads as empty: that means the sender
+/// did not report it, not that it looked and found nothing.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VerifyReport {
     pub branches_checked: usize,
     pub commits_checked: usize,
@@ -408,6 +412,37 @@ mod tests {
             findings.sample,
             (0..SAMPLE_LIMIT).collect::<Vec<_>>(),
             "the sample is the first findings seen"
+        );
+    }
+
+    #[test]
+    fn test_a_report_survives_skew_with_a_server_of_another_version() {
+        let mut report = VerifyReport {
+            versions_checked: 7,
+            ..Default::default()
+        };
+        report.missing_versions.record("abc123".to_string());
+
+        let mut json = serde_json::to_value(&report).expect("a report serializes");
+        let fields = json.as_object_mut().expect("a report is a JSON object");
+        // A server older than this client omits a class it never had.
+        fields
+            .remove("unchecked_versions")
+            .expect("the class was there to remove");
+        // A server newer than this client sends a class this client has never heard of.
+        fields.insert(
+            "findings_from_a_later_version".to_string(),
+            serde_json::json!({ "count": 1, "sample": [] }),
+        );
+
+        let parsed: VerifyReport =
+            serde_json::from_value(json).expect("a report from either side still parses");
+
+        assert_eq!(parsed.versions_checked, 7, "known counters survive");
+        assert_eq!(parsed.missing_versions.count, 1, "known findings survive");
+        assert!(
+            parsed.unchecked_versions.is_empty(),
+            "an omitted class reads as unreported"
         );
     }
 
