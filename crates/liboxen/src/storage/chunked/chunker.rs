@@ -103,12 +103,12 @@ mod tests {
             assert_eq!(chunk.offset, expected_offset, "chunk {i} offset");
             assert!(!chunk.data.is_empty(), "chunk {i} empty");
             assert!(
-                chunk.data.len() <= MAX_CHUNK_SIZE as usize,
+                chunk.data.len() <= MAX_CHUNK_SIZE,
                 "chunk {i} exceeds max size"
             );
             if i + 1 < chunks.len() {
                 assert!(
-                    chunk.data.len() >= MIN_CHUNK_SIZE as usize,
+                    chunk.data.len() >= MIN_CHUNK_SIZE,
                     "non-final chunk {i} under min size"
                 );
             }
@@ -165,19 +165,14 @@ mod tests {
     /// The maximum size is then the only thing that can end a chunk.
     #[test]
     fn zeros_chunk_at_max_size() {
-        let len = 3 * MAX_CHUNK_SIZE as usize + 1000;
+        let len = 3 * MAX_CHUNK_SIZE + 1000;
         let data = vec![0u8; len];
         let chunks = chunk_all(&data);
         assert_tiles_input(&chunks, &data);
         let lens: Vec<usize> = chunks.iter().map(|c| c.data.len()).collect();
         assert_eq!(
             lens,
-            vec![
-                MAX_CHUNK_SIZE as usize,
-                MAX_CHUNK_SIZE as usize,
-                MAX_CHUNK_SIZE as usize,
-                1000
-            ]
+            vec![MAX_CHUNK_SIZE, MAX_CHUNK_SIZE, MAX_CHUNK_SIZE, 1000]
         );
     }
 

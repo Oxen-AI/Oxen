@@ -26,10 +26,12 @@ pub struct ChunkerId(u8);
 impl ChunkerId {
     /// FastCDC v2020, normalized, min 8 KiB, target 64 KiB, max 128 KiB.
     ///
-    /// A crate release that moved a cut by one byte would keep the same API,
+    /// The fastcdc crate is pinned to an exact version.
+    /// A release that moved a cut by one byte would keep the same API,
     /// and it would break the format.
-    /// The golden boundary test is what catches that,
-    /// along with a change to the sizes above or to the chunking code.
+    /// Consumers of liboxen resolve their own dependencies, where no test of ours runs.
+    /// The golden boundary test covers the rest:
+    /// a change to the sizes above, to the chunking code, or to the pin.
     pub const GENERIC_FASTCDC_V1: ChunkerId = ChunkerId(1);
 
     // 0 stays permanently unassigned.

@@ -16,6 +16,6 @@ pub use registry::{ChunkerId, chunker};
 // FastCDC's min_size, avg_size, and max_size.
 // These read like tuning knobs, but ChunkerId::GENERIC_FASTCDC_V1 names this triple,
 // and changing any of them belongs under a new ID.
-pub const MIN_CHUNK_SIZE: u32 = 8 * 1024;
-pub const AVG_CHUNK_SIZE: u32 = 64 * 1024;
-pub const MAX_CHUNK_SIZE: u32 = 128 * 1024;
+pub const MIN_CHUNK_SIZE: usize = 8 * 1024;
+pub const AVG_CHUNK_SIZE: usize = 64 * 1024;
+pub const MAX_CHUNK_SIZE: usize = 128 * 1024;
