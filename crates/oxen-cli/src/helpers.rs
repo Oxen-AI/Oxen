@@ -84,13 +84,13 @@ pub async fn check_remote_version_blocking(
 }
 
 /// Rejects an explicit request for the filesystem merkle backend, which is deprecated in 0.54.0
-/// and removed in 0.55.0. See docs/deprecations.md.
+/// and removed in 0.59.0. See docs/deprecations.md.
 pub fn reject_deprecated_merkle_backend(
     backend: Option<MerkleNodeBackend>,
 ) -> Result<(), OxenError> {
     if backend == Some(MerkleNodeBackend::Filesystem) {
         return Err(OxenError::basic_str(
-            "The filesystem merkle backend is deprecated and is removed in Oxen 0.55.0. \
+            "The filesystem merkle backend is deprecated and is removed in Oxen 0.59.0. \
              Omit --merkle-backend to use LMDB.",
         ));
     }

@@ -42,7 +42,7 @@ impl Migrate for MerkleNodesToLmdbMigration {
     }
 
     fn is_needed(&self, repo: &LocalRepository) -> Result<bool, OxenError> {
-        // The filesystem backend is deprecated in 0.54.0 and removed in 0.55.0; see
+        // The filesystem backend is deprecated in 0.54.0 and removed in 0.59.0; see
         // docs/deprecations.md. A filesystem-backed repo must transcode before the CLI will
         // operate on it, so every command guarded by `check_repo_migration_needed` refuses until
         // `oxen migrate up merkle_nodes_to_lmdb` has run. `oxen migrate` itself is unguarded, so
