@@ -988,6 +988,11 @@ impl OxenError {
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            // An unknown ID stays unknown however many times it is asked.
+            // ChunkRead stays retryable, since a failed read can succeed later.
+            OxenError::ChunkedError(crate::storage::chunked::ChunkedError::UnknownChunkerId(_)) => {
+                true
+            }
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
