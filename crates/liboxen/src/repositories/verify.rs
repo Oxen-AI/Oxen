@@ -569,6 +569,9 @@ mod tests {
         .await
     }
 
+    /// Unix only: the induced failure is a non-directory path component, which Windows reports as
+    /// not-found and so classifies as an absent blob rather than an unreadable one.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_a_blob_whose_size_cannot_be_read_is_not_called_healthy() -> Result<(), OxenError>
     {
