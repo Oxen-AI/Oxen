@@ -1,20 +1,27 @@
-//! Process-global per-data-frame write lock — serializes the read-modify-write row operations on
-//! a single workspace data frame's staged table.
+//! Process-global per-data-frame write lock: serializes the operations that mutate a single
+//! workspace data frame's staged table.
 //!
 //! # Why it exists
 //!
-//! Appending, updating, or deleting a row reads the staged DuckDB table, derives new contents, and
-//! writes them back. Two of those running at once on the same table produce last-writer-wins: the
-//! loser's rows are discarded while both callers are told they succeeded. The cached DuckDB
-//! connection ([`crate::core::db::data_frames::df_db`]) serializes writes only while both callers
-//! share the cached connection — its cache evicts under LRU pressure, and an eviction between two
-//! in-flight row writes hands each caller its own connection to the same file, at which point
-//! nothing serializes them. This lock keys on the same identity the connection cache does but is
-//! never evicted, so exclusion holds regardless of what the cache is currently holding.
+//! Opening a DuckDB database file that this process already has open yields a second, independent
+//! database rather than joining the first, because DuckDB's single-writer protection is a file lock
+//! that excludes other processes. The two then diverge, and whichever folds its state into the file
+//! last is the version that survives, so the other's rows are gone while both callers were told
+//! they succeeded. That is true of any write, a lone `INSERT` included, so making a write atomic in
+//! SQL would not remove the need for this lock.
+//!
+//! What normally keeps one database per file is the connection cache in
+//! [`crate::core::db::data_frames::df_db`]. A cache entry is a connection behind a mutex, so
+//! writers that find the same entry are serialized by it. That is incidental, and it stops holding
+//! the moment the entry is gone: the cache evicts under LRU pressure, and `rename`, workspace
+//! delete, and repo delete evict by hand. An eviction while one writer is still inside its
+//! operation hands the next writer its own database over the same file. This lock keys on the same
+//! identity the connection cache does but is never evicted, so exclusion holds regardless of what
+//! the cache is currently holding.
 //!
 //! # Scope and ordering
 //!
-//! One lock per data frame, keyed by the path of its staged DuckDB file — the identity of a
+//! One lock per data frame, keyed by the path of its staged DuckDB file, which is the identity of a
 //! (repository, workspace, data frame path) triple. Writes to different data frames, different
 //! workspaces, or different repositories never contend.
 //!
@@ -25,16 +32,17 @@
 //! Two ordering rules keep it deadlock-free, and both are structural rather than conventional:
 //!
 //! - It is always taken *before* the DuckDB connection lock, never the other way around, because
-//!   [`with_data_frame_write`] wraps whole row operations and the connection lock is taken inside
-//!   them.
+//!   [`with_data_frame_write`] wraps whole operations and the connection lock is taken inside them.
 //! - It cannot be held across an `.await`, because [`with_data_frame_write`] takes a synchronous
-//!   closure. Nothing that indexes or rebuilds the table (all of which is async) can be waiting on
-//!   this lock, so no cycle with the read path — which indexes on demand — is possible.
+//!   closure. The rebuild paths are async overall, but each takes the guard inside a
+//!   `spawn_blocking` and around synchronous work only, so a holder is never suspended waiting on a
+//!   future that needs the same guard.
 //!
 //! shortcut: an in-process lock, which serializes writers only within one oxen-server process. If
 //! the server is ever run as more than one process per repository, this needs to become a lock the
-//! processes share (a lock file on the workspace directory, or a row op that is atomic in DuckDB
-//! itself).
+//! processes share, such as a lock file on the workspace directory. Note that a row operation that
+//! is atomic in DuckDB is *not* an alternative: the hazard is two databases over one file, which no
+//! single statement addresses.
 //!
 //! The registry never evicts: it holds one small mutex per data frame the process has written to,
 //! for the life of the process.

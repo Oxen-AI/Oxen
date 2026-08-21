@@ -120,7 +120,12 @@ pub async fn restore(
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    // Unstage and then restage the df
+    // Unstage and then restage the df.
+    //
+    // Two separately guarded steps, not one: the data frame's write guard cannot be held across the
+    // `.await` below. A row write landing in the gap therefore fails with `DatasetNotIndexed`
+    // rather than being silently discarded by the rebuild, which is the right outcome for a caller
+    // that asked for the staged edits to be thrown away.
     unindex(workspace, &path)?;
 
     // TODO: we could do this more granularly without a full reset
@@ -534,9 +539,10 @@ mod tests {
         }
     }
 
-    /// Every concurrent append to one data frame lands. An append reads the staged table and
-    /// writes derived contents back, so writers that overlap discard one another's rows while
-    /// each caller is told its own row was saved.
+    /// Every concurrent append to one data frame lands. Writers that overlap can end up on
+    /// separate DuckDB databases over the same file, and the one that folds its state into the
+    /// file last wins, so the other's rows are gone while each caller was told its own row was
+    /// saved.
     ///
     /// Evicting the data frame's cached DuckDB connection is what makes the hazard reachable.
     /// That connection is per-file and serializes writes only while every writer shares it; LRU

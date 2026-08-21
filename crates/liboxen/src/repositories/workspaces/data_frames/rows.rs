@@ -18,8 +18,9 @@ use std::path::Path;
 
 /// Append `data` as a new row and return it as staged, `_oxen_id` included.
 ///
-/// Serialized against the other row writes on this data frame: the append reads the staged table
-/// and writes derived contents back, so overlapping writes would discard one another's rows.
+/// Serialized against the other writes on this data frame: overlapping writes can end up on
+/// separate DuckDB databases over the same file and discard one another's rows. See
+/// [`crate::core::data_frame_locks`].
 pub fn add(
     _repo: &LocalRepository,
     workspace: &Workspace,
@@ -34,7 +35,8 @@ pub fn add(
 
 /// Overwrite the row `row_id` with `data` and return it as staged.
 ///
-/// Serialized against the other row writes on this data frame — see [`add`].
+/// Serialized against the other writes on this data frame, which here also covers the gap between
+/// reading the row and writing it back. See [`add`].
 pub fn update(
     _repo: &LocalRepository,
     workspace: &Workspace,
@@ -50,7 +52,7 @@ pub fn update(
 
 /// Overwrite each `{row_id, value}` pair in `data` and return the ids updated.
 ///
-/// Serialized against the other row writes on this data frame — see [`add`].
+/// Serialized against the other writes on this data frame. See [`add`].
 pub fn batch_update(
     _repo: &LocalRepository,
     workspace: &Workspace,
@@ -65,7 +67,7 @@ pub fn batch_update(
 
 /// Remove the row `row_id` and return it as it was before the delete.
 ///
-/// Serialized against the other row writes on this data frame — see [`add`].
+/// Serialized against the other writes on this data frame. See [`add`].
 pub fn delete(
     _repo: &LocalRepository,
     workspace: &Workspace,
