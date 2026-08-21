@@ -5,7 +5,6 @@ use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
 use liboxen::model::User;
-use liboxen::model::merkle_tree::merkle_tree_node_cache;
 use liboxen::model::metadata::metadata_image::ImgResize;
 
 use liboxen::util;
@@ -563,8 +562,6 @@ async fn server() -> Result<(), ServerError> {
                 &ip,
                 port,
                 ServerOpts {
-                    // TODO: why is this not checking the value of the env var?
-                    disable_merkle_cache: env::var("OXEN_DISABLE_MERKLE_CACHE").is_ok(),
                     enable_auth: auth,
                     test_mode: test,
                 },
@@ -812,7 +809,6 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
 /// [`config::Config`] (which carries settings from disk).
 #[derive(Debug, Clone)]
 struct ServerOpts {
-    disable_merkle_cache: bool,
     enable_auth: bool,
     /// Test mode (`--test`): relaxes the import SSRF guard to allow loopback targets. Never
     /// enabled in production.
@@ -827,22 +823,9 @@ async fn start(
     config: Config,
 ) -> Result<(), std::io::Error> {
     let ServerOpts {
-        disable_merkle_cache,
         enable_auth,
         test_mode,
     } = opts;
-
-    // Configure merkle tree node caching
-    if disable_merkle_cache {
-        log::info!("Merkle tree node caching disabled");
-    } else {
-        log::info!("Merkle tree node caching enabled");
-        merkle_tree_node_cache::enable();
-        log::info!(
-            "Merkle tree node cache size: {}",
-            merkle_tree_node_cache::CACHE_SIZE.get()
-        );
-    }
 
     // Install DuckDB extensions before actix hands out any request threads. oxen-server
     // is a single-instance deploy, so every restart drains pent-up client retries into a

@@ -9,7 +9,6 @@ pub mod file_node_types;
 pub mod file_node_with_dir;
 pub mod legacy_pre_025;
 pub mod merkle_tree_node;
-pub mod merkle_tree_node_cache;
 pub mod staged_merkle_tree_node;
 pub mod vnode;
 

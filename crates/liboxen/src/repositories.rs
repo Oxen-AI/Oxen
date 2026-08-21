@@ -226,7 +226,6 @@ pub fn transfer_namespace(
     }
 
     // ensure DB instance is closed before we move the repo
-    merkle_tree::merkle_tree_node_cache::remove_from_cache(&from_dir)?;
     core::staged::remove_from_cache_with_children(&from_dir)?;
     core::refs::remove_from_cache(&from_dir)?;
 
@@ -378,7 +377,6 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
         // Close DB instances before trying to delete the directory
-        merkle_tree::merkle_tree_node_cache::remove_from_cache(&path)?;
         core::staged::remove_from_cache_with_children(&path)?;
         core::refs::ref_manager::remove_from_cache(&path)?;
 

@@ -17,7 +17,6 @@ use crate::model::User;
 use crate::model::data_frame::schema::Field;
 use crate::model::file::FileContents;
 use crate::model::file::FileNew;
-use crate::model::merkle_tree::node::merkle_tree_node_cache;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::RmOpts;
 use crate::repositories;
@@ -1486,7 +1485,6 @@ pub fn assert_no_live_lmdb_envs(dir: &Path) {
 
 pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     // Always remove caches
-    merkle_tree_node_cache::remove_from_cache(repo_dir)?;
     core::staged::remove_from_cache_with_children(repo_dir)?;
     core::refs::ref_manager::remove_from_cache_with_children(repo_dir)?;
     core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;

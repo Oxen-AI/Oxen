@@ -6,7 +6,7 @@ use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
-use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus, merkle_tree};
+use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
@@ -549,7 +549,6 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     }
 
     // Clean up caches before deleting the workspace
-    merkle_tree::merkle_tree_node_cache::remove_from_cache(&workspace.workspace_repo.path)?;
     core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
     // Drop cached DuckDB connections rooted in this workspace before removing the dir. On NFS,
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
