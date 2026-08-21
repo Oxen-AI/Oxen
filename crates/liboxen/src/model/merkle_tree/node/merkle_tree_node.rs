@@ -12,8 +12,6 @@ use crate::model::{LocalRepository, MerkleHash, MerkleTreeNodeType};
 
 use serde::{Deserialize, Serialize};
 
-use super::merkle_tree_node_cache;
-
 #[derive(Clone, Eq, Deserialize, Serialize)]
 pub struct MerkleTreeNode {
     pub hash: MerkleHash,
@@ -25,22 +23,6 @@ pub struct MerkleTreeNode {
 impl MerkleTreeNode {
     /// Create an empty root node with a hash
     pub fn from_hash(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
-        // Check cache first
-        if let Some(cached_node) = merkle_tree_node_cache::get_cached_node(repo, hash) {
-            return Ok((*cached_node).clone());
-        }
-
-        // If not in cache, load from disk
-        let node = Self::from_hash_uncached(repo, hash)?;
-
-        // Cache the result
-        merkle_tree_node_cache::cache_node(repo, *hash, node.clone());
-
-        Ok(node)
-    }
-
-    /// Private implementation that loads from disk without caching
-    fn from_hash_uncached(repo: &LocalRepository, hash: &MerkleHash) -> Result<Self, OxenError> {
         let store = repo.merkle_node_store();
         if !store.exists(hash)? {
             return Err(OxenError::MerkleNodeNotFound(hash.to_hex_hash()));
@@ -56,25 +38,6 @@ impl MerkleTreeNode {
     }
 
     pub fn read_children_from_hash(
-        repo: &LocalRepository,
-        hash: &MerkleHash,
-    ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
-        // Check cache first
-        if let Some(cached_children) = merkle_tree_node_cache::get_cached_children(repo, hash) {
-            return Ok((*cached_children).clone());
-        }
-
-        // If not in cache, load from disk
-        let children = Self::read_children_from_hash_uncached(repo, hash)?;
-
-        // Cache the result
-        merkle_tree_node_cache::cache_children(repo, *hash, children.clone());
-
-        Ok(children)
-    }
-
-    /// Private implementation that loads from disk without caching
-    fn read_children_from_hash_uncached(
         repo: &LocalRepository,
         hash: &MerkleHash,
     ) -> Result<Vec<(MerkleHash, MerkleTreeNode)>, OxenError> {
