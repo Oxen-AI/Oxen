@@ -680,6 +680,33 @@ mod tests {
                 "index must still rebuild from the committed file"
             );
 
+            // Present but partial: a table missing `_oxen_id`, which is what an interrupted index
+            // leaves behind. It cannot be queried, so "absent" has to include it. Otherwise the
+            // frame stays unqueryable no matter how many times a caller asks for it.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("ALTER TABLE \"{TABLE_NAME}\" DROP COLUMN \"{OXEN_ID_COL}\""),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "index_if_absent must rebuild a partially-indexed table rather than keep it"
+            );
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows
+            );
+
             Ok(())
         })
         .await

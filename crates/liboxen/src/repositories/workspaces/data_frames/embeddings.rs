@@ -7,6 +7,7 @@ use crate::config::EMBEDDING_CONFIG_FILENAME;
 use crate::config::EmbeddingConfig;
 use crate::config::embedding_config::{EmbeddingColumn, EmbeddingStatus};
 use crate::constants::{EXCLUDE_OXEN_COLS, TABLE_NAME};
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::data_frame::schema::Field;
@@ -103,19 +104,24 @@ fn perform_indexing(
     vector_length: usize,
 ) -> Result<(), DataFrameError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            // Execute VSS commands separately
-            conn.execute("INSTALL vss;", [])?;
-            conn.execute("LOAD vss;", [])?;
-            conn.execute("SET hnsw_enable_experimental_persistence = true;", [])?;
+    // Retyping a column rewrites the table, so hold the data frame against the row and column
+    // writes for the duration.
+    with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                // Execute VSS commands separately
+                conn.execute("INSTALL vss;", [])?;
+                conn.execute("LOAD vss;", [])?;
+                conn.execute("SET hnsw_enable_experimental_persistence = true;", [])?;
 
-            // Convert column type
-            let sql =
-                format!("ALTER TABLE df ALTER COLUMN {column_name} TYPE FLOAT[{vector_length}];");
-            log::debug!("Updating column type: {sql}");
-            conn.execute(&sql, [])?;
-            Ok(())
+                // Convert column type
+                let sql = format!(
+                    "ALTER TABLE df ALTER COLUMN {column_name} TYPE FLOAT[{vector_length}];"
+                );
+                log::debug!("Updating column type: {sql}");
+                conn.execute(&sql, [])?;
+                Ok(())
+            })
         })
     })?;
 
