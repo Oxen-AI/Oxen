@@ -2,20 +2,21 @@
 //!
 //! Read-only integrity checks for a repository.
 //!
-//! Answers one question: does everything this repository's branches reference actually exist, and
+//! Answers one question: does everything this repository's commits reference actually exist, and
 //! does it look like what the tree says it is. Nothing here mutates a repository.
 //!
 //! Findings are reported as counts plus a bounded sample.
 
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use crate::error::OxenError;
-use crate::model::{Commit, CommitEntry, LocalRepository, MerkleHash, NewCommit};
+use crate::model::{Commit, LocalRepository, MerkleHash, NewCommit};
 use crate::repositories;
 use crate::repositories::commits::commit_writer::compute_commit_id;
+use crate::repositories::tree::AddedFile;
 
 /// Examples of each finding a report carries alongside the count.
 const SAMPLE_LIMIT: usize = 10;
@@ -88,7 +89,7 @@ pub struct SizeMismatch {
 pub struct VerifyReport {
     pub branches_checked: usize,
     pub commits_checked: usize,
-    pub entries_checked: usize,
+    pub versions_checked: usize,
     pub dangling_branches: Findings<DanglingBranch>,
     pub dangling_parents: Findings<DanglingParent>,
     pub misaddressed_commits: Findings<MisaddressedCommit>,
@@ -119,64 +120,67 @@ impl VerifyReport {
     }
 }
 
-/// Check that everything the repository's branches reference is present and the right size.
+/// Check that everything the repository's commits reference is present and the right size.
 ///
-/// Reads only. Cost scales with the number of reachable entries: one version-store metadata probe
-/// per distinct content hash, and no blob contents are read.
+/// Reads only. Cost scales with the repository's distinct object count, which is also held in
+/// memory: no blob contents are read, and each distinct content hash costs at most one
+/// version-store existence probe and one metadata probe.
 pub async fn verify_repo(repo: &LocalRepository) -> Result<VerifyReport, OxenError> {
     let mut report = VerifyReport::default();
 
-    let heads = resolve_branch_heads(repo, &mut report).await?;
-    check_commits(repo, &mut report).await?;
-    check_reachable_objects(repo, &heads, &mut report).await?;
-    check_entry_sizes(repo, &heads, &mut report).await?;
+    check_branch_heads(repo, &mut report).await?;
+    let commits = check_commits(repo, &mut report).await?;
+    let versions = check_tree_nodes(repo, &commits, &mut report).await?;
+    check_versions(repo, versions, &mut report).await?;
 
     Ok(report)
 }
 
-/// The commit each branch points at, recording the branches whose head does not resolve.
-async fn resolve_branch_heads(
+/// Every branch head names a commit the repository holds.
+async fn check_branch_heads(
     repo: &LocalRepository,
     report: &mut VerifyReport,
-) -> Result<Vec<Commit>, OxenError> {
+) -> Result<(), OxenError> {
     let branches = repositories::branches::list(repo).await?;
     report.branches_checked = branches.len();
 
     let walk_repo = repo.clone();
-    let (heads, dangling) = tokio::task::spawn_blocking(
-        move || -> Result<(Vec<Commit>, Findings<DanglingBranch>), OxenError> {
-            let mut heads = Vec::new();
+    let dangling =
+        tokio::task::spawn_blocking(move || -> Result<Findings<DanglingBranch>, OxenError> {
             let mut dangling = Findings::default();
             for branch in branches {
-                match repositories::commits::get_by_id(&walk_repo, &branch.commit_id)? {
-                    Some(commit) => heads.push(commit),
-                    None => dangling.record(DanglingBranch {
+                if repositories::commits::get_by_id(&walk_repo, &branch.commit_id)?.is_none() {
+                    dangling.record(DanglingBranch {
                         branch: branch.name,
                         commit_id: branch.commit_id,
-                    }),
+                    });
                 }
             }
-            Ok((heads, dangling))
-        },
-    )
-    .await??;
+            Ok(dangling)
+        })
+        .await??;
 
     report.dangling_branches = dangling;
-    Ok(heads)
+    Ok(())
 }
 
 /// Every reachable commit hashes to the id it is filed under, and every parent it names resolves.
-async fn check_commits(repo: &LocalRepository, report: &mut VerifyReport) -> Result<(), OxenError> {
+async fn check_commits(
+    repo: &LocalRepository,
+    report: &mut VerifyReport,
+) -> Result<Vec<Commit>, OxenError> {
     type CommitFindings = (
-        usize,
+        Vec<Commit>,
         Findings<DanglingParent>,
         Findings<MisaddressedCommit>,
     );
 
     let walk_repo = repo.clone();
-    let (commits_checked, dangling, misaddressed) =
+    let (commits, dangling, misaddressed) =
         tokio::task::spawn_blocking(move || -> Result<CommitFindings, OxenError> {
-            let commits = repositories::commits::list_all(&walk_repo)?;
+            let commits: Vec<Commit> = repositories::commits::list_all(&walk_repo)?
+                .into_iter()
+                .collect();
             let mut dangling = Findings::default();
             let mut misaddressed = Findings::default();
 
@@ -199,14 +203,14 @@ async fn check_commits(repo: &LocalRepository, report: &mut VerifyReport) -> Res
                     }
                 }
             }
-            Ok((commits.len(), dangling, misaddressed))
+            Ok((commits, dangling, misaddressed))
         })
         .await??;
 
-    report.commits_checked = commits_checked;
+    report.commits_checked = commits.len();
     report.dangling_parents = dangling;
     report.misaddressed_commits = misaddressed;
-    Ok(())
+    Ok(commits)
 }
 
 /// A commit's own fields, re-hashed, against the id it is filed under.
@@ -230,85 +234,111 @@ fn misaddressed_commit(commit: &Commit) -> Result<Option<MisaddressedCommit>, Ox
     }))
 }
 
-/// Merkle nodes and version blobs the branch trees reference but the repository does not hold.
-async fn check_reachable_objects(
+/// Merkle nodes the repository's commits reference but do not hold, returning the version blobs
+/// those commits reference so the store can be checked once for the whole set.
+///
+/// Every commit is covered, not only the branch heads, so a blob whose file was deleted in a later
+/// commit stays in scope for the commit that still has it. Each commit is walked as a delta against
+/// its first parent, and a commit whose parent the repository lacks is walked whole, so the total
+/// cost is the repository's distinct object count rather than the sum of every tree.
+async fn check_tree_nodes(
     repo: &LocalRepository,
-    heads: &[Commit],
+    commits: &[Commit],
     report: &mut VerifyReport,
-) -> Result<(), OxenError> {
-    let mut seen_nodes = HashSet::new();
-    let mut seen_versions = HashSet::new();
+) -> Result<HashMap<String, AddedFile>, OxenError> {
+    type TreeFindings = (HashMap<String, AddedFile>, Findings<String>);
 
-    for head in heads {
-        // `None` as the base widens the walk from a delta to the whole tree.
-        let missing = repositories::tree::find_missing_added_objects(repo, None, head).await?;
-        for node in missing.nodes {
-            if seen_nodes.insert(node.clone()) {
-                report.missing_nodes.record(node);
-            }
-        }
-        for version in missing.versions {
-            if seen_versions.insert(version.clone()) {
-                report.missing_versions.record(version);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Stored blob size against the size each file node declares.
-async fn check_entry_sizes(
-    repo: &LocalRepository,
-    heads: &[Commit],
-    report: &mut VerifyReport,
-) -> Result<(), OxenError> {
-    let version_store = repo.version_store();
+    // Sync core: the merkle walk and the node-existence probes are sync DB IO, one blocking unit.
     let walk_repo = repo.clone();
-    let heads = heads.to_vec();
-    let (entries_checked, entries) =
-        tokio::task::spawn_blocking(move || -> Result<(usize, Vec<CommitEntry>), OxenError> {
-            let mut probed = HashSet::new();
-            let mut entries = Vec::new();
-            let mut entries_checked = 0;
+    let commits = commits.to_vec();
+    let (versions, missing_nodes) =
+        tokio::task::spawn_blocking(move || -> Result<TreeFindings, OxenError> {
+            let mut by_hash: HashMap<MerkleHash, &Commit> = HashMap::new();
+            for commit in &commits {
+                by_hash.insert(commit.hash()?, commit);
+            }
 
-            for head in &heads {
-                // A head whose tree is absent has no entries to size, and the missing node is
-                // already reported.
-                if repositories::tree::get_root_with_children(&walk_repo, head)?.is_none() {
+            let store = walk_repo.merkle_node_store();
+            let mut versions: HashMap<String, AddedFile> = HashMap::new();
+            let mut seen_nodes: HashSet<MerkleHash> = HashSet::new();
+            let mut missing_nodes = Findings::default();
+
+            for commit in &commits {
+                // Parents resolve by the rule the dangling-parent check uses, so a parent that
+                // check reports as present is one this walk takes a delta against.
+                let base = commit
+                    .parent_ids
+                    .first()
+                    .and_then(|id| id.parse::<MerkleHash>().ok())
+                    .and_then(|hash| by_hash.get(&hash).copied());
+                let Some(added) = repositories::tree::added_objects(&walk_repo, base, commit)?
+                else {
+                    // No root directory node means the commit's tree was never written.
+                    missing_nodes.record(commit.hash()?.to_string());
                     continue;
-                }
-                for entry in repositories::entries::list_for_commit(&walk_repo, head)? {
-                    entries_checked += 1;
-                    if probed.insert(entry.hash.clone()) {
-                        entries.push(entry);
+                };
+
+                for hash in added.nodes {
+                    if seen_nodes.insert(hash) && !store.exists(&hash)? {
+                        missing_nodes.record(hash.to_string());
                     }
                 }
+                for (hash, file) in added.versions {
+                    versions.entry(hash).or_insert(file);
+                }
             }
-            Ok((entries_checked, entries))
+            Ok((versions, missing_nodes))
         })
         .await??;
 
-    report.entries_checked = entries_checked;
+    report.versions_checked = versions.len();
+    report.missing_nodes = missing_nodes;
+    Ok(versions)
+}
 
-    let max_concurrent = MAX_CONCURRENT_SIZE_PROBES.min(entries.len().max(1));
-    let mut probes = futures_util::stream::iter(entries)
-        .map(|entry| {
+/// Version blobs the repository does not hold, and blobs whose stored size disagrees with the size
+/// the file node referencing them declares.
+async fn check_versions(
+    repo: &LocalRepository,
+    versions: HashMap<String, AddedFile>,
+    report: &mut VerifyReport,
+) -> Result<(), OxenError> {
+    let version_store = repo.version_store();
+
+    let hashes: Vec<String> = versions.keys().cloned().collect();
+    let missing: HashSet<String> = version_store
+        .find_missing_versions(&hashes)
+        .await?
+        .into_iter()
+        .collect();
+    for hash in &missing {
+        report.missing_versions.record(hash.clone());
+    }
+
+    // An absent blob has no size to disagree with, and is already reported.
+    let present: Vec<(String, AddedFile)> = versions
+        .into_iter()
+        .filter(|(hash, _)| !missing.contains(hash))
+        .collect();
+
+    let max_concurrent = MAX_CONCURRENT_SIZE_PROBES.min(present.len().max(1));
+    let mut probes = futures_util::stream::iter(present)
+        .map(|(hash, file)| {
             let version_store = version_store.clone();
             async move {
-                // An absent blob has no size and is already reported as a missing version.
-                let stored = version_store.get_version_size(&entry.hash).await.ok();
-                (entry, stored)
+                let stored = version_store.get_version_size(&hash).await.ok();
+                (hash, file, stored)
             }
         })
         .buffer_unordered(max_concurrent);
 
-    while let Some((entry, stored)) = probes.next().await {
+    while let Some((hash, file, stored)) = probes.next().await {
         let Some(stored_bytes) = stored else { continue };
-        if stored_bytes != entry.num_bytes {
+        if stored_bytes != file.num_bytes {
             report.size_mismatches.record(SizeMismatch {
-                hash: entry.hash,
-                path: entry.path,
-                declared_bytes: entry.num_bytes,
+                hash,
+                path: file.path,
+                declared_bytes: file.num_bytes,
                 stored_bytes,
             });
         }
@@ -321,6 +351,7 @@ mod tests {
     use super::*;
     use crate::test;
     use crate::util;
+    use std::path::Path;
 
     /// The single stored version blob under `dir`, for tests that corrupt one deliberately.
     fn find_only_version_blob(dir: &std::path::Path) -> Result<PathBuf, OxenError> {
@@ -366,6 +397,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_blob_only_older_commits_reference_is_still_checked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let doomed = repo.path.join("doomed.txt");
+            util::fs::write_to_path(&doomed, "only in the first commit")?;
+            repositories::add(&repo, &doomed).await?;
+            let first = repositories::commit(&repo, "Add doomed")?;
+
+            let entries = repositories::entries::list_for_commit(&repo, &first)?;
+            let doomed_hash = entries.first().expect("one entry").hash.clone();
+
+            // Remove it, so the branch head's tree no longer references the blob but history does.
+            repositories::rm(
+                &repo,
+                &crate::opts::RmOpts::from_path(Path::new("doomed.txt")),
+            )
+            .await?;
+            repositories::commit(&repo, "Remove doomed")?;
+
+            repo.version_store().delete_version(&doomed_hash).await?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.missing_versions.count, 1,
+                "a blob an older commit still references is missing: {report:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_the_size_of_a_blob_only_older_commits_reference_is_checked()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            let doomed = nested.join("doomed.txt");
+            util::fs::write_to_path(&doomed, "only in the first commit")?;
+            repositories::add(&repo, &doomed).await?;
+            let first = repositories::commit(&repo, "Add doomed")?;
+
+            let entries = repositories::entries::list_for_commit(&repo, &first)?;
+            let declared_bytes = entries.first().expect("one entry").num_bytes;
+
+            // Remove it, so the branch head's tree no longer references the blob but history does.
+            repositories::rm(
+                &repo,
+                &crate::opts::RmOpts::from_path(Path::new("nested/doomed.txt")),
+            )
+            .await?;
+            repositories::commit(&repo, "Remove doomed")?;
+
+            let blob = find_only_version_blob(&repo.path.join(".oxen").join("versions"))?;
+            std::fs::write(&blob, b"short")?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.size_mismatches.count, 1,
+                "a blob an older commit still references is sized: {report:?}"
+            );
+            let mismatch = &report.size_mismatches.sample[0];
+            assert_eq!(mismatch.declared_bytes, declared_bytes);
+            assert_eq!(mismatch.stored_bytes, 5);
+            assert_eq!(
+                mismatch.path,
+                PathBuf::from("nested").join("doomed.txt"),
+                "the path is the one the tree records, not the blob's storage path"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_a_sound_repository_reports_no_problems() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let path = repo.path.join("a.txt");
@@ -377,7 +486,7 @@ mod tests {
 
             assert!(report.is_healthy(), "a sound repository has no findings");
             assert_eq!(report.branches_checked, 1);
-            assert_eq!(report.entries_checked, 1);
+            assert_eq!(report.versions_checked, 1);
 
             Ok(())
         })

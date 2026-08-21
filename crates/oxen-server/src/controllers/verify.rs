@@ -101,7 +101,7 @@ mod tests {
         let response = call_verify(&sync_dir, namespace, name).await?;
 
         assert!(response.report.is_healthy());
-        assert_eq!(response.report.entries_checked, 1);
+        assert_eq!(response.report.versions_checked, 1);
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())

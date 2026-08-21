@@ -52,8 +52,8 @@ impl RunCmd for VerifyCmd {
 
 fn print_report(report: &VerifyReport) {
     println!(
-        "Checked {} branches, {} commits, {} entries",
-        report.branches_checked, report.commits_checked, report.entries_checked
+        "Checked {} branches, {} commits, {} version files",
+        report.branches_checked, report.commits_checked, report.versions_checked
     );
 
     if report.is_healthy() {

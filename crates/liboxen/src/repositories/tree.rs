@@ -1714,13 +1714,22 @@ pub fn print_tree_depth(
     Ok(())
 }
 
-/// The merkle node hashes and version-blob hashes a commit's tree introduces relative to a base.
+/// A file an added subtree introduces, as the tree records it.
+#[derive(Debug, Clone)]
+pub struct AddedFile {
+    /// The size the file node declares for its content.
+    pub num_bytes: u64,
+    /// The path of one file node referencing the blob. Deduplicated content can give it several.
+    pub path: PathBuf,
+}
+
+/// The merkle nodes and version blobs a commit's tree introduces relative to a base.
 #[derive(Debug, Default)]
 pub struct AddedObjects {
     /// Merkle tree node hashes (dirs and vnodes) reachable from the added subtrees.
     pub nodes: HashSet<MerkleHash>,
-    /// Content hashes of the version blobs the added files reference.
-    pub versions: HashSet<String>,
+    /// The files the added subtrees introduce, keyed by the content hash each references.
+    pub versions: HashMap<String, AddedFile>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1748,13 +1757,7 @@ pub fn added_objects(
     }
 
     let mut added = AddedObjects::default();
-    collect_added_from_dir(
-        repo,
-        base_root,
-        head_root,
-        &mut added.nodes,
-        &mut added.versions,
-    )?;
+    collect_added_from_dir(repo, base_root, head_root, Path::new(""), &mut added)?;
     Ok(Some(added))
 }
 
@@ -1803,7 +1806,7 @@ pub async fn find_missing_added_objects(
                 }
             }
 
-            Ok((missing_nodes, added.versions.into_iter().collect()))
+            Ok((missing_nodes, added.versions.into_keys().collect()))
         })
         .await??;
 
@@ -1835,13 +1838,13 @@ fn collect_added_from_dir(
     repo: &LocalRepository,
     base_dir: Option<MerkleHash>,
     head_dir: MerkleHash,
-    added_nodes: &mut HashSet<MerkleHash>,
-    added_versions: &mut HashSet<String>,
+    head_dir_path: &Path,
+    added: &mut AddedObjects,
 ) -> Result<(), OxenError> {
-    added_nodes.insert(head_dir);
+    added.nodes.insert(head_dir);
 
     let (head_entries, head_vnodes) = dir_entries(repo, &head_dir)?;
-    added_nodes.extend(head_vnodes);
+    added.nodes.extend(head_vnodes);
 
     let base_entries = match base_dir {
         Some(base_dir) => dir_entries(repo, &base_dir)?.0,
@@ -1858,17 +1861,26 @@ fn collect_added_from_dir(
         }
 
         match entry.kind {
-            EntryKind::File { version } => {
+            EntryKind::File { version, num_bytes } => {
                 // A file node lives inline in its parent vnode's DB (which we just read), not as a
                 // standalone node, so its presence is already covered. Verify its content blob.
-                added_versions.insert(version);
+                added.versions.entry(version).or_insert_with(|| AddedFile {
+                    num_bytes,
+                    path: head_dir_path.join(&name),
+                });
             }
             EntryKind::Dir => {
                 let base_sub = base_entries
                     .get(&name)
                     .filter(|base_entry| matches!(base_entry.kind, EntryKind::Dir))
                     .map(|base_entry| base_entry.hash);
-                collect_added_from_dir(repo, base_sub, entry.hash, added_nodes, added_versions)?;
+                collect_added_from_dir(
+                    repo,
+                    base_sub,
+                    entry.hash,
+                    &head_dir_path.join(&name),
+                    added,
+                )?;
             }
         }
     }
@@ -1877,9 +1889,10 @@ fn collect_added_from_dir(
 }
 
 enum EntryKind {
-    /// A file entry, carrying its content (version-store) hash.
+    /// A file entry, carrying its content (version-store) hash and the size it declares.
     File {
         version: String,
+        num_bytes: u64,
     },
     Dir,
 }
@@ -1925,6 +1938,7 @@ fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node:
                     hash,
                     kind: EntryKind::File {
                         version: file_node.hash().to_string(),
+                        num_bytes: file_node.num_bytes(),
                     },
                 },
             );
