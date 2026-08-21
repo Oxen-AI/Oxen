@@ -8,6 +8,7 @@ use sql_query_builder::Select;
 use crate::constants::{MAX_QUERYABLE_ROWS, OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::core;
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
@@ -66,12 +67,27 @@ pub fn is_queryable_data_frame_indexed(
 
 pub use crate::core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace;
 
+/// Rebuild the staged table for `path` from the committed file, discarding any staged edits.
 pub async fn index(
     _repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
     core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await
+}
+
+/// Index `path` only if its staged table is absent, leaving an already-indexed frame and the
+/// staged edits it holds untouched.
+///
+/// The emptiness check and the rebuild run under one exclusive hold on the data frame, so a
+/// rebuild can never be authorized by a check that another caller has since invalidated. Callers
+/// that want a rebuild regardless of the current contents want [`index`].
+pub async fn index_if_absent(
+    _repo: &LocalRepository,
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    core::v_latest::workspaces::data_frames::index_if_absent(workspace, path.as_ref()).await
 }
 
 /// Rebuild a staged data frame left by an older version of oxen from its own
@@ -83,14 +99,18 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
 
 pub use crate::core::v_latest::workspaces::data_frames::rename;
 
+/// Drop the staged table for `path`, discarding any staged edits it holds. Editing the path again
+/// re-indexes it from the committed file.
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            df_db::drop_table(conn, TABLE_NAME)?;
-            Ok(())
+    with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                df_db::drop_table(conn, TABLE_NAME)?;
+                Ok(())
+            })
         })
     })
 }
@@ -100,7 +120,12 @@ pub async fn restore(
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    // Unstage and then restage the df
+    // Unstage and then restage the df.
+    //
+    // Two separately guarded steps, not one: the data frame's write guard cannot be held across the
+    // `.await` below. A row write landing in the gap therefore fails with `DatasetNotIndexed`
+    // rather than being silently discarded by the rebuild, which is the right outcome for a caller
+    // that asked for the staged edits to be thrown away.
     unindex(workspace, &path)?;
 
     // TODO: we could do this more granularly without a full reset
@@ -483,6 +508,8 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::SystemTime;
 
     use serde_json::json;
@@ -501,6 +528,195 @@ mod tests {
     use crate::repositories::workspaces;
     use crate::test;
     use crate::util::fs::AtomicFile;
+
+    /// Stops a spinning helper thread when the test scope ends, on the assertion-failure path as
+    /// well as the happy one — a blocking task left spinning keeps the test binary alive forever.
+    struct StopOnDrop(Arc<AtomicBool>);
+
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Every concurrent append to one data frame lands. Writers that overlap can end up on
+    /// separate DuckDB databases over the same file, and the one that folds its state into the
+    /// file last wins, so the other's rows are gone while each caller was told its own row was
+    /// saved.
+    ///
+    /// Evicting the data frame's cached DuckDB connection is what makes the hazard reachable.
+    /// That connection is per-file and serializes writes only while every writer shares it; LRU
+    /// pressure drops the entry on its own, and once it is gone an in-flight writer keeps the old
+    /// connection while the next writer opens its own to the same file. Exclusion therefore has
+    /// to come from something the cache cannot take away.
+    #[tokio::test]
+    async fn test_concurrent_row_appends_all_land() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-concurrent-append")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopper = StopOnDrop(stop.clone());
+            let evictor = {
+                let db_path = db_path.clone();
+                let stop = stop.clone();
+                tokio::task::spawn_blocking(move || {
+                    // Scoped to this data frame's entry, so it cannot disturb the connections a
+                    // sibling test in this binary has cached.
+                    while !stop.load(Ordering::Relaxed) {
+                        df_db::remove_df_db_from_cache(&db_path)
+                            .expect("evicting a cache entry cannot fail");
+                    }
+                })
+            };
+
+            // Successive rounds compound the loss: once two connections disagree about the table,
+            // a write through the stale one discards everything the other added.
+            let appends_per_round = 16;
+            for round in 0..3 {
+                let mut handles = Vec::new();
+                for i in 0..appends_per_round {
+                    let repo = repo.clone();
+                    let workspace = workspace.clone();
+                    let file_path = file_path.clone();
+                    handles.push(tokio::task::spawn_blocking(move || {
+                        let json_data = json!({
+                            "file": format!("concurrent-{round}-{i}.jpg"),
+                            "label": "dog",
+                            "min_x": 1.0,
+                            "min_y": 2.0,
+                            "width": 10.0,
+                            "height": 10.0
+                        });
+                        workspaces::data_frames::rows::add(
+                            &repo, &workspace, &file_path, &json_data,
+                        )
+                    }));
+                }
+                for handle in handles {
+                    handle.await.expect("join append task")?;
+                }
+
+                let expected = committed_rows + appends_per_round * (round + 1);
+                let count = workspaces::data_frames::count(&workspace, &file_path)?;
+                assert_eq!(
+                    count, expected,
+                    "round {round}: appends reported success but their rows are missing"
+                );
+            }
+
+            drop(stopper);
+            evictor.await.expect("join evictor task");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// `index_if_absent` builds a staged table that is missing but never rebuilds one that is
+    /// present, so a caller acting on a stale "not indexed" observation cannot discard rows staged
+    /// since. `index` still rebuilds unconditionally, which is what `restore` depends on.
+    #[tokio::test]
+    async fn test_index_if_absent_leaves_staged_rows_alone() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-index-if-absent")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // Absent: it builds the table.
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+
+            let json_data = json!({
+                "file": "staged.jpg",
+                "label": "dog",
+                "min_x": 1.0,
+                "min_y": 2.0,
+                "width": 10.0,
+                "height": 10.0
+            });
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1
+            );
+
+            // Present: the staged row survives a second call.
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1,
+                "index_if_absent rebuilt an already-indexed frame and discarded its staged row"
+            );
+
+            // The unconditional form is unchanged: it rebuilds from the commit.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows,
+                "index must still rebuild from the committed file"
+            );
+
+            // Present but partial: a table missing `_oxen_id`, which is what an interrupted index
+            // leaves behind. It cannot be queried, so "absent" has to include it. Otherwise the
+            // frame stays unqueryable no matter how many times a caller asks for it.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("ALTER TABLE \"{TABLE_NAME}\" DROP COLUMN \"{OXEN_ID_COL}\""),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "index_if_absent must rebuild a partially-indexed table rather than keep it"
+            );
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows
+            );
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
