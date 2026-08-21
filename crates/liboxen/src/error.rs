@@ -28,6 +28,7 @@ use crate::model::Schema;
 use crate::model::Workspace;
 use crate::model::merkle_tree::merkle_hash::HexHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
+use crate::storage::chunked::ChunkedError;
 
 pub mod path_buf_error;
 pub mod string_error;
@@ -299,6 +300,10 @@ pub enum OxenError {
     /// The repository was created by an Oxen version this CLI no longer supports.
     #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
     UnsupportedRepoVersion(StringError),
+
+    /// An error from the block-level dedup storage layer (`storage::chunked`).
+    #[error("{0}")]
+    ChunkedError(#[from] ChunkedError),
 
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
@@ -873,6 +878,9 @@ impl OxenError {
             DirHashIndexMissing { .. } => {
                 "Re-push the commit from a clone with the full local history to repopulate the server's directory index."
             }
+            ChunkedError(crate::storage::chunked::ChunkedError::UnknownChunkerId(_)) => {
+                "Upgrade oxen to a version that supports this repository's storage format. If this is already the latest version, the repository metadata may be corrupt."
+            }
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
@@ -980,6 +988,11 @@ impl OxenError {
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            // An unknown ID stays unknown however many times it is asked.
+            // ChunkRead stays retryable, since a failed read can succeed later.
+            OxenError::ChunkedError(crate::storage::chunked::ChunkedError::UnknownChunkerId(_)) => {
+                true
+            }
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
