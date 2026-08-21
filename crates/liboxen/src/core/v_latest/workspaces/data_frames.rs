@@ -4,6 +4,7 @@ use crate::constants::{
     EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS, OXEN_ID_COL,
     OXEN_ROW_ID_COL, TABLE_NAME,
 };
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
@@ -211,7 +212,25 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
+/// Rebuild the staged table for `path` from the committed file, discarding any staged edits.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    p_index(workspace, path, Rebuild::Always).await
+}
+
+/// Index `path` only if its staged table is absent, leaving an already-indexed frame and the
+/// staged edits it holds untouched.
+pub async fn index_if_absent(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    p_index(workspace, path, Rebuild::OnlyIfAbsent).await
+}
+
+/// Whether [`p_index`] rebuilds a table that is already fully indexed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rebuild {
+    Always,
+    OnlyIfAbsent,
+}
+
+async fn p_index(workspace: &Workspace, path: &Path, rebuild: Rebuild) -> Result<(), OxenError> {
     // Is tabular just looks at the file extensions
     let file_node =
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
@@ -277,46 +296,59 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
     tokio::task::spawn_blocking(move || {
-        with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| {
-                // Drop any prior table (possibly partial or stale) and commit that
-                // drop before the rebuild, so a failed rebuild leaves no table at
-                // all rather than rolling back to a partial one.
-                if df_db::table_exists(conn, TABLE_NAME)? {
-                    df_db::drop_table(conn, TABLE_NAME)?;
-                }
+        // Hold the data frame exclusively for the whole rebuild. Under `OnlyIfAbsent` that also
+        // covers the emptiness check, so the rebuild cannot proceed on a table another caller
+        // populated after the caller's own check.
+        with_data_frame_write(&db_path, || {
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    if rebuild == Rebuild::OnlyIfAbsent
+                        && df_db::table_is_fully_indexed(conn, TABLE_NAME)?
+                    {
+                        return Ok(());
+                    }
 
-                // A workspace data frame is only queryable once the hidden
-                // `_oxen_id` column is present, so build the table inside a
-                // transaction and publish it only on success. On any failure, roll
-                // back (and drop defensively) so the read path never sees a
-                // half-built table.
-                conn.execute_batch("BEGIN TRANSACTION")?;
-                let build = (|| -> Result<(), DataFrameError> {
-                    df_db::index_file_with_id(&version_path, conn, &extension)?;
-                    Ok(())
-                })();
-                match build {
-                    Ok(()) => {
-                        conn.execute_batch("COMMIT")?;
-                        // Fold the WAL into the db file right away. The
-                        // indexing DDL includes function defaults (uuid(),
-                        // nextval()) whose WAL entries the bundled DuckDB
-                        // cannot replay after an unclean shutdown; once
-                        // checkpointed they are out of the WAL entirely.
-                        // Best-effort: a concurrent transaction can block a
-                        // checkpoint, and the next clean open checkpoints too.
-                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
-                            log::warn!("index: CHECKPOINT after build failed for {db_path:?}: {e}");
-                        }
+                    // Drop any prior table (possibly partial or stale) and commit that
+                    // drop before the rebuild, so a failed rebuild leaves no table at
+                    // all rather than rolling back to a partial one.
+                    if df_db::table_exists(conn, TABLE_NAME)? {
+                        df_db::drop_table(conn, TABLE_NAME)?;
+                    }
+
+                    // A workspace data frame is only queryable once the hidden
+                    // `_oxen_id` column is present, so build the table inside a
+                    // transaction and publish it only on success. On any failure, roll
+                    // back (and drop defensively) so the read path never sees a
+                    // half-built table.
+                    conn.execute_batch("BEGIN TRANSACTION")?;
+                    let build = (|| -> Result<(), DataFrameError> {
+                        df_db::index_file_with_id(&version_path, conn, &extension)?;
                         Ok(())
+                    })();
+                    match build {
+                        Ok(()) => {
+                            conn.execute_batch("COMMIT")?;
+                            // Fold the WAL into the db file right away. The
+                            // indexing DDL includes function defaults (uuid(),
+                            // nextval()) whose WAL entries the bundled DuckDB
+                            // cannot replay after an unclean shutdown; once
+                            // checkpointed they are out of the WAL entirely.
+                            // Best-effort: a concurrent transaction can block a
+                            // checkpoint, and the next clean open checkpoints too.
+                            if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                                log::warn!(
+                                    "index: CHECKPOINT after build failed for {db_path:?}: {e}"
+                                );
+                            }
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let _ = conn.execute_batch("ROLLBACK");
+                            let _ = df_db::drop_table(conn, TABLE_NAME);
+                            Err(e)
+                        }
                     }
-                    Err(e) => {
-                        let _ = conn.execute_batch("ROLLBACK");
-                        let _ = df_db::drop_table(conn, TABLE_NAME);
-                        Err(e)
-                    }
-                }
+                })
             })
         })
     })
