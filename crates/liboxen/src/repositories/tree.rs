@@ -1714,22 +1714,18 @@ pub fn print_tree_depth(
     Ok(())
 }
 
-/// A file an added subtree introduces, as the tree records it.
-#[derive(Debug, Clone)]
-pub struct AddedFile {
-    /// The size the file node declares for its content.
-    pub num_bytes: u64,
-    /// The path of one file node referencing the blob. Deduplicated content can give it several.
-    pub path: PathBuf,
-}
+/// The sizes file nodes declare for one version blob, each mapped to a path declaring it. More
+/// than one entry means nodes disagree about the size of the same content, of which at most one
+/// can match the stored blob.
+pub type DeclaredSizes = HashMap<u64, PathBuf>;
 
 /// The merkle nodes and version blobs a commit's tree introduces relative to a base.
 #[derive(Debug, Default)]
 pub struct AddedObjects {
     /// Merkle tree node hashes (dirs and vnodes) reachable from the added subtrees.
     pub nodes: HashSet<MerkleHash>,
-    /// The files the added subtrees introduce, keyed by the content hash each references.
-    pub versions: HashMap<String, AddedFile>,
+    /// The version blobs the added files reference, keyed by content hash.
+    pub versions: HashMap<String, DeclaredSizes>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1864,10 +1860,12 @@ fn collect_added_from_dir(
             EntryKind::File { version, num_bytes } => {
                 // A file node lives inline in its parent vnode's DB (which we just read), not as a
                 // standalone node, so its presence is already covered. Verify its content blob.
-                added.versions.entry(version).or_insert_with(|| AddedFile {
-                    num_bytes,
-                    path: head_dir_path.join(&name),
-                });
+                added
+                    .versions
+                    .entry(version)
+                    .or_default()
+                    .entry(num_bytes)
+                    .or_insert_with(|| head_dir_path.join(&name));
             }
             EntryKind::Dir => {
                 let base_sub = base_entries

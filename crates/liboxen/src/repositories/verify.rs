@@ -16,7 +16,7 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, NewCommit};
 use crate::repositories;
 use crate::repositories::commits::commit_writer::compute_commit_id;
-use crate::repositories::tree::AddedFile;
+use crate::repositories::tree::DeclaredSizes;
 
 /// Examples of each finding a report carries alongside the count.
 const SAMPLE_LIMIT: usize = 10;
@@ -245,8 +245,8 @@ async fn check_tree_nodes(
     repo: &LocalRepository,
     commits: &[Commit],
     report: &mut VerifyReport,
-) -> Result<HashMap<String, AddedFile>, OxenError> {
-    type TreeFindings = (HashMap<String, AddedFile>, Findings<String>);
+) -> Result<HashMap<String, DeclaredSizes>, OxenError> {
+    type TreeFindings = (HashMap<String, DeclaredSizes>, Findings<String>);
 
     // Sync core: the merkle walk and the node-existence probes are sync DB IO, one blocking unit.
     let walk_repo = repo.clone();
@@ -259,7 +259,7 @@ async fn check_tree_nodes(
             }
 
             let store = walk_repo.merkle_node_store();
-            let mut versions: HashMap<String, AddedFile> = HashMap::new();
+            let mut versions: HashMap<String, DeclaredSizes> = HashMap::new();
             let mut seen_nodes: HashSet<MerkleHash> = HashSet::new();
             let mut missing_nodes = Findings::default();
 
@@ -283,8 +283,8 @@ async fn check_tree_nodes(
                         missing_nodes.record(hash.to_string());
                     }
                 }
-                for (hash, file) in added.versions {
-                    versions.entry(hash).or_insert(file);
+                for (hash, declared) in added.versions {
+                    versions.entry(hash).or_default().extend(declared);
                 }
             }
             Ok((versions, missing_nodes))
@@ -296,11 +296,14 @@ async fn check_tree_nodes(
     Ok(versions)
 }
 
-/// Version blobs the repository does not hold, and blobs whose stored size disagrees with the size
-/// the file node referencing them declares.
+/// Version blobs the repository does not hold, and blobs whose stored size disagrees with a size
+/// a file node declares for them.
+///
+/// Each blob is probed once and its stored size compared against every size declared for it, so
+/// nodes that disagree about one blob each get their own finding.
 async fn check_versions(
     repo: &LocalRepository,
-    versions: HashMap<String, AddedFile>,
+    versions: HashMap<String, DeclaredSizes>,
     report: &mut VerifyReport,
 ) -> Result<(), OxenError> {
     let version_store = repo.version_store();
@@ -316,31 +319,33 @@ async fn check_versions(
     }
 
     // An absent blob has no size to disagree with, and is already reported.
-    let present: Vec<(String, AddedFile)> = versions
+    let present: Vec<(String, DeclaredSizes)> = versions
         .into_iter()
         .filter(|(hash, _)| !missing.contains(hash))
         .collect();
 
     let max_concurrent = MAX_CONCURRENT_SIZE_PROBES.min(present.len().max(1));
     let mut probes = futures_util::stream::iter(present)
-        .map(|(hash, file)| {
+        .map(|(hash, declared)| {
             let version_store = version_store.clone();
             async move {
                 let stored = version_store.get_version_size(&hash).await.ok();
-                (hash, file, stored)
+                (hash, declared, stored)
             }
         })
         .buffer_unordered(max_concurrent);
 
-    while let Some((hash, file, stored)) = probes.next().await {
+    while let Some((hash, declared, stored)) = probes.next().await {
         let Some(stored_bytes) = stored else { continue };
-        if stored_bytes != file.num_bytes {
-            report.size_mismatches.record(SizeMismatch {
-                hash,
-                path: file.path,
-                declared_bytes: file.num_bytes,
-                stored_bytes,
-            });
+        for (declared_bytes, path) in declared {
+            if stored_bytes != declared_bytes {
+                report.size_mismatches.record(SizeMismatch {
+                    hash: hash.clone(),
+                    path,
+                    declared_bytes,
+                    stored_bytes,
+                });
+            }
         }
     }
     Ok(())
@@ -545,6 +550,48 @@ mod tests {
             assert_eq!(
                 report.missing_versions.count, 0,
                 "a present blob is the wrong size, not missing"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_every_size_declared_for_one_blob_is_checked() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "the original contents")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add a")?;
+
+            let entries = repositories::entries::list_for_commit(&repo, &commit)?;
+            let entry = entries.first().expect("one entry").clone();
+
+            // Two file nodes referencing one blob while disagreeing about its size. Identical
+            // content stats to an identical length, so the declarations are built here rather
+            // than committed.
+            let declared = DeclaredSizes::from([
+                (entry.num_bytes, PathBuf::from("a.txt")),
+                (entry.num_bytes + 1, PathBuf::from("copy.txt")),
+            ]);
+            let versions = HashMap::from([(entry.hash.clone(), declared)]);
+
+            let mut report = VerifyReport::default();
+            check_versions(&repo, versions, &mut report).await?;
+
+            assert_eq!(
+                report.size_mismatches.count, 1,
+                "only the declaration disagreeing with the stored blob is reported: {report:?}"
+            );
+            let mismatch = &report.size_mismatches.sample[0];
+            assert_eq!(mismatch.hash, entry.hash);
+            assert_eq!(mismatch.declared_bytes, entry.num_bytes + 1);
+            assert_eq!(mismatch.stored_bytes, entry.num_bytes);
+            assert_eq!(mismatch.path, PathBuf::from("copy.txt"));
+            assert!(
+                report.missing_versions.is_empty(),
+                "the blob is present, so nothing is missing"
             );
 
             Ok(())
