@@ -82,6 +82,11 @@ fn print_report(report: &VerifyReport) {
         h.clone()
     });
     print_findings(
+        "Version files that could not be checked",
+        &report.unchecked_versions,
+        |u| format!("{}: {}", u.hash, u.error),
+    );
+    print_findings(
         "Version files of the wrong size",
         &report.size_mismatches,
         |m| {

@@ -84,6 +84,13 @@ pub struct SizeMismatch {
     pub stored_bytes: u64,
 }
 
+/// A version blob whose metadata probe failed, leaving its size neither confirmed nor refuted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UncheckedVersion {
+    pub hash: String,
+    pub error: String,
+}
+
 /// What a [`verify_repo`] pass found.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct VerifyReport {
@@ -96,6 +103,7 @@ pub struct VerifyReport {
     pub missing_nodes: Findings<String>,
     pub missing_versions: Findings<String>,
     pub size_mismatches: Findings<SizeMismatch>,
+    pub unchecked_versions: Findings<UncheckedVersion>,
 }
 
 impl VerifyReport {
@@ -107,6 +115,7 @@ impl VerifyReport {
             && self.missing_nodes.is_empty()
             && self.missing_versions.is_empty()
             && self.size_mismatches.is_empty()
+            && self.unchecked_versions.is_empty()
     }
 
     /// Findings across every class.
@@ -117,14 +126,15 @@ impl VerifyReport {
             + self.missing_nodes.count
             + self.missing_versions.count
             + self.size_mismatches.count
+            + self.unchecked_versions.count
     }
 }
 
 /// Check that everything the repository's commits reference is present and the right size.
 ///
 /// Reads only. Cost scales with the repository's distinct object count, which is also held in
-/// memory: no blob contents are read, and each distinct content hash costs at most one
-/// version-store existence probe and one metadata probe.
+/// memory: no blob contents are read, and each distinct content hash costs one version-store
+/// metadata probe however many paths reference it.
 pub async fn verify_repo(repo: &LocalRepository) -> Result<VerifyReport, OxenError> {
     let mut report = VerifyReport::default();
 
@@ -296,11 +306,13 @@ async fn check_tree_nodes(
     Ok(versions)
 }
 
-/// Version blobs the repository does not hold, and blobs whose stored size disagrees with a size
-/// a file node declares for them.
+/// Version blobs the repository does not hold, blobs whose stored size disagrees with a size a
+/// file node declares for them, and blobs whose size could not be established.
 ///
-/// Each blob is probed once and its stored size compared against every size declared for it, so
-/// nodes that disagree about one blob each get their own finding.
+/// One metadata probe per blob answers all three, so a blob referenced from a thousand paths costs
+/// one round trip and its stored size is compared against every size declared for it. A probe that
+/// fails for any reason other than the blob being absent is reported rather than passed over, so a
+/// pass that could not reach part of the store never reads as a clean one.
 async fn check_versions(
     repo: &LocalRepository,
     versions: HashMap<String, DeclaredSizes>,
@@ -308,35 +320,33 @@ async fn check_versions(
 ) -> Result<(), OxenError> {
     let version_store = repo.version_store();
 
-    let hashes: Vec<String> = versions.keys().cloned().collect();
-    let missing: HashSet<String> = version_store
-        .find_missing_versions(&hashes)
-        .await?
-        .into_iter()
-        .collect();
-    for hash in &missing {
-        report.missing_versions.record(hash.clone());
-    }
-
-    // An absent blob has no size to disagree with, and is already reported.
-    let present: Vec<(String, DeclaredSizes)> = versions
-        .into_iter()
-        .filter(|(hash, _)| !missing.contains(hash))
-        .collect();
-
-    let max_concurrent = MAX_CONCURRENT_SIZE_PROBES.min(present.len().max(1));
-    let mut probes = futures_util::stream::iter(present)
+    let max_concurrent = MAX_CONCURRENT_SIZE_PROBES.min(versions.len().max(1));
+    let mut probes = futures_util::stream::iter(versions)
         .map(|(hash, declared)| {
             let version_store = version_store.clone();
             async move {
-                let stored = version_store.get_version_size(&hash).await.ok();
+                let stored = version_store.get_version_size(&hash).await;
                 (hash, declared, stored)
             }
         })
         .buffer_unordered(max_concurrent);
 
     while let Some((hash, declared, stored)) = probes.next().await {
-        let Some(stored_bytes) = stored else { continue };
+        let stored_bytes = match stored {
+            Ok(stored_bytes) => stored_bytes,
+            Err(OxenError::VersionStoreBlobMissing { .. }) => {
+                report.missing_versions.record(hash);
+                continue;
+            }
+            Err(err) => {
+                report.unchecked_versions.record(UncheckedVersion {
+                    hash,
+                    error: err.to_string(),
+                });
+                continue;
+            }
+        };
+
         for (declared_bytes, path) in declared {
             if stored_bytes != declared_bytes {
                 report.size_mismatches.record(SizeMismatch {
@@ -517,6 +527,53 @@ mod tests {
             assert_eq!(
                 report.size_mismatches.count, 0,
                 "an absent blob is missing, not the wrong size"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_a_blob_whose_size_cannot_be_read_is_not_called_healthy() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add a")?;
+
+            let entries = repositories::entries::list_for_commit(&repo, &commit)?;
+            let hash = entries.first().expect("one entry").hash.clone();
+
+            // A regular file where the blob's directory belongs, so probing the blob inside it
+            // fails with something other than "absent".
+            let blob = find_only_version_blob(&repo.path.join(".oxen").join("versions"))?;
+            let blob_dir = blob
+                .parent()
+                .expect("a blob lives in a directory")
+                .to_path_buf();
+            std::fs::remove_dir_all(&blob_dir)?;
+            std::fs::write(&blob_dir, b"not a directory")?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.unchecked_versions.count, 1,
+                "a blob that could not be probed is reported: {report:?}"
+            );
+            assert_eq!(report.unchecked_versions.sample[0].hash, hash);
+            assert_eq!(
+                report.missing_versions.count, 0,
+                "a probe that failed is not evidence the blob is absent"
+            );
+            assert_eq!(
+                report.size_mismatches.count, 0,
+                "a size that was never read cannot disagree"
+            );
+            assert!(
+                !report.is_healthy(),
+                "a pass that could not check a blob is not a clean one"
             );
 
             Ok(())
