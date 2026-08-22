@@ -544,6 +544,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_a_missing_nested_directory_node_is_reported_not_raised() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            util::fs::write_to_path(nested.join("a.txt"), "alpha")?;
+            repositories::add(&repo, &nested).await?;
+            let commit = repositories::commit(&repo, "Add nested")?;
+
+            let dir = repositories::tree::get_dir_with_children(&repo, &commit, "nested", None)?
+                .expect("the nested directory has a node");
+            repo.merkle_node_store().delete(&dir.hash)?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.missing_nodes.count, 1,
+                "the absent directory node is a finding: {report:?}"
+            );
+            assert_eq!(report.missing_nodes.sample, vec![dir.hash.to_string()]);
+            assert!(!report.is_healthy());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn test_an_absent_version_blob_is_reported_missing() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let path = repo.path.join("a.txt");
