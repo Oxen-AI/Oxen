@@ -26,7 +26,7 @@ use thiserror::Error;
 
 use oxen_server::middleware::{
     MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
-    request_id,
+    TransitionalIdentityMiddleware, request_id,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -928,6 +928,7 @@ async fn start(
             // RequestId must stay outer of the TracingLogger/Logger/RequestStartLog above (actix
             // runs the last .wrap outermost) so the request-id extension those three read is
             // populated before them.
+            .wrap(TransitionalIdentityMiddleware)
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
             // Outermost: a per-request Sentry hub so a captured panic carries request context.

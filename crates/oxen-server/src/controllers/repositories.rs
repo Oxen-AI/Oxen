@@ -8,6 +8,7 @@ use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt;
 use liboxen::api::requests::RepoNew;
 // Import StreamExt for the next() method
+use crate::transitional_identity::stated_request;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
@@ -446,9 +447,18 @@ async fn create_repo_response(
     data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
     let namespace = data.namespace.clone();
     let name = data.name.clone();
+    let stated = stated_request().identity;
     let identity = match app_data.config.identity.repo_uuids_assigned_by() {
         IdentitySource::OxenServer => Some(RepoIdentity::minted(&namespace, &name)),
-        IdentitySource::AuthProvider => RepoIdentity::from_supplied(data.repo_uuid, &name),
+        IdentitySource::AuthProvider => {
+            RepoIdentity::from_supplied(data.repo_uuid.or(stated.repo_uuid), &name).map(
+                |identity| RepoIdentity {
+                    namespace: stated.namespace,
+                    name: stated.name,
+                    ..identity
+                },
+            )
+        }
     };
     if identity.is_none() {
         log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
@@ -539,6 +549,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         Err(OxenHttpError::InternalOxenError(OxenError::RepoNotFound(_))) => {
             return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
         }
+        // A request the server refuses as malformed or mis-addressed deletes nothing.
+        Err(err @ OxenHttpError::BadRequest(_)) => return Err(err),
         // A repository the server cannot open is still deleted. Reporting it as missing would
         // strand the directory on disk with no way for a caller to reclaim it, and version blobs
         // held outside the directory are unreachable without the repository config anyway.
@@ -601,16 +613,27 @@ pub async fn transfer_namespace(
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
+    // Refuses a request that states a different repository than this one. Dropped before the move
+    // below: the repository holds its Merkle node store open, and the directory housing that store
+    // cannot be renamed under it.
+    drop(get_repo_async(app_data, &from_namespace, &name).await?);
+
+    // A control plane states the destination's name; otherwise the destination position is itself
+    // the name, and where neither holds there is no name to record.
+    let namespace_hint = stated_request().identity.namespace.or_else(|| {
+        app_data
+            .config
+            .identity
+            .repo_uuids_assigned_by()
+            .supplies_names()
+            .then(|| to_namespace.clone())
+    });
     let repo = repositories::transfer_namespace(
         &app_data.path,
         &name,
         &from_namespace,
         &to_namespace,
-        app_data
-            .config
-            .identity
-            .repo_uuids_assigned_by()
-            .supplies_names(),
+        namespace_hint.as_deref(),
         app_data.config.storage.s3(),
     )?;
 
@@ -633,13 +656,17 @@ pub async fn transfer_namespace(
 #[cfg(test)]
 mod tests {
     use crate::app_data::OxenAppData;
+    use crate::errors::OxenHttpError;
     use crate::test;
+    use crate::transitional_identity::{StatedRequest, TransitionalIdentity, with_stated_request};
     use actix_web::{App, http, web};
     use liboxen::config::RepositoryConfig;
     use liboxen::error::OxenError;
+    use liboxen::model::RepoIdentity;
     use liboxen::util;
     use std::path::Path;
     use std::time::{Duration, Instant};
+    use uuid::Uuid;
 
     /// Waits for the handler's background delete to finish.
     async fn wait_until_gone(path: &Path) -> bool {
@@ -737,6 +764,89 @@ mod tests {
         assert_eq!(resp.status(), http::StatusCode::NOT_FOUND);
 
         test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// A repository the server cannot open is deleted unconditionally, so a request refused for
+    /// addressing a different repository must stop before reaching that removal.
+    #[actix_web::test]
+    async fn test_delete_refuses_a_request_for_another_repository() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        let config_path = util::fs::config_filepath(&repo_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
+        config.save(&config_path)?;
+
+        let stated = StatedRequest {
+            identity: TransitionalIdentity {
+                repo_uuid: Some(Uuid::new_v4()),
+                ..Default::default()
+            },
+            is_write: true,
+        };
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let result = with_stated_request(stated, super::delete(req)).await;
+
+        assert!(
+            matches!(result, Err(OxenHttpError::BadRequest(_))),
+            "a delete addressing another repository must be refused"
+        );
+
+        // The removal runs in a background task, so give it time to do damage before asserting.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(repo_dir.exists(), "repo dir should survive: {repo_dir:?}");
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Moving a repository relocates its directory, so a request stating a different repository
+    /// must be refused before anything moves.
+    #[actix_web::test]
+    async fn test_transfer_refuses_a_request_for_another_repository() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        let config_path = util::fs::config_filepath(&repo_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
+        config.save(&config_path)?;
+
+        let stated = StatedRequest {
+            identity: TransitionalIdentity {
+                repo_uuid: Some(Uuid::new_v4()),
+                ..Default::default()
+            },
+            is_write: true,
+        };
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let body = r#"{"namespace":"Other-Namespace"}"#.to_string();
+        let result = with_stated_request(stated, super::transfer_namespace(req, body)).await;
+
+        assert!(
+            matches!(result, Err(OxenHttpError::BadRequest(_))),
+            "a transfer addressing another repository must be refused"
+        );
+        assert!(
+            repo_dir.exists(),
+            "repo dir should not have moved: {repo_dir:?}"
+        );
+        assert!(
+            !sync_dir.join("Other-Namespace").join(repo_name).exists(),
+            "the repo must not appear in the destination namespace"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }
