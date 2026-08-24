@@ -9,6 +9,7 @@ use crate::constants;
 use crate::core;
 use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::refs::with_ref_manager;
+use crate::core::repo_locks;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
@@ -199,6 +200,9 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
 /// Writes nothing when the recorded name already matches, or when the repository carries no
 /// identity. Only the name is recorded here: a repository's namespace changes by being moved, so
 /// that hint is set by [`transfer_namespace`] rather than from whatever a request happens to state.
+///
+/// # Errors
+/// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
 pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
     let Some(identity) = repo.identity.as_ref() else {
         return Ok(());
@@ -207,6 +211,8 @@ pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenEr
         return Ok(());
     }
 
+    // Held across the read and the write so nothing else rewrites the config in between.
+    let _write = repo_locks::acquire_write(repo)?;
     let path = util::fs::config_filepath(&repo.path);
     let mut config = RepositoryConfig::from_file(&path)?;
     if let Some(identity) = config.identity.as_mut() {
@@ -424,6 +430,7 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants;
     use crate::core::db::merkle_node::MerkleNodeBackend;
+    use crate::core::repo_locks;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoIdentity};
@@ -567,6 +574,40 @@ mod tests {
 
             let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
             assert_eq!(config.identity, None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A maintenance operation runs with the repository to itself, so the hint write refuses its
+    /// turn rather than rewriting the config underneath it.
+    #[tokio::test]
+    async fn test_record_name_hint_refuses_while_a_maintenance_operation_holds_the_repo()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+
+            repo_locks::with_repo_exclusive(&repo, async {
+                assert!(matches!(
+                    repositories::record_name_hint(&repo, "kittens"),
+                    Err(OxenError::LockTimeout(_))
+                ));
+                Ok::<(), OxenError>(())
+            })
+            .await?;
+
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(
+                identity.name.as_deref(),
+                Some("cats"),
+                "the hint is untouched"
+            );
 
             Ok(())
         })
