@@ -254,7 +254,7 @@ pub async fn add_n_files_m_dirs(
 /// This function will create a directory with a uniq name
 /// and take care of cleaning it up afterwards
 ///
-/// ```no_run
+/// ```
 /// use liboxen::test;
 ///
 /// test::run_empty_dir_test(|repo_dir| {
