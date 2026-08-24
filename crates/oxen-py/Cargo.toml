@@ -36,7 +36,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 [build-dependencies]
-bindgen = { version = "0.71.1", default-features = false, features = ["runtime"] }
+bindgen = { version = "0.72.1", default-features = false, features = ["runtime"] }
 cc = { version = "1.0", features = ["parallel"] }
 glob = { workspace = true }
 pkg-config = { version = "0.3", optional = true }

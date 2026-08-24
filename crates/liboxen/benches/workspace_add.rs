@@ -8,14 +8,14 @@ use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::repositories;
 use liboxen::test::create_or_clear_remote_repo;
 use liboxen::util;
-use rand::distributions::Alphanumeric;
-use rand::{Rng, RngCore};
+use rand::distr::Alphanumeric;
+use rand::{Rng, RngExt};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 fn generate_random_string(len: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(len)
         .map(char::from)
@@ -26,15 +26,15 @@ fn write_file_for_workspace_add_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
-    if rand::thread_rng().gen_range(0.0..1.0) < large_file_chance {
+    if rand::rng().random_range(0.0..1.0) < large_file_chance {
         let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
-        rand::thread_rng().fill_bytes(&mut large_content);
+        rand::rng().fill_bytes(&mut large_content);
         fs::write(file_path, &large_content)?;
     } else {
         let small_content_size = 1024 - 1;
         let mut small_content = vec![0u8; small_content_size];
-        rand::thread_rng().fill_bytes(&mut small_content);
+        rand::rng().fill_bytes(&mut small_content);
         fs::write(file_path, &small_content)?;
     }
     Ok(())
@@ -66,7 +66,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
 
     // Create the workspace
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // TODO: Support creating workspace on empty repo
     let base_dir = repo_dir.join("base");
@@ -74,7 +74,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     let mut base_dirs: Vec<PathBuf> = (0..dir_size)
         .map(|_| {
             let mut path = base_dir.clone();
-            let depth = rng.gen_range(1..=4);
+            let depth = rng.random_range(1..=4);
             for _ in 0..depth {
                 path = path.join(generate_random_string(10));
             }
@@ -105,7 +105,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     };
 
     for i in 0..repo_size {
-        let dir_idx = rng.gen_range(0..base_dirs.len());
+        let dir_idx = rng.random_range(0..base_dirs.len());
         let dir = &base_dirs[dir_idx];
         util::fs::create_dir_all(dir)?;
         let file_path = dir.join(format!("file_{i}.txt"));
@@ -121,7 +121,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     let mut files_dirs: Vec<PathBuf> = (0..dir_size)
         .map(|_| {
             let mut path = base_dir.clone();
-            let depth = rng.gen_range(1..=4);
+            let depth = rng.random_range(1..=4);
             for _ in 0..depth {
                 path = path.join(generate_random_string(10));
             }
@@ -135,7 +135,7 @@ async fn setup_repo_for_workspace_add_benchmark(
     } else {
         let mut files = vec![];
         for i in repo_size..(repo_size + num_files_to_add_in_benchmark) {
-            let dir_idx = rng.gen_range(0..files_dirs.len());
+            let dir_idx = rng.random_range(0..files_dirs.len());
             let dir = &files_dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
 

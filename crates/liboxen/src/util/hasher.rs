@@ -22,7 +22,7 @@ pub fn hash_str_sha256<S: AsRef<str>>(str: S) -> String {
     let mut hasher = Sha256::new();
     hasher.update(str.as_ref().as_bytes());
     let result = hasher.finalize();
-    format!("{result:x}")
+    hex::encode(result)
 }
 
 pub fn hash_buffer_128bit(buffer: &[u8]) -> u128 {
@@ -346,5 +346,15 @@ mod hashing_writer_tests {
         assert_eq!(inner.written, b"0123");
         assert_eq!(digest, xxh3_128(b"0123"));
         Ok(())
+    }
+
+    #[test]
+    fn test_hash_str_sha256_is_lowercase_hex() {
+        // Workspace directory names come from this digest, so the encoding is
+        // part of the on-disk layout and cannot change.
+        assert_eq!(
+            hash_str_sha256("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

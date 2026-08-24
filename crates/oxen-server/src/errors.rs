@@ -1250,15 +1250,13 @@ mod tests {
         use tracing_subscriber::layer::SubscriberExt;
 
         let transport = sentry::test::TestTransport::new();
-        let options = sentry::ClientOptions {
-            dsn: Some(
-                "https://public@sentry.invalid/1"
-                    .parse()
-                    .expect("the test DSN should parse"),
-            ),
-            transport: Some(std::sync::Arc::new(std::sync::Arc::clone(&transport))),
-            ..Default::default()
-        };
+        let mut options = sentry::ClientOptions::default();
+        options.dsn = Some(
+            "https://public@sentry.invalid/1"
+                .parse()
+                .expect("the test DSN should parse"),
+        );
+        options.transport = Some(std::sync::Arc::new(std::sync::Arc::clone(&transport)));
         let hub = std::sync::Arc::new(sentry::Hub::new(
             Some(std::sync::Arc::new(options.into())),
             std::sync::Arc::new(Default::default()),

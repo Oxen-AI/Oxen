@@ -404,16 +404,14 @@ enum ServerCommand {
 /// OSS deployments report nothing.
 fn init_sentry(dsn: Option<String>) -> Option<sentry::ClientInitGuard> {
     let dsn = dsn.filter(|dsn| !dsn.is_empty())?;
-    let options = sentry::ClientOptions {
-        release: Some(OXEN_VERSION.into()),
-        environment: env::var("SENTRY_ENVIRONMENT").ok().map(Into::into),
-        // A data server must never let Sentry attach request/user PII, and reports errors only —
-        // no performance tracing.
-        send_default_pii: false,
-        traces_sample_rate: 0.0,
-        attach_stacktrace: true,
-        ..Default::default()
-    };
+    // A data server must never let Sentry attach request/user PII, and reports errors only —
+    // no performance tracing.
+    let mut options = sentry::ClientOptions::default()
+        .send_default_pii(false)
+        .traces_sample_rate(0.0)
+        .attach_stacktrace(true);
+    options.release = Some(OXEN_VERSION.into());
+    options.environment = env::var("SENTRY_ENVIRONMENT").ok().map(Into::into);
     Some(sentry::init((dsn, options)))
 }
 

@@ -24,8 +24,8 @@ use crate::util;
 use crate::util::telemetry::TracingGuard;
 
 use http::StatusCode;
-use rand::Rng;
-use rand::distributions::Alphanumeric;
+use rand::RngExt;
+use rand::distr::Alphanumeric;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::future::Future;
@@ -66,7 +66,7 @@ pub fn test_host() -> String {
 }
 
 fn generate_random_string(len: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(len)
         .map(char::from)
@@ -2116,12 +2116,12 @@ pub fn schema_bounding_box() -> Schema {
 }
 
 pub fn add_random_bbox_to_file<P: AsRef<Path>>(path: P) -> Result<PathBuf, OxenError> {
-    let mut rng = rand::thread_rng();
-    let file_name = format!("random_img_{}.jpg", rng.gen_range(0..10));
-    let x: f64 = rng.gen_range(0.0..1000.0);
-    let y: f64 = rng.gen_range(0.0..1000.0);
-    let w: i64 = rng.gen_range(0..1000);
-    let h: i64 = rng.gen_range(0..1000);
+    let mut rng = rand::rng();
+    let file_name = format!("random_img_{}.jpg", rng.random_range(0..10));
+    let x: f64 = rng.random_range(0.0..1000.0);
+    let y: f64 = rng.random_range(0.0..1000.0);
+    let w: i64 = rng.random_range(0..1000);
+    let h: i64 = rng.random_range(0..1000);
     let line = format!("{file_name},{x:2},{y:2},{w},{h}");
     append_line_txt_file(path, &line)
 }

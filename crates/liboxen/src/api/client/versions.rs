@@ -19,7 +19,7 @@ use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use http::Method;
 use http::header::CONTENT_LENGTH;
-use rand::{Rng, thread_rng};
+use rand::{RngExt, rng};
 use tokio_tar::Archive;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
@@ -592,7 +592,7 @@ pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize
 }
 
 fn jitter() -> usize {
-    thread_rng().gen_range(0..=500)
+    rng().random_range(0..=500)
 }
 
 #[cfg(test)]

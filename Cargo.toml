@@ -28,41 +28,40 @@ linker_messages = "allow"
 [workspace.dependencies]
 actix-files = "0.6.2"
 actix-http = "3.4.0"
-actix-multipart = "0.7.2"
+actix-multipart = "0.8"
 actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
 actix-web-httpauth = "0.8.0"
 anyhow = "1.0.102"
 approx = "0.5.1"
 arrow = "=58.1.0"
-astral-tokio-tar = "0.5.2"
+astral-tokio-tar = "0.6"
 async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
 async-recursion = "1.1.1"
 async-std = { version = "1.12.0", features = ["unstable"] }
-async-tar = "0.5.0"
-async-tempfile = "0.7.0"
+async-tar = "0.6"
+async-tempfile = "0.8"
 async-trait = "0.1.80"
 async-walkdir = "2.1.0"
 async_zip = { version = "0.0.18", features = ["full"] }
 aws-config = "1.10.1"
 aws-sdk-s3 = "1.141.0"
 aws-smithy-runtime-api = "1.14.0"
-bincode = "1.3.3"
 bytecount = "0.6.3"
 bytes = "1.5.0"
-bytesize = "1.3.0"
+bytesize = "2.7"
 bytevec = "0.2.0"
 chrono = "0.4.30"
 clap = { version = "4.4.2", features = ["cargo", "derive"] }
-colored = "2.0.4"
-comfy-table = "7.0.1"
+colored = "3.1"
+comfy-table = "8.0"
 console-subscriber = "0.4.1"
-criterion = { version = "2.10.1", package = "codspeed-criterion-compat", features = ["async_tokio"] }
+criterion = { version = "5.0.1", package = "codspeed-criterion-compat", features = ["async_tokio"] }
 deadqueue = "0.2.4"
-derive_more = { version = "1.0.0", features = ["full"] }
-dialoguer = "0.11.0"
+derive_more = { version = "2.1", features = ["full"] }
+dialoguer = "0.12"
 difference = "2.0.0"
-dirs = "5.0.1"
+dirs = "6.0"
 dotenvy = "0.15.7"
 duckdb = { package = "duckdb", version = "=1.10504.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
@@ -82,11 +81,13 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 ignore = "0.4.20"
 image = "0.25.2"
-indicatif = "0.17.6"
-infer = "0.16.0"
-itertools = "0.13.0"
-jsonwebtoken = "9.3.0"
-jwalk = "0.8.1"
+indicatif = "0.18"
+infer = "0.22"
+itertools = "0.15"
+# 11.0 ships no crypto backend by default and panics on the first encode without one.
+# rust_crypto keeps the JWT path pure Rust, adding no C toolchain to the container build.
+jsonwebtoken = { version = "11.0", features = ["rust_crypto"] }
+jwalk = "0.9"
 lazy_static = "1.4.0"
 libc = "0.2"
 libduckdb-sys = { version = "=1.10504.0" }
@@ -94,11 +95,11 @@ libduckdb-sys = { version = "=1.10504.0" }
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
 # resolve liboxen from crates.io when published.
 liboxen = { path = "crates/liboxen", version = "=0.54.0" }
-lofty = "0.22.2"
+lofty = "0.25"
 log = "0.4.33"
-lru = "0.14.0"
+lru = "0.18"
 metrics = "0.24"
-metrics-exporter-prometheus = "0.16"
+metrics-exporter-prometheus = "0.18"
 mime = "0.3.17"
 minus = { version = "5.4.0", features = ["static_output", "search"] }
 mockito = "1.1.0"
@@ -131,8 +132,8 @@ polars = { version = "0.49.0", features = ["lazy", "parquet", "json", "ipc", "ip
 pyo3 = { version = "0.25", features = ["abi3-py311"] }
 pyo3-async-runtimes = { version = "0.25", features = ["attributes", "tokio-runtime"] }
 pyo3-polars = { version = "0.22", features = ["dtype-full"] }
-qsv-sniffer = "0.10.3"
-rand = "0.8.5"
+qsv-sniffer = "0.12"
+rand = "0.10"
 rayon = "1.8.0"
 regex = "1.10.2"
 reqwest = { version = "0.13.2", features = ["multipart", "json", "gzip", "stream", "query"] }
@@ -141,20 +142,20 @@ rocksdb = { version = "0.22.0", default-features = false, features = ["lz4", "sn
 s3s = "0.14"
 s3s-fs = "0.14"
 sanitize-filename = "0.6.0"
-sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tracing"] }
-sentry-actix = "0.34"
+sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tracing"] }
+sentry-actix = "0.49"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_derive = "1.0.188"
 serde_json = "1.0.106"
 serde_with = "3.13.0"
-serial_test = "3.2.0"
-sha2 = "0.10.8"
-signal-hook = "0.3"
+serial_test = "4.0"
+sha2 = "0.11"
+signal-hook = "0.4"
 simdutf8 = "0.1.4"
 sql_query_builder = { version = "2.1.0", features = ["postgresql"] }
 sqlparser = { version = "0.53.0", features = ["visitor"] }
-strum = { version = "0.26.3", features = ["derive"] }
-sysinfo = "0.33.0"
+strum = { version = "0.28", features = ["derive"] }
+sysinfo = "0.39"
 tar = "0.4.44"
 tempfile = "3.8.0"
 thiserror = "2.0.18"
@@ -163,7 +164,7 @@ tokio = { version = "1.32.0", features = ["full", "tracing"] }
 tokio-console = "0.1.13"
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", features = ["compat", "io", "io-util"] }
-toml = "0.8.19"
+toml = "1.1"
 tracing = "0.1"
 # `emit_event_on_error` (the crate's only default feature) is off; oxen-server reports every
 # failed request itself. See docs/error_handling.md.
@@ -183,7 +184,7 @@ uuid = { version = "1.4.1", features = ["serde", "v4"] }
 video-rs = { version = "0.11", features = ["ndarray"] }
 walkdir = "2.5.0"
 xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
-zip = { version = "2.4.1", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [profile.dev]
 debug = "limited"
