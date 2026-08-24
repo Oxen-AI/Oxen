@@ -500,7 +500,6 @@ mod tests {
     use crate::repositories;
     use crate::repositories::workspaces;
     use crate::test;
-    use crate::util::fs::AtomicFile;
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
@@ -2909,9 +2908,7 @@ mod tests {
             .expect("a just-created workspace has a config");
         config.is_editable = false;
         config.workspace_commit_id = commit_id.to_string();
-        let toml_string = toml::to_string(&config).expect("workspace config serializes to TOML");
-        AtomicFile::new(workspace.config_path()).write(toml_string.as_bytes())?;
-        Ok(())
+        workspaces::write_config(&workspace.dir(), &config)
     }
 
     #[tokio::test]

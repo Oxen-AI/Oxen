@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use time::OffsetDateTime;
 
-use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACES_DIR};
+use crate::constants::{
+    OXEN_HIDDEN_DIR, WORKSPACE_CONFIG, WORKSPACE_CONFIG_LEGACY, WORKSPACES_DIR,
+};
 use crate::model::{Commit, LocalRepository};
 use crate::util;
 
@@ -31,7 +33,7 @@ pub struct Workspace {
     // And a sub repository that is just to make changes in
     // .oxen/workspaces/<workspace_id>/.oxen/
     pub workspace_repo: LocalRepository,
-    // .oxen/workspaces/<workspace_ id>/.oxen/WORKSPACE_CONFIG
+    // .oxen/workspaces/<workspace_id>/.oxen/workspace.toml
     pub is_editable: bool,
     pub commit: Commit,
     /// `None` for a workspace created before the server recorded creation time.
@@ -53,8 +55,29 @@ impl Workspace {
         Self::workspace_dir(&self.base_repo, &workspace_id_hash)
     }
 
+    /// Where a workspace's config is written.
     pub fn config_path_from_dir(dir: impl AsRef<Path>) -> PathBuf {
         dir.as_ref().join(OXEN_HIDDEN_DIR).join(WORKSPACE_CONFIG)
+    }
+
+    /// Where a workspace's config sits when it was written under the former name.
+    pub(crate) fn legacy_config_path_from_dir(dir: impl AsRef<Path>) -> PathBuf {
+        dir.as_ref()
+            .join(OXEN_HIDDEN_DIR)
+            .join(WORKSPACE_CONFIG_LEGACY)
+    }
+
+    /// The config `dir` actually holds, preferring the current name over the former one, or
+    /// `None` when it holds neither.
+    pub(crate) fn existing_config_path_from_dir(dir: impl AsRef<Path>) -> Option<PathBuf> {
+        let dir = dir.as_ref();
+        let config_path = Self::config_path_from_dir(dir);
+        if config_path.exists() {
+            return Some(config_path);
+        }
+
+        let legacy_path = Self::legacy_config_path_from_dir(dir);
+        legacy_path.exists().then_some(legacy_path)
     }
 
     pub fn config_path(&self) -> PathBuf {
