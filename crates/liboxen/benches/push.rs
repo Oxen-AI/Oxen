@@ -7,13 +7,13 @@ use liboxen::repositories;
 use liboxen::test::test_host;
 use liboxen::util;
 use liboxen::{api, command};
-use rand::distributions::Alphanumeric;
-use rand::{Rng, RngCore};
+use rand::distr::Alphanumeric;
+use rand::{Rng, RngExt};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 fn generate_random_string(len: usize) -> String {
-    rand::thread_rng()
+    rand::rng()
         .sample_iter(&Alphanumeric)
         .take(len)
         .map(char::from)
@@ -24,17 +24,17 @@ fn write_file_for_push_benchmark(
     file_path: &Path,
     large_file_chance: f64,
 ) -> Result<(), OxenError> {
-    if rand::thread_rng().gen_range(0.05..1.0) < large_file_chance {
+    if rand::rng().random_range(0.05..1.0) < large_file_chance {
         // to test large file chunk upload (File size > 10MB)
         // let large_content_size = 1024 * 1024 * 200 + 500;
         let large_content_size = 1024 * 1024 + 1;
         let mut large_content = vec![0u8; large_content_size];
-        rand::thread_rng().fill_bytes(&mut large_content);
+        rand::rng().fill_bytes(&mut large_content);
         fs::write(file_path, &large_content)?;
     } else {
         let small_content_size = 1024 - 1;
         let mut small_content = vec![0u8; small_content_size];
-        rand::thread_rng().fill_bytes(&mut small_content);
+        rand::rng().fill_bytes(&mut small_content);
         fs::write(file_path, &small_content)?;
     }
     Ok(())
@@ -57,7 +57,7 @@ async fn setup_repo_for_push_benchmark(
 
     let repo = repositories::init(&repo_dir)?;
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let files_dir = if let Some(data_path) = data_path {
         PathBuf::from(data_path)
     } else {
@@ -66,7 +66,7 @@ async fn setup_repo_for_push_benchmark(
         let mut dirs: Vec<PathBuf> = (0..dir_size)
             .map(|_| {
                 let mut path = files_dir.clone();
-                let depth = rng.gen_range(1..=4);
+                let depth = rng.random_range(1..=4);
                 for _ in 0..depth {
                     path = path.join(generate_random_string(10));
                 }
@@ -101,7 +101,7 @@ async fn setup_repo_for_push_benchmark(
 
         /*
         for i in 0..repo_size {
-            let dir_idx = rng.gen_range(0..dirs.len());
+            let dir_idx = rng.random_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
             let file_path = dir.join(format!("file_{}.txt", i));
@@ -114,7 +114,7 @@ async fn setup_repo_for_push_benchmark(
         */
 
         for i in repo_size..(repo_size + num_files_to_push_in_benchmark) {
-            let dir_idx = rng.gen_range(0..dirs.len());
+            let dir_idx = rng.random_range(0..dirs.len());
             let dir = &dirs[dir_idx];
             util::fs::create_dir_all(dir)?;
             let file_path = dir.join(format!("file_{i}.txt"));
@@ -179,8 +179,7 @@ pub fn push_benchmark(c: &mut Criterion) {
                 b.to_async(&rt).iter_batched(
                     || {
                         // Create a new remote for each iteration
-                        let iter_dirname =
-                            format!("push-run-{}", rand::thread_rng().r#gen::<u64>());
+                        let iter_dirname = format!("push-run-{}", rand::rng().random::<u64>());
 
                         let repo_new = RepoNew::from_namespace_name_host(
                             DEFAULT_NAMESPACE,

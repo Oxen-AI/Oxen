@@ -504,10 +504,6 @@ pub enum OxenError {
     #[error("{0}")]
     ArrowError(#[from] ArrowError),
 
-    /// Wraps errors from bincode when serializing and deserializing Rust objects into binary data.
-    #[error("{0}")]
-    BinCodeError(#[from] bincode::Error),
-
     /// Wraps errors encountered when trying to serialize TOML data.
     #[error("Configuration error: {0}")]
     TomlSer(#[from] toml::ser::Error),
@@ -859,7 +855,7 @@ impl OxenError {
             IO(io_err) if io_err.kind() == PermissionDenied => {
                 "Check file permissions and try again."
             }
-            DB(_) | ArrowError(_) | BinCodeError(_) | RmpDecodeError(_) => {
+            DB(_) | ArrowError(_) | RmpDecodeError(_) => {
                 "This is an internal error. Run with RUST_LOG=debug for more details."
             }
             WorkspaceStagedDbCorrupted { .. } => {

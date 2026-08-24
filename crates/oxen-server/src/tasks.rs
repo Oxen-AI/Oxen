@@ -131,15 +131,13 @@ mod tests {
         Fut: Future<Output = HttpResponse> + 'static,
     {
         let transport = TestTransport::new();
-        let options = ClientOptions {
-            dsn: Some(
-                "https://public@sentry.invalid/1"
-                    .parse()
-                    .expect("the test DSN should parse"),
-            ),
-            transport: Some(Arc::new(Arc::clone(&transport))),
-            ..Default::default()
-        };
+        let mut options = ClientOptions::default();
+        options.dsn = Some(
+            "https://public@sentry.invalid/1"
+                .parse()
+                .expect("the test DSN should parse"),
+        );
+        options.transport = Some(Arc::new(Arc::clone(&transport)));
         let hub = Arc::new(Hub::new(
             Some(Arc::new(options.into())),
             Arc::new(Default::default()),

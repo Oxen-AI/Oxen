@@ -13,7 +13,7 @@ use futures_util::StreamExt;
 use glob_match::glob_match;
 
 use parking_lot::Mutex;
-use rand::{Rng, thread_rng};
+use rand::{RngExt, rng};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1091,7 +1091,7 @@ pub fn exponential_backoff(base_wait_time: usize, n: usize, max: usize) -> usize
 }
 
 fn jitter() -> usize {
-    thread_rng().gen_range(0..=500)
+    rng().random_range(0..=500)
 }
 
 #[cfg(test)]
