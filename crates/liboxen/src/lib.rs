@@ -6,27 +6,40 @@
 //!
 //! Instantiating a new repo:
 //!
-//! ```ignore
-//! use liboxen::repositories;
+//! ```
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), liboxen::error::OxenError> {
+//! use liboxen::{repositories, test, util};
 //!
-//! // Instantiate a new repo
-//! let repo = repositories::init("test_repo")?;
-//! // Add a file to the repo
-//! repositories::add(&repo, "file.txt").await?;
-//! // Commit the file
-//! repositories::commit(&repo, "Added file.txt")?;
+//! test::run_empty_dir_test_async(|dir| async move {
+//!     // Instantiate a new repo
+//!     let repo = repositories::init(&dir)?;
+//!     // Add a file to the repo
+//!     let file = dir.join("file.txt");
+//!     util::fs::write_to_path(&file, "Hello World")?;
+//!     repositories::add(&repo, &file).await?;
+//!     // Commit the file
+//!     repositories::commit(&repo, "Added file.txt")?;
+//!     Ok(())
+//! })
+//! .await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Push data from local repo to remote repo:
 //!
-//! ```ignore
+//! Requires a reachable remote, so this example is compiled but not run.
+//!
+//! ```no_run
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), liboxen::error::OxenError> {
 //! use liboxen::command;
 //! use liboxen::model::LocalRepository;
 //! use liboxen::repositories;
-//! use liboxen::api;
 //!
 //! // Create LocalRepository from existing repo
-//! let repo = LocalRepository::from_dir("test_repo")?;
+//! let mut repo = LocalRepository::from_dir("test_repo")?;
 //! // Add a file to the repo
 //! repositories::add(&repo, "file.txt").await?;
 //! // Commit the file
@@ -34,20 +47,29 @@
 //! // Set remote
 //! let remote_url = "http://0.0.0.0:3000/ox/test_repo";
 //! let remote_name = "origin";
-//! command::config::set_remote(&mut repo, remote_name, &remote_url)?;
+//! command::config::set_remote(&mut repo, remote_name, remote_url)?;
 //! // Push to remote
 //! repositories::push(&repo).await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! Clone data from remote url
-//! ```ignore
+//!
+//! Requires a reachable remote, so this example is compiled but not run.
+//!
+//! ```no_run
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), liboxen::error::OxenError> {
 //! use liboxen::opts::CloneOpts;
 //! use liboxen::repositories;
 //!
 //! let url = "http://0.0.0.0:3000/ox/test_repo";
 //! let repo_dir = "test_repo";
 //! let opts = CloneOpts::new(url, &repo_dir);
-//! let repo = repositories::clone(&opts).await?;
+//! let repo = repositories::clone::clone(&opts).await?;
+//! # Ok(())
+//! # }
 //! ```
 
 extern crate approx;

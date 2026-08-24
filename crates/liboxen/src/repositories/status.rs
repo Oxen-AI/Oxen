@@ -11,33 +11,48 @@
 ///
 /// Empty Repository:
 ///
-/// ```ignore
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
 /// use liboxen::repositories;
+/// use liboxen::test;
 ///
-/// let base_dir = Path::new("repo_dir_status_1");
-/// // Initialize empty repo
-/// let repo = repositories::init(&base_dir)?;
-/// // Get status on repo
-/// let status = repositories::status(&repo).await?;
-/// assert!(status.is_clean());
+/// test::run_empty_dir_test_async(|dir| async move {
+///     // Initialize empty repo
+///     let repo = repositories::init(&dir)?;
+///     // Get status on repo
+///     let status = repositories::status(&repo).await?;
+///     assert!(status.is_clean());
+///     Ok(())
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// Repository with files
-/// ```ignore
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
 /// use liboxen::repositories;
-/// use liboxen::util;
+/// use liboxen::{test, util};
 ///
-/// let base_dir = Path::new("repo_dir_status_2");
-/// // Initialize empty repo
-/// let repo = repositories::init(&base_dir)?;
+/// test::run_empty_dir_test_async(|dir| async move {
+///     // Initialize empty repo
+///     let repo = repositories::init(&dir)?;
 ///
-/// // Write file to disk
-/// let hello_file = base_dir.join("hello.txt");
-/// util::fs::write_to_path(&hello_file, "Hello World");
+///     // Write file to disk
+///     let hello_file = dir.join("hello.txt");
+///     util::fs::write_to_path(&hello_file, "Hello World")?;
 ///
-/// // Get status on repo
-/// let status = repositories::status(&repo).await?;
-/// assert_eq!(status.untracked_files.len(), 1);
+///     // Get status on repo
+///     let status = repositories::status(&repo).await?;
+///     assert_eq!(status.untracked_files.len(), 1);
+///     Ok(())
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub use crate::core::v_latest::status::status;
 

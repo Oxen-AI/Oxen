@@ -10,22 +10,27 @@ use std::path::Path;
 
 /// # Stage files into repository
 ///
-/// ```ignore
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
 /// use liboxen::repositories;
-/// use liboxen::util;
+/// use liboxen::{test, util};
 ///
-/// // Initialize the repository
-/// let base_dir = Path::new("repo_dir_add");
-/// let repo = repositories::init(base_dir)?;
+/// test::run_empty_dir_test_async(|dir| async move {
+///     // Initialize the repository
+///     let repo = repositories::init(&dir)?;
 ///
-/// // Write file to disk
-/// let hello_file = base_dir.join("hello.txt");
-/// util::fs::write_to_path(&hello_file, "Hello World");
+///     // Write file to disk
+///     let hello_file = dir.join("hello.txt");
+///     util::fs::write_to_path(&hello_file, "Hello World")?;
 ///
-/// // Stage the file
-/// repositories::add(&repo, &hello_file).await?;
-///
-/// # util::fs::remove_dir_all(base_dir)?;
+///     // Stage the file
+///     repositories::add(&repo, &hello_file).await?;
+///     Ok(())
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub async fn add(repo: &LocalRepository, path: impl AsRef<Path>) -> Result<(), OxenError> {
     add_all(repo, vec![path]).await

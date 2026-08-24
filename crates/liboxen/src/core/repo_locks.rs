@@ -20,21 +20,41 @@
 //! Acquire the guard at the start of a write and hold it until the write finishes — dropping the
 //! guard is what signals the write is done:
 //!
-//! ```ignore
-//! let _write = repo_locks::acquire_write(repo)?; // 429 if a maintenance op holds the repo
-//! // ... perform the write; `_write` drops at end of scope, releasing the reservation ...
+//! ```
+//! use liboxen::core::repo_locks;
+//! use liboxen::{repositories, test};
+//!
+//! test::run_empty_dir_test(|dir| {
+//!     let repo = repositories::init(dir)?;
+//!     let _write = repo_locks::acquire_write(&repo)?; // 429 if a maintenance op holds the repo
+//!     // ... perform the write; `_write` drops at end of scope, releasing the reservation ...
+//!     Ok(())
+//! })?;
+//! # Ok::<(), liboxen::error::OxenError>(())
 //! ```
 //!
 //! # Running an exclusive operation
 //!
 //! Wrap the work in a future; new writers are rejected and in-flight ones drained before it runs:
 //!
-//! ```ignore
-//! repo_locks::with_repo_exclusive(repo, async {
-//!     // ... migration / prune sweep / fsck; no other write can land while this runs ...
+//! ```
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), liboxen::error::OxenError> {
+//! use liboxen::core::repo_locks;
+//! use liboxen::{repositories, test};
+//!
+//! test::run_empty_dir_test_async(|dir| async move {
+//!     let repo = repositories::init(&dir)?;
+//!     repo_locks::with_repo_exclusive(&repo, async {
+//!         // ... migration / prune sweep / fsck; no other write can land while this runs ...
+//!         Ok(())
+//!     })
+//!     .await?;
 //!     Ok(())
 //! })
 //! .await?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Invariant (deadlock avoidance)
