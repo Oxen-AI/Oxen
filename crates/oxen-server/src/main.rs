@@ -908,10 +908,10 @@ async fn start(
             // the span can record the request id, outside the two access-log middlewares so their
             // lines are events on the span rather than orphans.
             .wrap(TracingLogger::<OxenRootSpanBuilder>::new())
+            .wrap(TransitionalIdentityMiddleware)
             // RequestId must stay outer of the TracingLogger/Logger/RequestStartLog above (actix
             // runs the last .wrap outermost) so the request-id extension those three read is
             // populated before them.
-            .wrap(TransitionalIdentityMiddleware)
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
             // Outermost: a per-request Sentry hub so a captured panic carries request context.
