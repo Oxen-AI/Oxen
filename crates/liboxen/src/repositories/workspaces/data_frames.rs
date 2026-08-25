@@ -76,6 +76,20 @@ pub async fn index(
     core::v_latest::workspaces::data_frames::index(workspace, path.as_ref()).await
 }
 
+/// Index `path` only if its staged table is absent, leaving an already-indexed frame and the
+/// staged edits it holds untouched.
+///
+/// The emptiness check and the rebuild run under one exclusive hold on the data frame, so a
+/// rebuild can never be authorized by a check that another caller has since invalidated. Callers
+/// that want a rebuild regardless of the current contents want [`index`].
+pub async fn index_if_absent(
+    _repo: &LocalRepository,
+    workspace: &Workspace,
+    path: impl AsRef<Path>,
+) -> Result<(), OxenError> {
+    core::v_latest::workspaces::data_frames::index_if_absent(workspace, path.as_ref()).await
+}
+
 /// Rebuild a staged data frame left by an older version of oxen from its own
 /// rows, preserving the staged edits rather than discarding them. See
 /// [`core::v_latest::workspaces::data_frames::reindex_preserving_rows`].
@@ -767,6 +781,96 @@ mod tests {
 
             drop(stopper);
             evictor.await.expect("join evictor task");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// `index_if_absent` builds a staged table that is missing but never rebuilds one that is
+    /// present, so a caller acting on a stale "not indexed" observation cannot discard rows staged
+    /// since. `index` still rebuilds unconditionally, which is what `restore` depends on.
+    #[tokio::test]
+    async fn test_index_if_absent_leaves_staged_rows_alone() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-index-if-absent")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // Absent: it builds the table.
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+
+            let json_data = json!({
+                "file": "staged.jpg",
+                "label": "dog",
+                "min_x": 1.0,
+                "min_y": 2.0,
+                "width": 10.0,
+                "height": 10.0
+            });
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1
+            );
+
+            // Present: the staged row survives a second call.
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows + 1,
+                "index_if_absent rebuilt an already-indexed frame and discarded its staged row"
+            );
+
+            // The unconditional form is unchanged: it rebuilds from the commit.
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows,
+                "index must still rebuild from the committed file"
+            );
+
+            // Present but partial: a table missing `_oxen_id`, which is what an interrupted index
+            // leaves behind. It cannot be queried, so "absent" has to include it. Otherwise the
+            // frame stays unqueryable no matter how many times a caller asks for it.
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute(
+                        &format!("ALTER TABLE \"{TABLE_NAME}\" DROP COLUMN \"{OXEN_ID_COL}\""),
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })?;
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
+            workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path).await?;
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "index_if_absent must rebuild a partially-indexed table rather than keep it"
+            );
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                committed_rows
+            );
 
             Ok(())
         })
