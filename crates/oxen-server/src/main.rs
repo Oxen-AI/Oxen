@@ -886,6 +886,7 @@ async fn start(
                 "/api/migrations/{migration_tstamp}",
                 web::get().to(controllers::migrations::list_unmigrated),
             )
+            .wrap(TransitionalIdentityMiddleware)
             .wrap(Condition::new(
                 enable_auth,
                 HttpAuthentication::bearer(auth::validator::validate),
@@ -908,7 +909,6 @@ async fn start(
             // the span can record the request id, outside the two access-log middlewares so their
             // lines are events on the span rather than orphans.
             .wrap(TracingLogger::<OxenRootSpanBuilder>::new())
-            .wrap(TransitionalIdentityMiddleware)
             // RequestId must stay outer of the TracingLogger/Logger/RequestStartLog above (actix
             // runs the last .wrap outermost) so the request-id extension those three read is
             // populated before them.
