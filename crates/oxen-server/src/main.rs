@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use oxen_server::middleware::{
     MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
-    request_id,
+    TransitionalIdentityMiddleware, request_id,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -884,6 +884,7 @@ async fn start(
                 "/api/migrations/{migration_tstamp}",
                 web::get().to(controllers::migrations::list_unmigrated),
             )
+            .wrap(TransitionalIdentityMiddleware)
             .wrap(Condition::new(
                 enable_auth,
                 HttpAuthentication::bearer(auth::validator::validate),

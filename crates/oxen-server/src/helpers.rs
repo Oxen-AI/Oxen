@@ -17,6 +17,7 @@ use tokio::time::{Interval, interval};
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::tasks;
+use crate::transitional_identity::stated_request;
 
 /// Look up a repo by `<namespace>/<name>` under the server's sync dir.
 pub fn get_repo(
@@ -38,8 +39,28 @@ pub fn get_repo(
             .into(),
         );
     };
+    if let Some(name) = name_to_record(&repo)? {
+        repositories::record_name_hint(&repo, &name)?;
+    }
 
     Ok(repo)
+}
+
+/// The name a write request states for the repository it resolved to, once that request has been
+/// checked against the repository it actually reached.
+///
+/// `None` when nothing needs recording, so the caller does no work on the ordinary request.
+///
+/// # Errors
+/// [`OxenHttpError::BadRequest`] when the request names a different repository than the one found.
+fn name_to_record(repo: &LocalRepository) -> Result<Option<String>, OxenHttpError> {
+    let stated = stated_request();
+    stated.identity.check_addresses(repo.repo_uuid())?;
+
+    Ok(match (stated.is_write, stated.identity.name) {
+        (true, Some(name)) => Some(name),
+        _ => None,
+    })
 }
 
 /// Look up a repo by `<namespace>/<name>` under the server's sync dir, off the async worker.
@@ -63,6 +84,14 @@ pub async fn get_repo_async(
             .into(),
         );
     };
+    if let Some(name) = name_to_record(&repo)? {
+        let writing = repo.clone();
+        tasks::spawn_blocking(move || repositories::record_name_hint(&writing, &name))
+            .await
+            .map_err(|err| {
+                OxenError::basic_str(format!("recording the name hint failed: {err}"))
+            })??;
+    }
 
     Ok(repo)
 }

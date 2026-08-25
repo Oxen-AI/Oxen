@@ -9,6 +9,7 @@ use crate::constants;
 use crate::core;
 use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::refs::with_ref_manager;
+use crate::core::repo_locks;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
@@ -194,17 +195,48 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
         })
 }
 
-/// Move a repository into `to_namespace`, recording it as the namespace the repository is in when
-/// `to_namespace_is_a_name` says the destination is a human-readable name rather than a UUID.
+/// Record `name` as what this repository is called.
 ///
-/// Where it is not a name, the recorded name is cleared instead, so no repository is left
-/// describing the namespace it came from. A repository carrying no identity keeps none.
+/// Writes nothing when the recorded name already matches, or when the repository carries no
+/// identity. Only the name is recorded here: a repository's namespace changes by being moved, so
+/// that hint is set by [`transfer_namespace`] rather than from whatever a request happens to state.
+///
+/// # Errors
+/// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
+pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
+    let Some(identity) = repo.identity.as_ref() else {
+        return Ok(());
+    };
+    if identity.name.as_deref() == Some(name) {
+        return Ok(());
+    }
+
+    // Held across the read and the write, so no maintenance operation can run its exclusive
+    // section between them. Multiple config writers can still run concurrently.
+    let _write = repo_locks::acquire_write(repo)?;
+    let path = util::fs::config_filepath(&repo.path);
+    let mut config = RepositoryConfig::from_file(&path)?;
+    if let Some(identity) = config.identity.as_mut() {
+        identity.name = Some(name.to_string());
+    }
+    config.save(&path)?;
+    Ok(())
+}
+
+/// Move a repository into `to_namespace`, recording `namespace_hint` as what that namespace is
+/// called, or clearing the recorded name when it is `None` so no repository is left describing the
+/// namespace it came from.
+///
+/// `to_namespace` addresses the directory while `namespace_hint` is a display name, so where a
+/// control plane owns namespaces the first is a UUID and the second is not. They are separate
+/// parameters because they may legitimately differ, and coincide only where the server owns its
+/// own namespaces. A repository carrying no identity keeps none.
 pub fn transfer_namespace(
     sync_dir: &Path,
     repo_name: &str,
     from_namespace: &str,
     to_namespace: &str,
-    to_namespace_is_a_name: bool,
+    namespace_hint: Option<&str>,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
@@ -222,7 +254,7 @@ pub fn transfer_namespace(
     // A repo carrying no identity keeps none.
     let mut config = RepositoryConfig::from_file(util::fs::config_filepath(&from_dir))?;
     if let Some(identity) = config.identity.as_mut() {
-        identity.namespace = to_namespace_is_a_name.then(|| to_namespace.to_string());
+        identity.namespace = namespace_hint.map(str::to_string);
     }
 
     // ensure DB instance is closed before we move the repo
@@ -399,6 +431,7 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants;
     use crate::core::db::merkle_node::MerkleNodeBackend;
+    use crate::core::repo_locks;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoIdentity};
@@ -480,22 +513,117 @@ mod tests {
         .await
     }
 
+    #[tokio::test]
+    async fn test_record_name_hint_updates_the_recorded_name() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+
+            repositories::record_name_hint(&repo, "kittens")?;
+
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(identity.name.as_deref(), Some("kittens"));
+            assert_eq!(
+                identity.namespace.as_deref(),
+                Some("ox"),
+                "only the name moves"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A push is many write requests and the name changes on none of them, so an unchanged name
+    /// must not rewrite the config.
+    #[tokio::test]
+    async fn test_record_name_hint_writes_nothing_when_the_name_already_matches()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+            let path = util::fs::config_filepath(&repo.path);
+            let before = std::fs::metadata(&path)?.modified()?;
+
+            repositories::record_name_hint(&repo, "cats")?;
+
+            assert_eq!(
+                std::fs::metadata(&path)?.modified()?,
+                before,
+                "an unchanged name must not touch the config"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Identity stays all-or-nothing: a repo carrying none does not acquire a bare name.
+    #[tokio::test]
+    async fn test_record_name_hint_leaves_a_repo_without_identity_alone() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
+
+            repositories::record_name_hint(&repo, "kittens")?;
+
+            let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
+            assert_eq!(config.identity, None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A maintenance operation runs with the repository to itself, so the hint write refuses its
+    /// turn rather than rewriting the config underneath it.
+    #[tokio::test]
+    async fn test_record_name_hint_refuses_while_a_maintenance_operation_holds_the_repo()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo =
+                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
+                    .await?;
+
+            repo_locks::with_repo_exclusive(&repo, async {
+                assert!(matches!(
+                    repositories::record_name_hint(&repo, "kittens"),
+                    Err(OxenError::LockTimeout(_))
+                ));
+                Ok::<(), OxenError>(())
+            })
+            .await?;
+
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(
+                identity.name.as_deref(),
+                Some("cats"),
+                "the hint is untouched"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     /// Create `ox/cats` with `identity`, then move it to `bessie`.
     async fn transferred(
         sync_dir: &Path,
         identity: Option<RepoIdentity>,
-        to_namespace_is_a_name: bool,
+        namespace_hint: Option<&str>,
     ) -> Result<LocalRepository, OxenError> {
         let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
         drop(repositories::create(sync_dir, repo_new, identity, None).await?);
-        repositories::transfer_namespace(
-            sync_dir,
-            "cats",
-            "ox",
-            "bessie",
-            to_namespace_is_a_name,
-            None,
-        )
+        repositories::transfer_namespace(sync_dir, "cats", "ox", "bessie", namespace_hint, None)
     }
 
     #[tokio::test]
@@ -504,7 +632,7 @@ mod tests {
             let identity = server_identity("ox", "cats");
             let repo_uuid = identity.as_ref().map(|identity| identity.repo_uuid);
 
-            let moved = transferred(&sync_dir, identity, true).await?;
+            let moved = transferred(&sync_dir, identity, Some("bessie")).await?;
 
             let moved_identity = moved.identity.as_ref().expect("identity survives the move");
             assert_eq!(moved_identity.namespace.as_deref(), Some("bessie"));
@@ -525,7 +653,10 @@ mod tests {
     async fn test_transfer_namespace_leaves_a_repo_without_identity_alone() -> Result<(), OxenError>
     {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            assert_eq!(transferred(&sync_dir, None, true).await?.identity, None);
+            assert_eq!(
+                transferred(&sync_dir, None, Some("bessie")).await?.identity,
+                None
+            );
             Ok(())
         })
         .await
@@ -548,8 +679,14 @@ mod tests {
             // creating it, after the point the hint used to be written.
             util::fs::write_to_path(sync_dir.join("bessie"), "not a directory")?;
 
-            let result =
-                repositories::transfer_namespace(&sync_dir, "cats", "ox", "bessie", true, None);
+            let result = repositories::transfer_namespace(
+                &sync_dir,
+                "cats",
+                "ox",
+                "bessie",
+                Some("bessie"),
+                None,
+            );
             assert!(result.is_err(), "the transfer must fail");
 
             let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_path))?
@@ -572,7 +709,7 @@ mod tests {
     async fn test_transfer_namespace_clears_the_hint_when_the_destination_is_not_a_name()
     -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let moved = transferred(&sync_dir, server_identity("ox", "cats"), false).await?;
+            let moved = transferred(&sync_dir, server_identity("ox", "cats"), None).await?;
 
             let identity = moved.identity.as_ref().expect("identity survives the move");
             assert_eq!(identity.namespace, None);
@@ -942,7 +1079,7 @@ mod tests {
                 name,
                 old_namespace,
                 new_namespace,
-                true,
+                Some(new_namespace),
                 None,
             )?;
 
