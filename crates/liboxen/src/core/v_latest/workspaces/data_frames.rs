@@ -4,6 +4,7 @@ use crate::constants::{
     EVAL_DURATION_COL, EVAL_ERROR_COL, EVAL_STATUS_COL, EXCLUDE_OXEN_COLS, OXEN_ID_COL,
     OXEN_ROW_ID_COL, TABLE_NAME,
 };
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
@@ -211,6 +212,7 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
+/// Rebuild the staged table for `path` from the committed file, discarding any staged edits.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     // Is tabular just looks at the file extensions
     let file_node =
@@ -277,46 +279,52 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
     tokio::task::spawn_blocking(move || {
-        with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| {
-                // Drop any prior table (possibly partial or stale) and commit that
-                // drop before the rebuild, so a failed rebuild leaves no table at
-                // all rather than rolling back to a partial one.
-                if df_db::table_exists(conn, TABLE_NAME)? {
-                    df_db::drop_table(conn, TABLE_NAME)?;
-                }
+        // Hold the data frame exclusively for the whole rebuild: it drops the staged table before
+        // building the replacement, so a row write that overlaps is discarded by the drop.
+        with_data_frame_write(&db_path, || {
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| {
+                    // Drop any prior table (possibly partial or stale) and commit that
+                    // drop before the rebuild, so a failed rebuild leaves no table at
+                    // all rather than rolling back to a partial one.
+                    if df_db::table_exists(conn, TABLE_NAME)? {
+                        df_db::drop_table(conn, TABLE_NAME)?;
+                    }
 
-                // A workspace data frame is only queryable once the hidden
-                // `_oxen_id` column is present, so build the table inside a
-                // transaction and publish it only on success. On any failure, roll
-                // back (and drop defensively) so the read path never sees a
-                // half-built table.
-                conn.execute_batch("BEGIN TRANSACTION")?;
-                let build = (|| -> Result<(), DataFrameError> {
-                    df_db::index_file_with_id(&version_path, conn, &extension)?;
-                    Ok(())
-                })();
-                match build {
-                    Ok(()) => {
-                        conn.execute_batch("COMMIT")?;
-                        // Fold the WAL into the db file right away. The
-                        // indexing DDL includes function defaults (uuid(),
-                        // nextval()) whose WAL entries the bundled DuckDB
-                        // cannot replay after an unclean shutdown; once
-                        // checkpointed they are out of the WAL entirely.
-                        // Best-effort: a concurrent transaction can block a
-                        // checkpoint, and the next clean open checkpoints too.
-                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
-                            log::warn!("index: CHECKPOINT after build failed for {db_path:?}: {e}");
-                        }
+                    // A workspace data frame is only queryable once the hidden
+                    // `_oxen_id` column is present, so build the table inside a
+                    // transaction and publish it only on success. On any failure, roll
+                    // back (and drop defensively) so the read path never sees a
+                    // half-built table.
+                    conn.execute_batch("BEGIN TRANSACTION")?;
+                    let build = (|| -> Result<(), DataFrameError> {
+                        df_db::index_file_with_id(&version_path, conn, &extension)?;
                         Ok(())
+                    })();
+                    match build {
+                        Ok(()) => {
+                            conn.execute_batch("COMMIT")?;
+                            // Fold the WAL into the db file right away. The
+                            // indexing DDL includes function defaults (uuid(),
+                            // nextval()) whose WAL entries the bundled DuckDB
+                            // cannot replay after an unclean shutdown; once
+                            // checkpointed they are out of the WAL entirely.
+                            // Best-effort: a concurrent transaction can block a
+                            // checkpoint, and the next clean open checkpoints too.
+                            if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                                log::warn!(
+                                    "index: CHECKPOINT after build failed for {db_path:?}: {e}"
+                                );
+                            }
+                            Ok(())
+                        }
+                        Err(e) => {
+                            let _ = conn.execute_batch("ROLLBACK");
+                            let _ = df_db::drop_table(conn, TABLE_NAME);
+                            Err(e)
+                        }
                     }
-                    Err(e) => {
-                        let _ = conn.execute_batch("ROLLBACK");
-                        let _ = df_db::drop_table(conn, TABLE_NAME);
-                        Err(e)
-                    }
-                }
+                })
             })
         })
     })
@@ -404,8 +412,12 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
     }
 
     let recovered = tokio::task::spawn_blocking(move || -> Result<bool, OxenError> {
-        let outcome = with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| -> Result<bool, DataFrameError> {
+        // The export and the rebuild that consumes it must be one step: a row written after the
+        // export but before the drop below is not in the export, so the rebuilt table would not
+        // contain it.
+        let outcome = with_data_frame_write(&db_path, || {
+            let outcome = with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| -> Result<bool, DataFrameError> {
                 let schema = df_db::get_schema(conn, TABLE_NAME)?;
                 let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
                 let has_user_col = schema
@@ -475,9 +487,14 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
                 }
                 Ok(true)
             })
+            });
+            // Clean up the intermediate export regardless of the rebuild's result, and before
+            // releasing the guard: every recovery of this data frame in this process exports to
+            // the same path, so removing it after the guard is released can delete an export that
+            // a second recovery has just written and is about to read.
+            let _ = std::fs::remove_file(&recover_path);
+            outcome
         });
-        // Clean up the intermediate export regardless of the rebuild's result.
-        let _ = std::fs::remove_file(&recover_path);
         Ok(outcome?)
     })
     .await??;
@@ -506,31 +523,80 @@ pub async fn rename(
 
     // Handle duckdb file operations first
     let og_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let og_db_path_parent = og_db_path.parent().unwrap();
     let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
-    let new_db_path_parent = new_db_path.parent().unwrap();
 
-    // Explicitly checkpoint and then close the cached connection before copying.
-    // CHECKPOINT forces DuckDB to flush its WAL into the main database file.
-    // Without this, the copy could include a WAL file that references the
-    // original catalog name, causing replay failures when the copy is opened.
-    with_df_db_manager(&og_db_path, |manager| {
-        manager.with_conn(|conn| {
-            if let Err(e) = conn.execute_batch("CHECKPOINT") {
-                log::warn!("rename: CHECKPOINT before copy failed for {og_db_path:?}: {e}");
-            }
-            Ok(())
-        })
-    })?;
-    df_db::remove_df_db_from_cache(&og_db_path)?;
-
-    if !new_db_path_parent.exists() {
-        util::fs::create_dir_all(new_db_path_parent)?;
+    // A rename onto the data frame's own path changes nothing, and carrying on would destroy it:
+    // the move copies its DuckDB directory onto itself and then removes it, and the staged entry
+    // is upserted at the new path only to be deleted at the old one, which is the same entry.
+    // Compared by DuckDB path, the data frame's identity, so two spellings of one path count as
+    // the same data frame.
+    if og_db_path == new_db_path {
+        return util::fs::path_relative_to_dir(new_path, &workspace_repo.path);
     }
 
-    util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
+    let Some(og_db_path_parent) = og_db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {og_db_path:?}"
+        )));
+    };
+    let Some(new_db_path_parent) = new_db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {new_db_path:?}"
+        )));
+    };
 
-    util::fs::remove_dir_all(og_db_path_parent)?;
+    // Hold both ends of the move. The source's cached connection is dropped and its directory
+    // copied and removed, so a write to the source lands in a database about to be deleted; and
+    // renaming onto an existing data frame overwrites the destination's directory, so a write to
+    // the destination is overwritten. Taken in sorted path order, which is what keeps two renames
+    // between the same pair from deadlocking by taking them in opposite orders. The two are always
+    // distinct here, since a rename onto the same data frame returned above, so taking both never
+    // asks a non-reentrant lock for a second entry.
+    //
+    // All of it on the blocking pool: waiting on the locks, and then the DuckDB and filesystem
+    // work they guard. Only the staged-entry work below still runs on the async worker.
+    tokio::task::spawn_blocking(move || {
+        let move_db = || -> Result<(), OxenError> {
+            // Explicitly checkpoint and then close the cached connection before copying.
+            // CHECKPOINT forces DuckDB to flush its WAL into the main database file.
+            // Without this, the copy could include a WAL file that references the
+            // original catalog name, causing replay failures when the copy is opened.
+            with_df_db_manager(&og_db_path, |manager| {
+                manager.with_conn(|conn| {
+                    if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                        log::warn!("rename: CHECKPOINT before copy failed for {og_db_path:?}: {e}");
+                    }
+                    Ok(())
+                })
+            })?;
+            df_db::remove_df_db_from_cache(&og_db_path)?;
+
+            // Drop the destination's cached connection as well, before the copy rewrites the files
+            // it is open on. A connection left open on the destination would go on serving a
+            // catalog and pages that no longer describe what is in the file. Dropping it here also
+            // lets DuckDB checkpoint and clear the destination's WAL while that WAL still belongs
+            // to the database it was written for.
+            df_db::remove_df_db_from_cache(&new_db_path)?;
+
+            if !new_db_path_parent.exists() {
+                util::fs::create_dir_all(&new_db_path_parent)?;
+            }
+
+            util::fs::copy_dir_all(&og_db_path_parent, &new_db_path_parent)?;
+
+            util::fs::remove_dir_all(&og_db_path_parent)?;
+
+            Ok(())
+        };
+
+        let (first, second) = if og_db_path < new_db_path {
+            (&og_db_path, &new_db_path)
+        } else {
+            (&new_db_path, &og_db_path)
+        };
+        with_data_frame_write(first, || with_data_frame_write(second, move_db))
+    })
+    .await??;
 
     // Use staged_db_manager
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;

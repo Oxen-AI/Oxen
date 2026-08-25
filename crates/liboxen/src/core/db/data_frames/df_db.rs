@@ -1591,20 +1591,27 @@ mod tests {
                 wal_file.exists(),
                 "WAL should exist before flush — disable_checkpoint_on_shutdown is set"
             );
-            let cache_len_before = DF_DB_INSTANCES.read().len();
+            // The keys the flush has to drain. Asserting on these rather than on the cache being
+            // empty afterward: the cache is process-global, so a sibling test opening its own data
+            // frame can add an entry at any moment, including between the flush and the check.
+            let before: Vec<PathBuf> = DF_DB_INSTANCES
+                .read()
+                .iter()
+                .map(|(key, _)| key.clone())
+                .collect();
             assert!(
-                cache_len_before > 0,
+                before.contains(&db_file),
                 "cache should have the entry we just opened"
             );
 
             flush_all_df_db_connections();
 
-            // Cache must be drained — every Arc removed, every connection dropped.
-            assert_eq!(
-                DF_DB_INSTANCES.read().len(),
-                0,
-                "cache should be empty after flush"
-            );
+            // Every Arc removed, every connection dropped.
+            let after = DF_DB_INSTANCES.read();
+            for key in &before {
+                assert!(!after.contains(key), "flush left {key:?} in the cache");
+            }
+            drop(after);
 
             // Reopen WITHOUT going through recovery (no stale-WAL handling needed
             // because flush already CHECKPOINTed): data must still be present.

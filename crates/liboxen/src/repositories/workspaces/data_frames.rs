@@ -8,6 +8,7 @@ use sql_query_builder::Select;
 use crate::constants::{MAX_QUERYABLE_ROWS, OXEN_COLS, OXEN_ROW_ID_COL, TABLE_NAME};
 use crate::constants::{MODS_DIR, OXEN_HIDDEN_DIR};
 use crate::core;
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_query_conn};
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
@@ -66,6 +67,7 @@ pub fn is_queryable_data_frame_indexed(
 
 pub use crate::core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace;
 
+/// Rebuild the staged table for `path` from the committed file, discarding any staged edits.
 pub async fn index(
     _repo: &LocalRepository,
     workspace: &Workspace,
@@ -83,14 +85,18 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
 
 pub use crate::core::v_latest::workspaces::data_frames::rename;
 
+/// Drop the staged table for `path`, discarding any staged edits it holds. Editing the path again
+/// re-indexes it from the committed file.
 pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), DataFrameError> {
     let path = path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            df_db::drop_table(conn, TABLE_NAME)?;
-            Ok(())
+    with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                df_db::drop_table(conn, TABLE_NAME)?;
+                Ok(())
+            })
         })
     })
 }
@@ -100,7 +106,13 @@ pub async fn restore(
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    // Unstage and then restage the df
+    // Unstage and then restage the df.
+    //
+    // Two separately guarded steps, not one: the data frame's write guard cannot be held across the
+    // `.await` below. A row write landing in the gap therefore fails rather than being silently
+    // discarded by the rebuild, which is the right outcome for a caller that asked for the staged
+    // edits to be thrown away. The index check in oxen-server is what turns that into a clean
+    // rejection (`OxenHttpError::DatasetNotIndexed`).
     unindex(workspace, &path)?;
 
     // TODO: we could do this more granularly without a full reset
@@ -485,7 +497,8 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::SystemTime;
+    use std::sync::mpsc;
+    use std::time::{Duration, SystemTime};
 
     use serde_json::json;
 
@@ -511,6 +524,164 @@ mod tests {
         fn drop(&mut self) {
             self.0.store(true, Ordering::Relaxed);
         }
+    }
+
+    /// `rename` reserves the destination data frame as well as the source. It copies the source's
+    /// DuckDB directory over the destination's, so a write to the destination that overlapped
+    /// would be overwritten. Holding the destination's lock must therefore make the rename wait.
+    #[tokio::test]
+    async fn test_rename_waits_for_a_write_to_the_destination() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-rename-dest-lock")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            let new_path = Path::new("annotations").join("train").join("renamed.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            // Hold the destination's lock from another thread until this test releases it.
+            let (holding_tx, holding_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let dest_db_path = workspaces::data_frames::duckdb_path(&workspace, &new_path);
+            let holder = std::thread::spawn(move || {
+                with_data_frame_write(&dest_db_path, || {
+                    holding_tx.send(()).expect("signal the destination is held");
+                    release_rx.recv().expect("await release");
+                });
+            });
+            holding_rx.recv().expect("destination lock should be held");
+
+            // `rename` waits for the lock on the blocking pool, so awaiting it here cannot stall
+            // this test's runtime.
+            let mut renamer = tokio::spawn({
+                let workspace = workspace.clone();
+                let file_path = file_path.clone();
+                let new_path = new_path.clone();
+                async move {
+                    workspaces::data_frames::rename(&workspace, &file_path, &new_path).await
+                }
+            });
+
+            assert!(
+                tokio::time::timeout(Duration::from_millis(500), &mut renamer)
+                    .await
+                    .is_err(),
+                "rename proceeded while a write to the destination was in flight"
+            );
+
+            release_tx.send(()).expect("release the destination");
+            tokio::time::timeout(Duration::from_secs(30), renamer)
+                .await
+                .expect("rename should finish once the destination is released")
+                .expect("join the rename task")?;
+
+            holder.join().expect("join the destination holder");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Renaming a data frame onto its own path leaves it exactly as it was. Carrying on through
+    /// the move would copy its DuckDB directory onto itself and then remove it, and delete the
+    /// staged entry it had just written at the same path.
+    #[tokio::test]
+    async fn test_rename_to_the_same_path_leaves_the_data_frame_alone() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-rename-same-path")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+            let rows_before = workspaces::data_frames::count(&workspace, &file_path)?;
+
+            workspaces::data_frames::rename(&workspace, &file_path, &file_path).await?;
+
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, &file_path)?,
+                "renaming a data frame onto its own path unindexed it"
+            );
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &file_path)?,
+                rows_before,
+                "renaming a data frame onto its own path changed its rows"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// `rename` copies the source's DuckDB directory over the destination's, rewriting in place
+    /// the file the destination's cached connection is open on. That connection has to be dropped
+    /// along with the source's, or reads of the renamed-to path keep going to a database that the
+    /// file no longer holds.
+    #[tokio::test]
+    async fn test_rename_drops_the_destinations_cached_connection() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            // A second committed data frame to rename onto, with a row count of its own.
+            let dest_path = Path::new("annotations").join("train").join("two_rows.csv");
+            test::write_txt_file_to_path(
+                repo.path.join(&dest_path),
+                "file,label\ntrain/dog_9.jpg,dog\ntrain/cat_9.jpg,cat\n",
+            )?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "add a data frame to rename onto")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let source_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+
+            // Indexing leaves each data frame's connection in the cache, which is what makes a
+            // stale destination connection reachable after the rename.
+            workspaces::data_frames::index(&repo, &workspace, &source_path).await?;
+            workspaces::data_frames::index(&repo, &workspace, &dest_path).await?;
+
+            let source_rows = workspaces::data_frames::count(&workspace, &source_path)?;
+            let dest_rows = workspaces::data_frames::count(&workspace, &dest_path)?;
+            assert_ne!(
+                source_rows, dest_rows,
+                "the two data frames need different row counts for the assertion below to \
+                 distinguish them"
+            );
+
+            workspaces::data_frames::rename(&workspace, &source_path, &dest_path).await?;
+
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, &dest_path)?,
+                source_rows,
+                "reading the renamed-to path served the destination's pre-rename database"
+            );
+
+            Ok(())
+        })
+        .await
     }
 
     /// Every concurrent append to one data frame lands. Writers that overlap can end up on

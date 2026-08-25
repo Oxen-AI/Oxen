@@ -1,6 +1,7 @@
 use polars::frame::DataFrame;
 
 use crate::constants::TABLE_NAME;
+use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::columns;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
@@ -22,8 +23,10 @@ pub fn add(
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     log::debug!("add_column() got db_path: {db_path:?}");
-    let result = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| columns::add_column(conn, new_column))
+    let result = with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| columns::add_column(conn, new_column))
+        })
     })?;
 
     workspaces::files::track_modified_data_frame(workspace, file_path)?;
@@ -39,8 +42,10 @@ pub fn delete(
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     log::debug!("delete_column() got db_path: {db_path:?}");
-    let result = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| columns::delete_column(conn, column_to_delete))
+    let result = with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| columns::delete_column(conn, column_to_delete))
+        })
     })?;
 
     workspaces::files::track_modified_data_frame(workspace, file_path)?;
@@ -56,10 +61,12 @@ pub async fn update(
     let file_path = file_path.as_ref();
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, file_path);
     log::debug!("update_column() got db_path: {db_path:?}");
-    let result = with_df_db_manager(&db_path, |manager| {
-        manager.with_conn(|conn| {
-            let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
-            columns::update_column(conn, column_to_update, &table_schema)
+    let result = with_data_frame_write(&db_path, || {
+        with_df_db_manager(&db_path, |manager| {
+            manager.with_conn(|conn| {
+                let table_schema = schema_without_oxen_cols(conn, TABLE_NAME)?;
+                columns::update_column(conn, column_to_update, &table_schema)
+            })
         })
     })?;
 

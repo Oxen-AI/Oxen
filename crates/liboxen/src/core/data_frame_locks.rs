@@ -1,4 +1,4 @@
-//! Process-global per-data-frame write lock: serializes the row operations that mutate a single
+//! Process-global per-data-frame write lock: serializes the operations that mutate a single
 //! workspace data frame's staged table.
 //!
 //! # Why it exists
@@ -32,11 +32,11 @@
 //! Two ordering rules keep it deadlock-free, and both are structural rather than conventional:
 //!
 //! - It is always taken *before* the DuckDB connection lock, never the other way around, because
-//!   [`with_data_frame_write`] wraps whole row operations and the connection lock is taken inside
-//!   them.
+//!   [`with_data_frame_write`] wraps whole operations and the connection lock is taken inside them.
 //! - It cannot be held across an `.await`, because [`with_data_frame_write`] takes a synchronous
-//!   closure. Nothing that indexes or rebuilds the table (all of which is async) can be waiting on
-//!   this lock, so no cycle with the read path, which indexes on demand, is possible.
+//!   closure. The rebuild paths are async overall, but each takes the guard inside a
+//!   `spawn_blocking` and around synchronous work only, so a holder is never suspended waiting on a
+//!   future that needs the same guard.
 //!
 //! shortcut: an in-process lock, which serializes writers only within one oxen-server process. If
 //! the server is ever run as more than one process per repository, this needs to become a lock the
