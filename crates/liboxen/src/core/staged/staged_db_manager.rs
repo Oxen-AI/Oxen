@@ -74,20 +74,38 @@ pub struct StagedDBManager {
 /// Easy ways to ensure the manager is dropped promptly:
 ///
 /// **Call `drop()` explicitly** when you need the result in the same scope:
-/// ```ignore
-/// let mgr = get_staged_db_manager(repo)?;
-/// let result = mgr.read_from_staged_db(path)?;
-/// drop(mgr);
-/// // ... continue working with result ...
+/// ```
+/// use liboxen::core::staged::staged_db_manager::get_staged_db_manager;
+/// use liboxen::{repositories, test};
+///
+/// test::run_empty_dir_test(|dir| {
+///     let repo = repositories::init(dir)?;
+///     let mgr = get_staged_db_manager(&repo)?;
+///     let result = mgr.read_from_staged_db("hello.txt")?;
+///     drop(mgr);
+///     // ... continue working with result ...
+///     assert!(result.is_none());
+///     Ok(())
+/// })?;
+/// # Ok::<(), liboxen::error::OxenError>(())
 /// ```
 ///
 /// **Use a block scope** so the manager is dropped at the end of the block:
-/// ```ignore
-/// let result = {
-///     let mgr = get_staged_db_manager(repo)?;
-///     mgr.read_from_staged_db(path)?
-/// }; // mgr is dropped here
-/// // ... continue working with result ...
+/// ```
+/// use liboxen::core::staged::staged_db_manager::get_staged_db_manager;
+/// use liboxen::{repositories, test};
+///
+/// test::run_empty_dir_test(|dir| {
+///     let repo = repositories::init(dir)?;
+///     let result = {
+///         let mgr = get_staged_db_manager(&repo)?;
+///         mgr.read_from_staged_db("hello.txt")?
+///     }; // mgr is dropped here
+///     // ... continue working with result ...
+///     assert!(result.is_none());
+///     Ok(())
+/// })?;
+/// # Ok::<(), liboxen::error::OxenError>(())
 /// ```
 pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBManager, OxenError> {
     let staged_db_dir = util::fs::oxen_hidden_dir(&repository.path).join(STAGED_DIR);

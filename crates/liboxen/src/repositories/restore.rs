@@ -5,31 +5,40 @@
 
 /// # Restore a removed file that was committed
 ///
-/// ```ignore
-/// use liboxen::repositories;
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
 /// use liboxen::opts::RestoreOpts;
-/// use liboxen::util;
+/// use liboxen::repositories;
+/// use liboxen::{test, util};
 ///
-/// // Initialize the repository
-/// let base_dir = Path::new("repo_dir_commit");
-/// let repo = repositories::init(base_dir)?;
+/// test::run_empty_dir_test_async(|dir| async move {
+///     // Initialize the repository
+///     let repo = repositories::init(&dir)?;
 ///
-/// // Write file to disk
-/// let hello_name = "hello.txt";
-/// let hello_path = base_dir.join(hello_name);
-/// util::fs::write_to_path(&hello_path, "Hello World");
+///     // Write file to disk
+///     let hello_name = "hello.txt";
+///     let hello_path = dir.join(hello_name);
+///     util::fs::write_to_path(&hello_path, "Hello World")?;
 ///
-/// // Stage the file
-/// repositories::add(&repo, &hello_path).await?;
+///     // Stage the file
+///     repositories::add(&repo, &hello_path).await?;
 ///
-/// // Commit staged
-/// let commit = repositories::commit(&repo, "My commit message")?;
+///     // Commit staged
+///     let commit = repositories::commit(&repo, "My commit message")?;
 ///
-/// // Remove the file from disk
-/// util::fs::remove_file(hello_path)?;
+///     // Remove the file from disk
+///     util::fs::remove_file(&hello_path)?;
 ///
-/// // Restore the file
-/// repositories::restore::restore(&repo, RestoreOpts::from_path_ref(hello_name, commit.id)).await?;
+///     // Restore the file
+///     let opts = RestoreOpts::from_path_ref(hello_name, commit.id);
+///     repositories::restore::restore(&repo, opts).await?;
+///     assert!(hello_path.exists());
+///     Ok(())
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub use crate::core::v_latest::restore::restore;
 

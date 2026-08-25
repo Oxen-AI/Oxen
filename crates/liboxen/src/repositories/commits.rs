@@ -18,23 +18,30 @@ pub mod commit_writer;
 
 /// # Commit the staged files in the repo
 ///
-/// ```ignore
+/// ```
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
 /// use liboxen::repositories;
-/// use liboxen::util;
+/// use liboxen::{test, util};
 ///
-/// // Initialize the repository
-/// let base_dir = Path::new("repo_dir_commit");
-/// let repo = repositories::init(base_dir)?;
+/// test::run_empty_dir_test_async(|dir| async move {
+///     // Initialize the repository
+///     let repo = repositories::init(&dir)?;
 ///
-/// // Write file to disk
-/// let hello_file = base_dir.join("hello.txt");
-/// util::fs::write_to_path(&hello_file, "Hello World");
+///     // Write file to disk
+///     let hello_file = dir.join("hello.txt");
+///     util::fs::write_to_path(&hello_file, "Hello World")?;
 ///
-/// // Stage the file
-/// repositories::add(&repo, &hello_file).await?;
+///     // Stage the file
+///     repositories::add(&repo, &hello_file).await?;
 ///
-/// // Commit staged
-/// repositories::commit(&repo, "My commit message")?;
+///     // Commit staged
+///     repositories::commit(&repo, "My commit message")?;
+///     Ok(())
+/// })
+/// .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn commit(repo: &LocalRepository, message: &str) -> Result<Commit, OxenError> {
     core::v_latest::commits::commit(repo, message)

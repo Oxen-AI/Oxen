@@ -254,12 +254,14 @@ pub async fn add_n_files_m_dirs(
 /// This function will create a directory with a uniq name
 /// and take care of cleaning it up afterwards
 ///
-/// ```ignore
+/// ```
+/// use liboxen::test;
+///
 /// test::run_empty_dir_test(|repo_dir| {
-///   // do your fancy testing here
-///   assert!(true);
-///   Ok(())
-/// });
+///     assert!(repo_dir.exists());
+///     Ok(())
+/// })?;
+/// # Ok::<(), liboxen::error::OxenError>(())
 /// ```
 pub fn run_empty_dir_test<T>(test: T) -> Result<(), OxenError>
 where

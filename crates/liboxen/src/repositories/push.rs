@@ -5,10 +5,13 @@
 
 /// # Push committed data to a remote
 ///
-/// ```ignore
-/// use liboxen::command;
-/// use liboxen::repositories;
-/// use liboxen::util;
+/// Requires a reachable remote, so this example is compiled but not run.
+///
+/// ```no_run
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), liboxen::error::OxenError> {
+/// use liboxen::{command, repositories, util};
+/// use std::path::Path;
 ///
 /// // Initialize the repository
 /// let base_dir = Path::new("repo_dir_push");
@@ -16,7 +19,7 @@
 ///
 /// // Write file to disk
 /// let hello_file = base_dir.join("hello.txt");
-/// util::fs::write_to_path(&hello_file, "Hello World");
+/// util::fs::write_to_path(&hello_file, "Hello World")?;
 ///
 /// // Stage the file
 /// repositories::add(&repo, &hello_file).await?;
@@ -25,10 +28,12 @@
 /// repositories::commit(&repo, "My commit message")?;
 ///
 /// // Set the remote server
-/// command::config::set_remote(&mut repo, "origin", "http://localhost:3000/repositories/hello");
+/// command::config::set_remote(&mut repo, "origin", "http://localhost:3000/repositories/hello")?;
 ///
 /// // Push the file
 /// repositories::push(&repo).await?;
+/// # Ok(())
+/// # }
 /// ```
 pub use crate::core::v_latest::push::push;
 
