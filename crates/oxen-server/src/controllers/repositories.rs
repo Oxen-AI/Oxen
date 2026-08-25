@@ -544,16 +544,20 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     // delete).
     let repo_dir = repositories::repo_dir(&app_data.path, &namespace, &name)?;
 
-    let repository = match get_repo_async(app_data, &namespace, &name).await {
-        Ok(repository) => Some(repository),
-        Err(OxenHttpError::InternalOxenError(OxenError::RepoNotFound(_))) => {
+    // Opened directly rather than through `get_repo_async`, whose identity check and hint refresh
+    // can also fail: the fallback below deletes, so only a failure to open may reach it.
+    let repository = match repositories::get_by_namespace_and_name_async(
+        &app_data.path,
+        &namespace,
+        &name,
+        app_data.config.storage.s3(),
+    )
+    .await
+    {
+        Ok(Some(repository)) => Some(repository),
+        Ok(None) => {
             return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
         }
-        // A request the server refuses as malformed or mis-addressed deletes nothing.
-        Err(err @ OxenHttpError::BadRequest(_)) => return Err(err),
-        // A maintenance operation owns the repository, so the caller retries rather than
-        // removing a directory that operation is rewriting.
-        Err(err @ OxenHttpError::InternalOxenError(OxenError::LockTimeout(_))) => return Err(err),
         // A repository the server cannot open is still deleted. Reporting it as missing would
         // strand the directory on disk with no way for a caller to reclaim it, and version blobs
         // held outside the directory are unreachable without the repository config anyway.
@@ -563,9 +567,25 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
+    // Taken only where the repository opened, since an unreadable one carries no UUID to compare
+    // against and no lock to contend for.
+    let write_guard = match &repository {
+        Some(repository) => {
+            stated_request()
+                .identity
+                .check_addresses(repository.repo_uuid())?;
+            Some(repo_locks::acquire_write(repository)?)
+        }
+        None => None,
+    };
+
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
+        // Hold the write guard across the deferred removal (the handler has already returned), so
+        // a maintenance operation waits instead of running against a directory that is going away.
+        let _write = write_guard;
+
         let result = match repository {
             Some(repository) => repositories::delete(repository).await,
             None => repositories::delete_dir(&repo_dir).await,
@@ -823,24 +843,10 @@ mod tests {
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let repo_dir = repo.path.clone();
 
-        let config_path = util::fs::config_filepath(&repo_dir);
-        let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
-        config.save(&config_path)?;
-
-        // A name the repository is not already recorded under, so the refresh reaches the lock.
-        let stated = StatedRequest {
-            identity: TransitionalIdentity {
-                name: Some("renamed".to_string()),
-                ..Default::default()
-            },
-            is_write: true,
-        };
         let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
-        let reloaded = liboxen::model::LocalRepository::from_dir(&repo_dir)?;
 
-        repo_locks::with_repo_exclusive(&reloaded, async {
-            let result = with_stated_request(stated, super::delete(req)).await;
+        repo_locks::with_repo_exclusive(&repo, async {
+            let result = super::delete(req).await;
 
             assert!(
                 matches!(
