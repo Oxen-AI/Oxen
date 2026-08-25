@@ -451,13 +451,11 @@ async fn create_repo_response(
     let name = data.name.clone();
     let identity = match app_data.config.identity.repo_uuids_assigned_by() {
         IdentitySource::OxenServer => Some(RepoIdentity::minted(&namespace, &name)),
-        IdentitySource::AuthProvider => {
-            RepoIdentity::from_supplied(data.repo_uuid, &name).map(|identity| RepoIdentity {
-                namespace: data.namespace_name.clone(),
-                name: data.repo_name.clone(),
-                ..identity
-            })
-        }
+        IdentitySource::AuthProvider => data.repo_uuid.map(|repo_uuid| RepoIdentity {
+            repo_uuid,
+            namespace: data.namespace_name.clone(),
+            name: data.repo_name.clone(),
+        }),
     };
     if identity.is_none() {
         log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
@@ -864,6 +862,41 @@ mod tests {
         assert_eq!(identity.repo_uuid, repo_uuid);
         assert_eq!(identity.namespace.as_deref(), Some("bessie"));
         assert_eq!(identity.name.as_deref(), Some("cats"));
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// A control plane that states no UUID gets no identity, even where the name position holds
+    /// one: a repository named like a UUID must not be able to choose its own storage identity.
+    #[actix_web::test]
+    async fn test_create_records_no_identity_without_a_stated_repo_uuid() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let app_data = OxenAppData {
+            path: sync_dir.clone(),
+            config: Config {
+                identity: toml::from_str(r#"repo_uuids_assigned_by = "auth-provider""#)
+                    .expect("a known source parses"),
+                ..Default::default()
+            },
+            test_mode: true,
+        };
+
+        let namespace = Uuid::new_v4().to_string();
+        let in_name_position = Uuid::new_v4();
+        let data = RepoNew::from_namespace_name(&namespace, in_name_position.to_string(), None);
+
+        let resp = super::create_repo_response(&app_data, data)
+            .await
+            .expect("create should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let repo_dir = sync_dir.join(&namespace).join(in_name_position.to_string());
+        let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?;
+        assert!(
+            config.identity.is_none(),
+            "the name position must not become the repository's identity"
+        );
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())

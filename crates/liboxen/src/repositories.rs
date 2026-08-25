@@ -544,11 +544,6 @@ mod tests {
         .await
     }
 
-    /// The identity an auth provider supplies carries no names, so the hints arrive later.
-    fn hintless_identity() -> Option<RepoIdentity> {
-        RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid")
-    }
-
     /// A migration records identity while its caller holds the repository it opened beforehand, so
     /// the hints follow the config rather than that snapshot.
     #[tokio::test]
@@ -560,7 +555,7 @@ mod tests {
             let path = util::fs::config_filepath(&repo.path);
 
             let mut config = RepositoryConfig::from_file(&path)?;
-            config.identity = hintless_identity();
+            config.identity = Some(RepoIdentity::hintless(Uuid::new_v4()));
             config.save(&path)?;
 
             repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
@@ -580,7 +575,13 @@ mod tests {
     async fn test_record_name_hints_fills_hints_a_repo_does_not_hold() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
-            let repo = repositories::create(&sync_dir, repo_new, hintless_identity(), None).await?;
+            let repo = repositories::create(
+                &sync_dir,
+                repo_new,
+                Some(RepoIdentity::hintless(Uuid::new_v4())),
+                None,
+            )
+            .await?;
 
             repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
 
@@ -650,7 +651,13 @@ mod tests {
     -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
-            let repo = repositories::create(&sync_dir, repo_new, hintless_identity(), None).await?;
+            let repo = repositories::create(
+                &sync_dir,
+                repo_new,
+                Some(RepoIdentity::hintless(Uuid::new_v4())),
+                None,
+            )
+            .await?;
 
             repo_locks::with_repo_exclusive(&repo, async {
                 assert!(matches!(

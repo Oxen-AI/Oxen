@@ -454,10 +454,9 @@ mod tests {
         let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
         std::fs::create_dir_all(&workspaces_dir)?;
 
-        // A repository placed by a control plane carries a UUID and no names.
         let config_path = liboxen::util::fs::config_filepath(&repo.path);
         let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid");
+        config.identity = Some(RepoIdentity::hintless(Uuid::new_v4()));
         config.save(&config_path)?;
 
         let req = test::repo_request_with_param(
@@ -505,7 +504,7 @@ mod tests {
 
         let config_path = liboxen::util::fs::config_filepath(&repo.path);
         let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid");
+        config.identity = Some(RepoIdentity::hintless(Uuid::new_v4()));
         config.save(&config_path)?;
 
         let req = test::repo_request_with_param(
