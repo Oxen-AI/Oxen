@@ -7,7 +7,6 @@
 
 use std::future::Future;
 
-use actix_web::HttpRequest;
 use actix_web::http::header::HeaderMap;
 use liboxen::error::StringError;
 use uuid::Uuid;
@@ -61,21 +60,13 @@ pub fn with_stated_request<F: Future>(
 }
 
 impl TransitionalIdentity {
-    /// Read the transitional identity headers off a request.
+    /// Read the transitional identity headers off a header map.
     ///
     /// # Errors
     /// [`OxenHttpError::BadRequest`] when a header is present but unusable: a repo UUID that is not
     /// a UUID, a name that is empty, or any of the three that is not valid UTF-8. A malformed
     /// header is refused rather than ignored, so a caller that meant to state identity is told it
     /// failed instead of silently getting the behavior of having sent nothing.
-    pub fn from_request(req: &HttpRequest) -> Result<Self, OxenHttpError> {
-        Self::from_headers(req.headers())
-    }
-
-    /// Read the transitional identity headers off a header map.
-    ///
-    /// # Errors
-    /// Same as [`Self::from_request`].
     pub fn from_headers(headers: &HeaderMap) -> Result<Self, OxenHttpError> {
         Ok(TransitionalIdentity {
             repo_uuid: header_str(headers, REPO_UUID_HEADER)?
@@ -137,7 +128,7 @@ mod tests {
     #[test]
     fn a_request_with_no_headers_states_nothing() {
         let identity =
-            TransitionalIdentity::from_request(&TestRequest::default().to_http_request())
+            TransitionalIdentity::from_headers(TestRequest::default().to_http_request().headers())
                 .expect("no headers is not an error");
         assert!(identity.is_empty());
     }
@@ -151,7 +142,8 @@ mod tests {
             .insert_header((REPO_NAME_HEADER, "cats"))
             .to_http_request();
 
-        let identity = TransitionalIdentity::from_request(&req).expect("well-formed headers parse");
+        let identity =
+            TransitionalIdentity::from_headers(req.headers()).expect("well-formed headers parse");
 
         assert_eq!(identity.repo_uuid, Some(repo_uuid));
         assert_eq!(identity.namespace.as_deref(), Some("ox"));
@@ -168,7 +160,7 @@ mod tests {
             .to_http_request();
 
         let identity =
-            TransitionalIdentity::from_request(&req).expect("an unhyphenated UUID parses");
+            TransitionalIdentity::from_headers(req.headers()).expect("an unhyphenated UUID parses");
 
         assert_eq!(
             identity.repo_uuid.map(|uuid| uuid.to_string()).as_deref(),
@@ -185,7 +177,7 @@ mod tests {
             .to_http_request();
 
         assert!(matches!(
-            TransitionalIdentity::from_request(&req),
+            TransitionalIdentity::from_headers(req.headers()),
             Err(OxenHttpError::BadRequest(_))
         ));
     }
@@ -239,7 +231,7 @@ mod tests {
 
             assert!(
                 matches!(
-                    TransitionalIdentity::from_request(&req),
+                    TransitionalIdentity::from_headers(req.headers()),
                     Err(OxenHttpError::BadRequest(_))
                 ),
                 "{header} must be refused when empty"
