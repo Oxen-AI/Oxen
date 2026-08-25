@@ -1,6 +1,7 @@
 //! Core functionality for Oxen
 //!
 
+pub mod data_frame_locks;
 pub mod db;
 pub mod df;
 pub mod merge;

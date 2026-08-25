@@ -483,6 +483,8 @@ fn add_exclude_to_sql(sql: &str) -> Result<String, DataFrameError> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::SystemTime;
 
     use serde_json::json;
@@ -501,6 +503,105 @@ mod tests {
     use crate::repositories::workspaces;
     use crate::test;
     use crate::util::fs::AtomicFile;
+
+    /// Stops a spinning helper thread when the test scope ends, on the assertion-failure path as
+    /// well as the happy one — a blocking task left spinning keeps the test binary alive forever.
+    struct StopOnDrop(Arc<AtomicBool>);
+
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Every concurrent append to one data frame lands. Writers that overlap can end up on
+    /// separate DuckDB databases over the same file, and the one that folds its state into the
+    /// file last wins, so the other's rows are gone while each caller was told its own row was
+    /// saved.
+    ///
+    /// Evicting the data frame's cached DuckDB connection is what makes the hazard reachable.
+    /// That connection is per-file and serializes writes only while every writer shares it; LRU
+    /// pressure drops the entry on its own, and once it is gone an in-flight writer keeps the old
+    /// connection while the next writer opens its own to the same file. Exclusion therefore has
+    /// to come from something the cache cannot take away.
+    #[tokio::test]
+    async fn test_concurrent_row_appends_all_land() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let branch = repositories::branches::create_checkout(&repo, "test-concurrent-append")?;
+            let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch should have a commit");
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, UserConfig::identifier()?, true)?;
+            let file_path = Path::new("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
+
+            let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+
+            let stop = Arc::new(AtomicBool::new(false));
+            let stopper = StopOnDrop(stop.clone());
+            let evictor = {
+                let db_path = db_path.clone();
+                let stop = stop.clone();
+                tokio::task::spawn_blocking(move || {
+                    // Scoped to this data frame's entry, so it cannot disturb the connections a
+                    // sibling test in this binary has cached.
+                    while !stop.load(Ordering::Relaxed) {
+                        df_db::remove_df_db_from_cache(&db_path)
+                            .expect("evicting a cache entry cannot fail");
+                    }
+                })
+            };
+
+            // Successive rounds compound the loss: once two connections disagree about the table,
+            // a write through the stale one discards everything the other added.
+            let appends_per_round = 16;
+            for round in 0..3 {
+                let mut handles = Vec::new();
+                for i in 0..appends_per_round {
+                    let repo = repo.clone();
+                    let workspace = workspace.clone();
+                    let file_path = file_path.clone();
+                    handles.push(tokio::task::spawn_blocking(move || {
+                        let json_data = json!({
+                            "file": format!("concurrent-{round}-{i}.jpg"),
+                            "label": "dog",
+                            "min_x": 1.0,
+                            "min_y": 2.0,
+                            "width": 10.0,
+                            "height": 10.0
+                        });
+                        workspaces::data_frames::rows::add(
+                            &repo, &workspace, &file_path, &json_data,
+                        )
+                    }));
+                }
+                for handle in handles {
+                    handle.await.expect("join append task")?;
+                }
+
+                let expected = committed_rows + appends_per_round * (round + 1);
+                let count = workspaces::data_frames::count(&workspace, &file_path)?;
+                assert_eq!(
+                    count, expected,
+                    "round {round}: appends reported success but their rows are missing"
+                );
+            }
+
+            drop(stopper);
+            evictor.await.expect("join evictor task");
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_add_row() -> Result<(), OxenError> {
