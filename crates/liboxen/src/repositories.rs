@@ -211,7 +211,8 @@ pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenEr
         return Ok(());
     }
 
-    // Held across the read and the write so nothing else rewrites the config in between.
+    // Held across the read and the write, so no maintenance operation can run its exclusive
+    // section between them. Multiple config writers can still run concurrently.
     let _write = repo_locks::acquire_write(repo)?;
     let path = util::fs::config_filepath(&repo.path);
     let mut config = RepositoryConfig::from_file(&path)?;
