@@ -544,7 +544,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     // delete).
     let repo_dir = repositories::repo_dir(&app_data.path, &namespace, &name)?;
 
-    let repository = match get_repo(app_data, &namespace, &name) {
+    let repository = match get_repo_async(app_data, &namespace, &name).await {
         Ok(repository) => Some(repository),
         Err(OxenHttpError::InternalOxenError(OxenError::RepoNotFound(_))) => {
             return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
