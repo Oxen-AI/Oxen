@@ -551,6 +551,9 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
         // A request the server refuses as malformed or mis-addressed deletes nothing.
         Err(err @ OxenHttpError::BadRequest(_)) => return Err(err),
+        // A maintenance operation owns the repository, so the caller retries rather than
+        // removing a directory that operation is rewriting.
+        Err(err @ OxenHttpError::InternalOxenError(OxenError::LockTimeout(_))) => return Err(err),
         // A repository the server cannot open is still deleted. Reporting it as missing would
         // strand the directory on disk with no way for a caller to reclaim it, and version blobs
         // held outside the directory are unreachable without the repository config anyway.
@@ -661,6 +664,7 @@ mod tests {
     use crate::transitional_identity::{StatedRequest, TransitionalIdentity, with_stated_request};
     use actix_web::{App, http, web};
     use liboxen::config::RepositoryConfig;
+    use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
     use liboxen::model::RepoIdentity;
     use liboxen::util;
@@ -799,6 +803,56 @@ mod tests {
         );
 
         // The removal runs in a background task, so give it time to do damage before asserting.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(repo_dir.exists(), "repo dir should survive: {repo_dir:?}");
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A repository the server cannot open is deleted unconditionally, so a repository held by a
+    /// maintenance operation must stop before reaching that removal rather than being cleared out
+    /// from under the operation rewriting it.
+    #[actix_web::test]
+    async fn test_delete_refuses_while_a_maintenance_operation_holds_the_repo()
+    -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        let config_path = util::fs::config_filepath(&repo_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
+        config.save(&config_path)?;
+
+        // A name the repository is not already recorded under, so the refresh reaches the lock.
+        let stated = StatedRequest {
+            identity: TransitionalIdentity {
+                name: Some("renamed".to_string()),
+                ..Default::default()
+            },
+            is_write: true,
+        };
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let reloaded = liboxen::model::LocalRepository::from_dir(&repo_dir)?;
+
+        repo_locks::with_repo_exclusive(&reloaded, async {
+            let result = with_stated_request(stated, super::delete(req)).await;
+
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenHttpError::InternalOxenError(OxenError::LockTimeout(_)))
+                ),
+                "a delete on a repository held for maintenance must be refused"
+            );
+            Ok::<(), OxenError>(())
+        })
+        .await?;
+
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert!(repo_dir.exists(), "repo dir should survive: {repo_dir:?}");
 
