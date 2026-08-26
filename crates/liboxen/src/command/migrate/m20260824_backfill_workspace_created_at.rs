@@ -92,9 +92,9 @@ impl Migrate for BackfillWorkspaceCreatedAtMigration {
     }
 }
 
-/// The config at `workspace_dir` when it still lacks a creation time or sits under the former
-/// filename. `None` when the workspace is already migrated, holds no config, or holds one that
-/// cannot be read.
+/// The config at `workspace_dir` when it still lacks a creation time or a file under the former
+/// name is still present. `None` when the workspace is already migrated, holds no config, or holds
+/// one that cannot be read.
 fn pending_config(workspace_dir: &Path) -> Option<WorkspaceConfig> {
     let config_path = Workspace::existing_config_path_from_dir(workspace_dir)?;
 
@@ -109,8 +109,11 @@ fn pending_config(workspace_dir: &Path) -> Option<WorkspaceConfig> {
         })
         .ok()?;
 
-    let on_current_name = config_path == Workspace::config_path_from_dir(workspace_dir);
-    (config.created_at.is_none() || !on_current_name).then_some(config)
+    // Keyed on the former name being present rather than on which config was read: a workspace
+    // holding both is mid-rename, and the leftover still needs clearing even though the config
+    // that was read is complete.
+    let legacy_present = Workspace::legacy_config_path_from_dir(workspace_dir).exists();
+    (config.created_at.is_none() || legacy_present).then_some(config)
 }
 
 /// When `workspace_dir` was last written, which for a workspace directory approximates when it
@@ -208,6 +211,45 @@ mod tests {
                 .created_at;
 
             assert_eq!(after_first, after_second);
+            Ok(())
+        })
+        .await
+    }
+
+    /// An interrupted rename leaves a config under both names. The one under the current name is
+    /// authoritative and complete, so the pass keeps it and clears the leftover.
+    #[tokio::test]
+    async fn test_up_clears_a_leftover_config_from_an_interrupted_rename() -> Result<(), OxenError>
+    {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create(&repo, &commit, "ws-both", true)?;
+            let workspace_dir = workspace.dir();
+
+            // Both names present, the current one already carrying a creation time.
+            let current_path = Workspace::config_path_from_dir(&workspace_dir);
+            let legacy_path = Workspace::legacy_config_path_from_dir(&workspace_dir);
+            let contents = util::fs::read_from_path(&current_path)?;
+            AtomicFile::new(&legacy_path).write(contents.as_bytes())?;
+
+            let migration = BackfillWorkspaceCreatedAtMigration;
+            assert!(
+                migration.is_applicable(Direction::Up, &repo)?,
+                "a leftover under the former name is still work to do"
+            );
+
+            migration.up(repo.clone())?;
+
+            assert!(!legacy_path.exists(), "the leftover is cleared");
+            assert!(current_path.exists());
+
+            let reloaded = repositories::workspaces::get(&repo, "ws-both")?
+                .expect("the workspace should still load");
+            assert_eq!(
+                reloaded.created_at, workspace.created_at,
+                "the config under the current name is kept as-is"
+            );
+
             Ok(())
         })
         .await
