@@ -126,8 +126,10 @@ pub const MERGE_DIR: &str = "merge";
 pub const MODS_DIR: &str = "mods";
 /// workspaces/ is where we can make remote changes without having to clone locally
 pub const WORKSPACES_DIR: &str = "workspaces";
-/// workspace commit id
-pub const WORKSPACE_CONFIG: &str = "WORKSPACE_CONFIG";
+/// workspace configuration, written whenever a workspace is created or its commit changes
+pub const WORKSPACE_CONFIG: &str = "workspace.toml";
+/// workspace configuration under its former name, read so pre-rename workspaces still load
+pub const WORKSPACE_CONFIG_LEGACY: &str = "WORKSPACE_CONFIG";
 /// workspace_name_index/ is a RocksDB mapping workspace names to workspace IDs for O(1) lookup
 pub const WORKSPACE_NAME_INDEX_DIR: &str = "workspace_name_index";
 

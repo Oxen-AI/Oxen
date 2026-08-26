@@ -47,10 +47,9 @@ pub fn get(
 
     // First try: treat input as a workspace ID (O(1) directory lookup)
     let workspace_dir = Workspace::workspace_dir(repo, &workspace_id_hash);
-    let config_path = Workspace::config_path_from_dir(&workspace_dir);
 
     log::debug!("workspace::get directory: {workspace_dir:?}");
-    if config_path.exists() {
+    if Workspace::existing_config_path_from_dir(&workspace_dir).is_some() {
         return get_by_dir(repo, workspace_dir);
     }
 
@@ -104,10 +103,9 @@ pub fn get_by_dir(
 /// no workspace config. Much cheaper than [`get_by_dir`], which also resolves the pinned commit and
 /// builds two `LocalRepository` values — prefer this when only the config's own fields are needed.
 pub(crate) fn read_config(workspace_dir: &Path) -> Result<Option<WorkspaceConfig>, OxenError> {
-    let config_path = Workspace::config_path_from_dir(workspace_dir);
-    if !config_path.exists() {
+    let Some(config_path) = Workspace::existing_config_path_from_dir(workspace_dir) else {
         return Ok(None);
-    }
+    };
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let config = toml::from_str(&config_contents)
@@ -243,19 +241,7 @@ fn create_on_disk(
         created_at: Some(created_at),
     };
 
-    let toml_string = match toml::to_string(&workspace_config) {
-        Ok(s) => s,
-        Err(e) => {
-            return Err(OxenError::basic_str(format!(
-                "Failed to serialize workspace config to TOML: {e}"
-            )));
-        }
-    };
-
-    // Write the TOML string to WORKSPACE_CONFIG
-    let workspace_config_path = Workspace::config_path_from_dir(&workspace_dir);
-    log::debug!("index::workspaces::create writing workspace config to: {workspace_config_path:?}");
-    AtomicFile::new(&workspace_config_path).write(toml_string.as_bytes())?;
+    write_config(&workspace_dir, &workspace_config)?;
 
     Ok(Workspace {
         id: workspace_id.to_owned(),
@@ -289,7 +275,7 @@ fn validate_create_constraints(
             // Check name doesn't collide with an existing workspace ID
             let name_as_id_hash = util::hasher::hash_str_sha256(name);
             let name_as_id_dir = Workspace::workspace_dir(base_repo, &name_as_id_hash);
-            if Workspace::config_path_from_dir(&name_as_id_dir).exists() {
+            if Workspace::existing_config_path_from_dir(&name_as_id_dir).is_some() {
                 return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
             }
         }
@@ -578,17 +564,16 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {
-    let config_path = workspace.config_path();
-
-    if !config_path.exists() {
-        log::error!("Workspace config not found: {config_path:?}");
+    let workspace_dir = workspace.dir();
+    let Some(config_path) = Workspace::existing_config_path_from_dir(&workspace_dir) else {
+        log::error!("Workspace config not found in {workspace_dir:?}");
         return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
-    }
+    };
 
     let config_contents = util::fs::read_from_path(&config_path)?;
     let mut config: WorkspaceConfig = toml::from_str(&config_contents).map_err(|e| {
         log::error!("Failed to parse workspace config: {config_path:?}, err: {e}");
-        OxenError::basic_str(format!("Failed to parse workspace config: {e}"))
+        OxenError::internal_error(format!("Failed to parse workspace config: {e}"))
     })?;
 
     log::debug!(
@@ -599,12 +584,28 @@ pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), O
     );
     config.workspace_commit_id = new_commit_id.to_string();
 
-    let toml_string = toml::to_string(&config).map_err(|e| {
-        log::error!("Failed to serialize workspace config to TOML: {config_path:?}, err: {e}");
-        OxenError::basic_str(format!("Failed to serialize workspace config to TOML: {e}"))
+    write_config(&workspace_dir, &config)
+}
+
+/// Writes `config` into the workspace at `workspace_dir`, leaving exactly one config file there.
+pub(crate) fn write_config(
+    workspace_dir: &Path,
+    config: &WorkspaceConfig,
+) -> Result<(), OxenError> {
+    let toml_string = toml::to_string(config).map_err(|e| {
+        log::error!("Failed to serialize workspace config for {workspace_dir:?}, err: {e}");
+        OxenError::internal_error(format!("Failed to serialize workspace config to TOML: {e}"))
     })?;
 
+    // Write before clearing the former name so an interrupted rename leaves the config readable.
+    let config_path = Workspace::config_path_from_dir(workspace_dir);
+    log::debug!("workspaces::write_config writing workspace config to: {config_path:?}");
     AtomicFile::new(&config_path).write(toml_string.as_bytes())?;
+
+    let legacy_path = Workspace::legacy_config_path_from_dir(workspace_dir);
+    if legacy_path.exists() {
+        util::fs::remove_file(&legacy_path)?;
+    }
 
     Ok(())
 }
@@ -1405,6 +1406,34 @@ mod tests {
             let after_update = repositories::workspaces::get(&repo, "ws-legacy")?
                 .expect("workspace should still load after its commit is updated");
             assert_eq!(after_update.created_at, None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_config_under_the_former_filename_still_loads() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create(&repo, &commit, "ws-renamed", true)?;
+            let workspace_dir = workspace.dir();
+
+            // A workspace whose config was written before the file was renamed.
+            let current_path = Workspace::config_path_from_dir(&workspace_dir);
+            let legacy_path = Workspace::legacy_config_path_from_dir(&workspace_dir);
+            let contents = util::fs::read_from_path(&current_path)?;
+            AtomicFile::new(&legacy_path).write(contents.as_bytes())?;
+            util::fs::remove_file(&current_path)?;
+
+            let reloaded = repositories::workspaces::get(&repo, "ws-renamed")?
+                .expect("a workspace under the former config name should still load");
+            assert_eq!(reloaded.created_at, workspace.created_at);
+
+            // Writing moves it onto the current name and leaves only one config behind.
+            repositories::workspaces::update_commit(&reloaded, &commit.id)?;
+            assert!(current_path.exists());
+            assert!(!legacy_path.exists());
 
             Ok(())
         })

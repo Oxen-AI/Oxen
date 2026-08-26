@@ -7,6 +7,9 @@ pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
 
 pub mod m20260626_migrate_merkle_nodes_to_lmdb;
 pub use m20260626_migrate_merkle_nodes_to_lmdb::MerkleNodesToLmdbMigration;
+
+pub mod m20260824_backfill_workspace_created_at;
+pub use m20260824_backfill_workspace_created_at::BackfillWorkspaceCreatedAtMigration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantNames};
 
@@ -85,8 +88,11 @@ pub trait Migrate: Send + Sync {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 2] =
-    [&AddWorkspaceNameIndexMigration, &MerkleNodesToLmdbMigration];
+pub const ALL_MIGRATIONS: [&dyn Migrate; 3] = [
+    &AddWorkspaceNameIndexMigration,
+    &MerkleNodesToLmdbMigration,
+    &BackfillWorkspaceCreatedAtMigration,
+];
 
 /// Maps a registered migration's name to its implementation.
 /// The name is exactly the same value returned by `<dyn Migrate>::name()`.

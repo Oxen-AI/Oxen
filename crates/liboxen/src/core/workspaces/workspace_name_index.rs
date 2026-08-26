@@ -10,8 +10,8 @@ use rocksdb::{DB, IteratorMode};
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_NAME_INDEX_DIR, WORKSPACES_DIR};
 use crate::core::db;
 use crate::error::OxenError;
-use crate::model::LocalRepository;
 use crate::model::workspace::WorkspaceConfig;
+use crate::model::{LocalRepository, Workspace};
 use crate::util;
 
 // Weak-ref registry of open DB handles, keyed by index dir. The strong `Arc<RwLock<DB>>`
@@ -245,12 +245,9 @@ impl WorkspaceNameIndex {
         Self::clear_locked(&db)?;
 
         for workspace_dir in workspace_dirs {
-            let config_path = workspace_dir
-                .join(OXEN_HIDDEN_DIR)
-                .join(crate::constants::WORKSPACE_CONFIG);
-            if !config_path.exists() {
+            let Some(config_path) = Workspace::existing_config_path_from_dir(&workspace_dir) else {
                 continue;
-            }
+            };
 
             let config_contents = match util::fs::read_from_path(&config_path) {
                 Ok(contents) => contents,
