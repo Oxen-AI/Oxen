@@ -92,7 +92,8 @@ pub async fn get(
 mod tests {
     use crate::test;
     use actix_web::{App, web};
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+    use uuid::Uuid;
 
     use liboxen::error::OxenError;
     use liboxen::repositories;
@@ -231,6 +232,120 @@ mod tests {
         assert_eq!(filenames, vec!["b_file.txt", "a_file.txt"]);
 
         // cleanup
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+
+        Ok(())
+    }
+
+    /// The response a browser gets for `GET /dir/{workspace_id}/{path}`: the commit tree's entries
+    /// annotated with what the workspace has staged, the workspace's own additions merged in, and
+    /// nothing from another directory leaking in.
+    #[actix_web::test]
+    async fn test_controllers_dir_list_workspace_directory() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let name = "Testing-Name";
+        let repo = test::create_local_repo(&sync_dir, namespace, name)?;
+
+        let data_dir = repo.path.join("data");
+        util::fs::create_dir_all(&data_dir)?;
+        util::fs::write_to_path(repo.path.join("README.md"), "readme")?;
+        util::fs::write_to_path(data_dir.join("keep.txt"), "keep")?;
+        util::fs::write_to_path(data_dir.join("train.csv"), "a,b\n1,2\n")?;
+        repositories::add(&repo, &repo.path).await?;
+        let commit = repositories::commit(&repo, "adding the committed tree")?;
+
+        let workspace_id = Uuid::new_v4().to_string();
+        let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
+
+        // Three additions, one of them under a directory only the workspace knows about.
+        for path in [
+            PathBuf::from("new_root.txt"),
+            Path::new("data").join("new_data.txt"),
+            Path::new("fresh").join("inside.txt"),
+        ] {
+            let full_path = workspace.workspace_repo.path.join(&path);
+            if let Some(parent) = full_path.parent() {
+                util::fs::create_dir_all(parent)?;
+            }
+            util::fs::write_to_path(&full_path, "staged")?;
+            repositories::workspaces::files::add(&workspace, &full_path).await?;
+        }
+
+        // One modification and one removal, both of committed files.
+        let modified = workspace.workspace_repo.path.join("data").join("train.csv");
+        util::fs::write_to_path(&modified, "a,b\n1,2\n3,4\n")?;
+        repositories::workspaces::files::add(&workspace, &modified).await?;
+        repositories::workspaces::files::rm(&workspace, Path::new("README.md")).await?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/dir/{resource:.*}",
+                    web::get().to(controllers::dir::get),
+                ),
+        )
+        .await;
+
+        let uri = format!("/oxen/{namespace}/{name}/dir/{workspace_id}/");
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert!(resp.status().is_success(), "GET {uri} -> {}", resp.status());
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap().to_string();
+        let root: serde_json::Value = serde_json::from_str(&body)?;
+        let entries = root["entries"].as_array().expect("entries is an array");
+
+        // Directories first, then names ascending. `fresh` exists only because of a staged file.
+        let filenames: Vec<&str> = entries
+            .iter()
+            .map(|e| e["filename"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            filenames,
+            vec!["data", "fresh", "README.md", "new_root.txt"]
+        );
+        assert_eq!(root["total_entries"], 4);
+
+        // The `changes` field is present only where the workspace has staged something. Its
+        // absence, not a null, is what makes an entry read as a plain `MetadataEntry` on the
+        // client, so check the key itself rather than indexing it.
+        assert!(entries[0].get("changes").is_none());
+        assert_eq!(entries[1]["changes"]["status"], "Added");
+        assert_eq!(entries[2]["changes"]["status"], "Removed");
+        assert_eq!(entries[3]["changes"]["status"], "Added");
+
+        // A staged addition is addressed through the workspace, so its file URL reaches the
+        // staged bytes rather than a commit that never held them.
+        assert_eq!(entries[3]["resource"]["version"], workspace_id);
+        assert_eq!(entries[3]["resource"]["path"], "new_root.txt");
+        assert_eq!(
+            entries[3]["resource"]["resource"],
+            format!("{workspace_id}/new_root.txt")
+        );
+
+        let uri = format!("/oxen/{namespace}/{name}/dir/{workspace_id}/data");
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert!(resp.status().is_success(), "GET {uri} -> {}", resp.status());
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let body = std::str::from_utf8(&bytes).unwrap();
+        let data: PaginatedDirEntries = serde_json::from_str(body)?;
+        let filenames: Vec<&str> = data.entries.iter().map(|e| e.filename()).collect();
+        assert_eq!(filenames, vec!["keep.txt", "new_data.txt", "train.csv"]);
+        assert_eq!(data.total_entries, 3);
+
+        let data: serde_json::Value = serde_json::from_str(body)?;
+        let entries = data["entries"].as_array().expect("entries is an array");
+        assert!(entries[0].get("changes").is_none());
+        assert_eq!(entries[1]["changes"]["status"], "Added");
+        assert_eq!(entries[2]["changes"]["status"], "Modified");
+
+        // cleanup
+        drop(workspace);
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
 
         Ok(())
