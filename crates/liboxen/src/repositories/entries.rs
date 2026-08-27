@@ -1540,4 +1540,59 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn test_list_workspace_staged_additions_address_the_workspace() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let workspace = workspace_with_staged_changes(&repo).await?;
+            let listing = list_workspace_dir(&repo, &workspace, Path::new("data"))?;
+
+            let added = listing
+                .entries
+                .iter()
+                .find(|e| e.filename() == "data_new.txt")
+                .expect("the staged addition should be listed");
+            let resource = added
+                .resource()
+                .expect("a staged addition needs a resource");
+
+            // `/file/{version}/{path}` is where the staged bytes live. The base commit never held
+            // them, so the version has to be the workspace.
+            assert_eq!(resource.version, PathBuf::from(&workspace.id));
+            assert_eq!(resource.path, Path::new("data").join("data_new.txt"));
+            assert_eq!(
+                resource.resource,
+                Path::new(&workspace.id).join("data").join("data_new.txt")
+            );
+            assert_eq!(
+                resource.workspace.as_ref().map(|w| w.id.as_str()),
+                Some(workspace.id.as_str())
+            );
+            // No commit holds the staged bytes, so the entry has nothing to be dated by.
+            assert!(added.latest_commit().is_none());
+
+            // A committed entry alongside it already addressed the workspace, and still does.
+            let committed = listing
+                .entries
+                .iter()
+                .find(|e| e.filename() == "shared.txt")
+                .expect("the committed entry should be listed");
+            let committed_resource = committed.resource().expect("a committed entry has one");
+            assert_eq!(committed_resource.version, PathBuf::from(&workspace.id));
+
+            // The directory the workspace synthesized is addressable the same way.
+            let listing = list_workspace_dir(&repo, &workspace, Path::new(""))?;
+            let staged_dir = listing
+                .entries
+                .iter()
+                .find(|e| e.filename() == "new_dir")
+                .expect("the workspace-only directory should be listed");
+            let resource = staged_dir.resource().expect("it needs a resource to open");
+            assert_eq!(resource.version, PathBuf::from(&workspace.id));
+            assert_eq!(resource.path, Path::new("new_dir"));
+
+            Ok(())
+        })
+        .await
+    }
 }
