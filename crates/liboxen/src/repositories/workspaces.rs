@@ -13,6 +13,8 @@ use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
 
+use crate::model::parsed_resource::ParsedResourceView;
+use crate::model::workspace::WorkspaceView;
 use crate::model::{Commit, LocalRepository, Workspace, workspace::WorkspaceConfig};
 use crate::util::fs::AtomicFile;
 use crate::view::entries::EMetadataEntry;
@@ -730,6 +732,9 @@ pub fn populate_entries_with_workspace_data(
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+            metadata.resource = Some(staged_resource_view(workspace, path));
+            // No commit holds these bytes yet, so there is nothing to date the entry by.
+            metadata.latest_commit = None;
 
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
             ws_entry.changes = Some(WorkspaceChanges {
@@ -741,16 +746,31 @@ pub fn populate_entries_with_workspace_data(
 
     for path in staged_only_dirs {
         dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(
-            staged_only_dir_entry(&path),
+            staged_only_dir_entry(workspace, &path),
         ));
     }
 
     Ok(dir_entries)
 }
 
+/// Address a path through the workspace rather than through the base commit. The staged bytes are
+/// served at `/file/{workspace_id}/{path}`, so an entry the workspace synthesized has to carry the
+/// workspace id as its version. The base commit never held those bytes.
+fn staged_resource_view(workspace: &Workspace, path: &Path) -> ParsedResourceView {
+    let version = PathBuf::from(&workspace.id);
+    ParsedResourceView {
+        workspace: Some(WorkspaceView::from(workspace.clone())),
+        commit: Some(workspace.commit.clone()),
+        branch: None,
+        resource: version.join(path),
+        path: path.to_path_buf(),
+        version,
+    }
+}
+
 /// Build the listing entry for a directory that exists only because something is staged below it,
 /// so it has no node in the commit tree to describe it.
-fn staged_only_dir_entry(path: &Path) -> WorkspaceMetadataEntry {
+fn staged_only_dir_entry(workspace: &Workspace, path: &Path) -> WorkspaceMetadataEntry {
     let mut entry = WorkspaceMetadataEntry::from_metadata_entry(MetadataEntry {
         filename: path
             .file_name()
@@ -760,7 +780,7 @@ fn staged_only_dir_entry(path: &Path) -> WorkspaceMetadataEntry {
         hash: MerkleHash::new(0).to_string(),
         is_dir: true,
         latest_commit: None,
-        resource: None,
+        resource: Some(staged_resource_view(workspace, path)),
         size: 0,
         data_type: EntryDataType::Dir,
         mime_type: "inode/directory".to_string(),
