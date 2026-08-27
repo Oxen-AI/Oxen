@@ -6,7 +6,9 @@ use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEntry};
-use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
+use crate::model::{
+    EntryDataType, MerkleHash, MetadataEntry, ParsedResource, StagedData, StagedEntryStatus,
+};
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
 use crate::util;
@@ -25,7 +27,7 @@ pub mod upload;
 pub use df::df;
 pub use upload::upload;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::sync::Mutex as TokioMutex;
@@ -622,6 +624,12 @@ fn init_workspace_repo(
     core::v_latest::workspaces::init_workspace_repo(repo, workspace_dir)
 }
 
+/// Overlay a workspace's staged changes onto a directory listing taken from the commit tree.
+///
+/// Entries the commit tree already supplied are annotated with their staged status. Files staged
+/// for addition directly under `directory` are appended, named by basename to match the committed
+/// entries. An addition nested deeper contributes its next path component as a single directory
+/// entry, unless the commit tree already supplied that directory.
 pub fn populate_entries_with_workspace_data(
     repo: &LocalRepository,
     directory: &Path,
@@ -630,39 +638,60 @@ pub fn populate_entries_with_workspace_data(
 ) -> Result<Vec<EMetadataEntry>, OxenError> {
     let workspace_changes =
         repositories::workspaces::status::status_from_dir(workspace, directory)?;
-    let mut dir_entries: Vec<EMetadataEntry> = Vec::new();
-    let mut entries: Vec<WorkspaceMetadataEntry> = entries
-        .iter()
-        .map(|entry| WorkspaceMetadataEntry::from_metadata_entry(entry.clone()))
-        .collect();
 
-    let (additions_map, other_changes_map) =
-        build_file_status_maps_for_directory(&workspace_changes);
-    for entry in entries.iter_mut() {
-        let status = other_changes_map.get(&entry.filename).cloned();
-        match status {
-            Some(status) => {
-                entry.changes = Some(WorkspaceChanges {
-                    status: status.clone(),
-                });
-                dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(entry.clone()));
-            }
-            _ => {
-                dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(entry.clone()));
-            }
+    // The status read covers everything staged below `directory`, and every staged entry is keyed
+    // by its full repo-relative path, so scope each one to the level being browsed.
+    let mut changed_paths: HashMap<&Path, StagedEntryStatus> = HashMap::new();
+    let mut added_paths: Vec<&Path> = Vec::new();
+    let mut staged_only_dirs: HashSet<PathBuf> = HashSet::new();
+    for (path, staged) in workspace_changes.staged_files.iter() {
+        if staged.status != StagedEntryStatus::Added {
+            // A modification or removal annotates an entry the commit tree already has.
+            changed_paths.insert(path.as_path(), staged.status.clone());
+            continue;
+        }
+        let Ok(relative) = path.strip_prefix(directory) else {
+            continue;
+        };
+        let mut components = relative.components();
+        let Some(first) = components.next() else {
+            continue;
+        };
+        if components.next().is_none() {
+            added_paths.push(path.as_path());
+        } else {
+            staged_only_dirs.insert(directory.join(first));
         }
     }
-    for (file_path, status) in additions_map.iter() {
-        if *status == StagedEntryStatus::Added {
-            let staged_node = get_staged_db_manager(&workspace.workspace_repo)?
-                .read_from_staged_db(file_path)?
+
+    let mut dir_entries: Vec<EMetadataEntry> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let path = match &entry.resource {
+            Some(resource) => resource.path.clone(),
+            None => directory.join(&entry.filename),
+        };
+        let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry.clone());
+        if let Some(status) = changed_paths.get(path.as_path()) {
+            ws_entry.changes = Some(WorkspaceChanges {
+                status: status.clone(),
+            });
+        }
+        staged_only_dirs.remove(&path);
+        dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
+    }
+
+    {
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        for path in added_paths {
+            let staged_node = staged_db_manager
+                .read_from_staged_db(path)?
                 .ok_or_else(|| {
                     OxenError::basic_str(format!(
-                        "Staged entry disappeared while resolving workspace metadata: {file_path:?}"
+                        "Staged entry disappeared while resolving workspace metadata: {path:?}"
                     ))
                 })?;
 
-            let metadata = match staged_node.node.node {
+            let mut metadata = match staged_node.node.node {
                 EMerkleTreeNode::File(file_node) => {
                     repositories::metadata::from_file_node(repo, &file_node, &workspace.commit)?
                 }
@@ -676,15 +705,56 @@ pub fn populate_entries_with_workspace_data(
                 }
             };
 
+            // A staged node is named by its full repo-relative path, while a listing names its
+            // entries by basename.
+            metadata.filename = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
             let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(metadata);
             ws_entry.changes = Some(WorkspaceChanges {
-                status: status.clone(),
+                status: StagedEntryStatus::Added,
             });
             dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
         }
     }
 
+    for path in staged_only_dirs {
+        dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(
+            staged_only_dir_entry(&path),
+        ));
+    }
+
     Ok(dir_entries)
+}
+
+/// Build the listing entry for a directory that exists only because something is staged below it,
+/// so it has no node in the commit tree to describe it.
+fn staged_only_dir_entry(path: &Path) -> WorkspaceMetadataEntry {
+    let mut entry = WorkspaceMetadataEntry::from_metadata_entry(MetadataEntry {
+        filename: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+        hash: MerkleHash::new(0).to_string(),
+        is_dir: true,
+        latest_commit: None,
+        resource: None,
+        size: 0,
+        data_type: EntryDataType::Dir,
+        mime_type: "inode/directory".to_string(),
+        extension: "".to_string(),
+        metadata: None,
+        is_queryable: None,
+        children: None,
+    });
+    entry.changes = Some(WorkspaceChanges {
+        status: StagedEntryStatus::Added,
+    });
+    entry
 }
 
 pub fn populate_entry_with_workspace_data(
@@ -750,39 +820,6 @@ pub fn get_added_entry(
             "Entry is not in the workspace's staged database",
         ))
     }
-}
-
-/// Build a hashmap mapping file paths to their status from workspace_changes.staged_files.
-///
-/// Returns a tuple of two hashmaps:
-/// - The first hashmap contains file paths mapped to their status if they are added.
-/// - The second hashmap contains file paths mapped to their status if they are modified or removed.
-///
-/// This allows us to track files that were added to the workspace efficiently.
-fn build_file_status_maps_for_directory(
-    workspace_changes: &StagedData,
-) -> (
-    HashMap<String, StagedEntryStatus>,
-    HashMap<String, StagedEntryStatus>,
-) {
-    let mut additions_map = HashMap::new();
-    let mut other_changes_map = HashMap::new();
-    workspace_changes.print();
-
-    for (file_path, entry) in workspace_changes.staged_files.iter() {
-        let status = entry.status.clone();
-        if status == StagedEntryStatus::Added {
-            // For added files, we use the full path as the key. As the staged files are relative to the repository root
-            let key = file_path.to_str().unwrap().to_string();
-            additions_map.insert(key, status);
-        } else {
-            // For modified or removed files, we use the file name as the key, as the file path is relative to the directory passed in.
-            let key = file_path.file_name().unwrap().to_string_lossy().to_string();
-            other_changes_map.insert(key, status);
-        }
-    }
-
-    (additions_map, other_changes_map)
 }
 
 // For files, we always use the full path as the key, as results are relative to the repository root
