@@ -7,6 +7,7 @@ use crate::model::{
     parsed_resource::ParsedResourceView,
 };
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use utoipa::ToSchema;
 
 use super::{Pagination, StatusMessage};
@@ -115,6 +116,19 @@ impl EMetadataEntry {
         match self {
             EMetadataEntry::MetadataEntry(entry) => entry.latest_commit.clone(),
             EMetadataEntry::WorkspaceMetadataEntry(entry) => entry.latest_commit.clone(),
+        }
+    }
+
+    /// Timestamp of the entry's latest commit, or `None` for an entry no commit holds.
+    /// Reads the timestamp without cloning the commit, so it is cheap enough to sort by.
+    pub fn latest_commit_timestamp(&self) -> Option<OffsetDateTime> {
+        match self {
+            EMetadataEntry::MetadataEntry(entry) => {
+                entry.latest_commit.as_ref().map(|c| c.timestamp)
+            }
+            EMetadataEntry::WorkspaceMetadataEntry(entry) => {
+                entry.latest_commit.as_ref().map(|c| c.timestamp)
+            }
         }
     }
 

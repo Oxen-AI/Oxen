@@ -1595,4 +1595,90 @@ mod tests {
         })
         .await
     }
+
+    /// The workspace overlay has to merge before pagination: its additions belong in the total, on
+    /// one page each, and in sorted position among the committed entries.
+    #[tokio::test]
+    async fn test_list_workspace_directory_paginates_over_the_merged_listing()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // Commit and stage alternating names, so a correct merge interleaves them.
+            let committed = ["a.txt", "c.txt", "e.txt", "g.txt", "i.txt"];
+            let staged = ["b.txt", "d.txt", "f.txt", "h.txt", "j.txt"];
+            for name in committed {
+                util::fs::write_to_path(repo.path.join(name), name)?;
+            }
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding committed files")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, Uuid::new_v4().to_string(), true)?;
+            for name in staged {
+                let path = workspace.workspace_repo.path.join(name);
+                util::fs::write_to_path(&path, name)?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+            }
+
+            let page_size = 4;
+            let expected: Vec<&str> = [
+                "a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt", "g.txt", "h.txt", "i.txt",
+                "j.txt",
+            ]
+            .to_vec();
+
+            let mut seen: Vec<String> = Vec::new();
+            for page_num in 1..=3 {
+                let paginated = repositories::entries::list_directory_w_workspace_depth(
+                    &repo,
+                    Path::new(""),
+                    &workspace.commit.id,
+                    Some(workspace.clone()),
+                    &PaginateOpts {
+                        page_num,
+                        page_size,
+                    },
+                    &SortOpts::default(),
+                    0,
+                )?;
+
+                // The staged additions are counted, not just appended.
+                assert_eq!(paginated.total_entries, expected.len());
+                assert_eq!(paginated.total_pages, 3);
+                seen.extend(paginated.entries.iter().map(|e| e.filename().to_string()));
+            }
+
+            // Every entry once, in merged sort order.
+            assert_eq!(seen, expected);
+
+            // Sorting by date puts every staged addition on one side, since no commit holds them.
+            // Paging still has to cover the listing exactly once, which needs a total order over
+            // the entries whose dates tie.
+            let mut seen: Vec<String> = Vec::new();
+            for page_num in 1..=3 {
+                let paginated = repositories::entries::list_directory_w_workspace_depth(
+                    &repo,
+                    Path::new(""),
+                    &workspace.commit.id,
+                    Some(workspace.clone()),
+                    &PaginateOpts {
+                        page_num,
+                        page_size,
+                    },
+                    &SortOpts {
+                        sort_by: SortBy::Date,
+                        reverse: false,
+                    },
+                    0,
+                )?;
+                seen.extend(paginated.entries.iter().map(|e| e.filename().to_string()));
+            }
+            assert_eq!(seen[..staged.len()], staged);
+            let mut sorted = seen.clone();
+            sorted.sort();
+            assert_eq!(sorted, expected);
+
+            Ok(())
+        })
+        .await
+    }
 }
