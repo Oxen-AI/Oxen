@@ -78,6 +78,11 @@ fn print_report(report: &VerifyReport) {
         |c| format!("{} hashes to {}", c.recorded_id, c.computed_id),
     );
     print_findings("Merkle nodes missing", &report.missing_nodes, |h| h.clone());
+    print_findings(
+        "Merkle nodes that could not be read",
+        &report.unreadable_nodes,
+        |u| format!("{}: {}", u.hash, u.error),
+    );
     print_findings("Version files missing", &report.missing_versions, |h| {
         h.clone()
     });

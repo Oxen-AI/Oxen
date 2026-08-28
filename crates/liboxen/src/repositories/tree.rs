@@ -1726,6 +1726,9 @@ pub struct AddedObjects {
     pub nodes: HashSet<MerkleHash>,
     /// The version blobs the added files reference, keyed by content hash.
     pub versions: HashMap<String, DeclaredSizes>,
+    /// Nodes the store holds but could not read, mapped to the failure. Whatever each one contains
+    /// is absent from `nodes` and `versions`.
+    pub unreadable: HashMap<MerkleHash, String>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1794,6 +1797,14 @@ pub async fn find_missing_added_objects(
                 return Ok((vec![head.hash()?.to_string()], vec![]));
             };
 
+            // A ref must never advance onto a tree whose contents could not be read: unreadable is
+            // not the same answer as present, and only this caller can say which it needs.
+            if let Some((hash, err)) = added.unreadable.iter().next() {
+                return Err(OxenError::InternalError(
+                    format!("merkle node {hash} could not be read: {err}").into(),
+                ));
+            }
+
             let store = walk_repo.merkle_node_store();
             let mut missing_nodes = Vec::new();
             for hash in &added.nodes {
@@ -1839,11 +1850,23 @@ fn collect_added_from_dir(
 ) -> Result<(), OxenError> {
     added.nodes.insert(head_dir);
 
-    let (head_entries, head_vnodes) = dir_entries(repo, &head_dir)?;
+    let (head_entries, head_vnodes) = match dir_entries(repo, &head_dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            // A node that will not parse hides everything beneath it, so it is recorded and the
+            // walk stops descending here instead of abandoning the rest of the tree.
+            added.unreadable.insert(head_dir, err.to_string());
+            return Ok(());
+        }
+    };
     added.nodes.extend(head_vnodes);
 
+    // An unreadable base prunes nothing, so every entry in head counts as added. The base commit
+    // reports its own damage when it is walked as a head in its own right.
     let base_entries = match base_dir {
-        Some(base_dir) => dir_entries(repo, &base_dir)?.0,
+        Some(base_dir) => dir_entries(repo, &base_dir)
+            .map(|(entries, _)| entries)
+            .unwrap_or_default(),
         None => HashMap::new(),
     };
 
@@ -1974,6 +1997,36 @@ mod tests {
     // The incremental check must flag a blob the head commit *adds* when it's missing,
     // and must NOT re-check blobs inherited unchanged from the base (that's the whole point of
     // scoping to the changed set rather than walking the full tree).
+    #[tokio::test]
+    async fn test_find_missing_added_objects_refuses_an_unreadable_node() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            test::write_txt_file_to_path(nested.join("a.txt"), "alpha")?;
+            repositories::add(&repo, &repo.path).await?;
+            let head = repositories::commit(&repo, "add nested/a.txt")?;
+
+            let dir = get_dir_with_children(&repo, &head, "nested", None)?
+                .expect("the nested directory has a node");
+            repo.merkle_node_store().write_node(
+                &dir.hash,
+                Bytes::from_static(b"not a node"),
+                Bytes::from_static(b"not children"),
+            )?;
+
+            // Advancing a ref onto a tree that cannot be read must fail rather than report the
+            // parts that happened to be reachable, unlike `oxen verify`, which reports and goes on.
+            let result = find_missing_added_objects(&repo, None, &head).await;
+            assert!(
+                result.is_err(),
+                "the gate accepted a tree it could not read: {result:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_find_missing_added_objects_scopes_to_the_added_set() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {

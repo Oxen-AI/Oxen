@@ -84,6 +84,13 @@ pub struct SizeMismatch {
     pub stored_bytes: u64,
 }
 
+/// A merkle node the repository holds but cannot read, leaving whatever it contains unexamined.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnreadableNode {
+    pub hash: String,
+    pub error: String,
+}
+
 /// A version blob whose metadata probe failed, leaving its size neither confirmed nor refuted.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UncheckedVersion {
@@ -105,6 +112,7 @@ pub struct VerifyReport {
     pub dangling_parents: Findings<DanglingParent>,
     pub misaddressed_commits: Findings<MisaddressedCommit>,
     pub missing_nodes: Findings<String>,
+    pub unreadable_nodes: Findings<UnreadableNode>,
     pub missing_versions: Findings<String>,
     pub size_mismatches: Findings<SizeMismatch>,
     pub unchecked_versions: Findings<UncheckedVersion>,
@@ -117,6 +125,7 @@ impl VerifyReport {
             && self.dangling_parents.is_empty()
             && self.misaddressed_commits.is_empty()
             && self.missing_nodes.is_empty()
+            && self.unreadable_nodes.is_empty()
             && self.missing_versions.is_empty()
             && self.size_mismatches.is_empty()
             && self.unchecked_versions.is_empty()
@@ -128,6 +137,7 @@ impl VerifyReport {
             + self.dangling_parents.count
             + self.misaddressed_commits.count
             + self.missing_nodes.count
+            + self.unreadable_nodes.count
             + self.missing_versions.count
             + self.size_mismatches.count
             + self.unchecked_versions.count
@@ -260,12 +270,16 @@ async fn check_tree_nodes(
     commits: &[Commit],
     report: &mut VerifyReport,
 ) -> Result<HashMap<String, DeclaredSizes>, OxenError> {
-    type TreeFindings = (HashMap<String, DeclaredSizes>, Findings<String>);
+    type TreeFindings = (
+        HashMap<String, DeclaredSizes>,
+        Findings<String>,
+        Findings<UnreadableNode>,
+    );
 
     // Sync core: the merkle walk and the node-existence probes are sync DB IO, one blocking unit.
     let walk_repo = repo.clone();
     let commits = commits.to_vec();
-    let (versions, missing_nodes) =
+    let (versions, missing_nodes, unreadable_nodes) =
         tokio::task::spawn_blocking(move || -> Result<TreeFindings, OxenError> {
             let mut by_hash: HashMap<MerkleHash, &Commit> = HashMap::new();
             for commit in &commits {
@@ -275,7 +289,9 @@ async fn check_tree_nodes(
             let store = walk_repo.merkle_node_store();
             let mut versions: HashMap<String, DeclaredSizes> = HashMap::new();
             let mut seen_nodes: HashSet<MerkleHash> = HashSet::new();
+            let mut seen_unreadable: HashSet<MerkleHash> = HashSet::new();
             let mut missing_nodes = Findings::default();
+            let mut unreadable_nodes = Findings::default();
 
             for commit in &commits {
                 // Parents resolve by the rule the dangling-parent check uses, so a parent that
@@ -285,12 +301,34 @@ async fn check_tree_nodes(
                     .first()
                     .and_then(|id| id.parse::<MerkleHash>().ok())
                     .and_then(|hash| by_hash.get(&hash).copied());
-                let Some(added) = repositories::tree::added_objects(&walk_repo, base, commit)?
-                else {
-                    // No root directory node means the commit's tree was never written.
-                    missing_nodes.record(commit.hash()?.to_string());
-                    continue;
+                let added = match repositories::tree::added_objects(&walk_repo, base, commit) {
+                    Ok(Some(added)) => added,
+                    Ok(None) => {
+                        // No root directory node means the commit's tree was never written.
+                        missing_nodes.record(commit.hash()?.to_string());
+                        continue;
+                    }
+                    // The commit's own node did not parse, so its tree cannot be entered at all.
+                    Err(err) => {
+                        let hash = commit.hash()?;
+                        if seen_unreadable.insert(hash) {
+                            unreadable_nodes.record(UnreadableNode {
+                                hash: hash.to_string(),
+                                error: err.to_string(),
+                            });
+                        }
+                        continue;
+                    }
                 };
+
+                for (hash, error) in added.unreadable {
+                    if seen_unreadable.insert(hash) {
+                        unreadable_nodes.record(UnreadableNode {
+                            hash: hash.to_string(),
+                            error,
+                        });
+                    }
+                }
 
                 for hash in added.nodes {
                     if seen_nodes.insert(hash) && !store.exists(&hash)? {
@@ -301,12 +339,13 @@ async fn check_tree_nodes(
                     versions.entry(hash).or_default().extend(declared);
                 }
             }
-            Ok((versions, missing_nodes))
+            Ok((versions, missing_nodes, unreadable_nodes))
         })
         .await??;
 
     report.versions_checked = versions.len();
     report.missing_nodes = missing_nodes;
+    report.unreadable_nodes = unreadable_nodes;
     Ok(versions)
 }
 
@@ -370,6 +409,7 @@ mod tests {
     use super::*;
     use crate::test;
     use crate::util;
+    use bytes::Bytes;
     use std::path::Path;
 
     /// The single stored version blob under `dir`, for tests that corrupt one deliberately.
@@ -564,6 +604,49 @@ mod tests {
                 "the absent directory node is a finding: {report:?}"
             );
             assert_eq!(report.missing_nodes.sample, vec![dir.hash.to_string()]);
+            assert!(!report.is_healthy());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_an_unreadable_node_is_reported_and_the_rest_still_checked()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            util::fs::write_to_path(nested.join("buried.txt"), "buried")?;
+            util::fs::write_to_path(repo.path.join("top.txt"), "top")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Add both")?;
+
+            let dir = repositories::tree::get_dir_with_children(&repo, &commit, "nested", None)?
+                .expect("the nested directory has a node");
+
+            // Present but unparseable, which is the case a missing-node check cannot see.
+            repo.merkle_node_store().write_node(
+                &dir.hash,
+                Bytes::from_static(b"not a node"),
+                Bytes::from_static(b"not children"),
+            )?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.unreadable_nodes.count, 1,
+                "the unreadable node is a finding: {report:?}"
+            );
+            assert_eq!(report.unreadable_nodes.sample[0].hash, dir.hash.to_string());
+            assert_eq!(
+                report.missing_nodes.count, 0,
+                "a node that is present but unreadable is not a missing one"
+            );
+            assert!(
+                report.versions_checked >= 1,
+                "only the damaged subtree is skipped, not the whole commit: {report:?}"
+            );
             assert!(!report.is_healthy());
 
             Ok(())
