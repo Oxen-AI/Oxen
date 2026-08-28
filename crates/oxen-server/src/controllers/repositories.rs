@@ -6,9 +6,8 @@ use crate::params::{app_data, path_param};
 
 use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt;
-use liboxen::api::requests::RepoNew;
+use liboxen::api::requests::{RepoNew, TransferNamespaceRequest};
 // Import StreamExt for the next() method
-use crate::transitional_identity::stated_request;
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
@@ -22,8 +21,7 @@ use liboxen::view::repository::{
     RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
 };
 use liboxen::view::{
-    DataTypeCount, ListRepositoryResponse, NamespaceView, RepositoryResponse, RepositoryView,
-    StatusMessage,
+    DataTypeCount, ListRepositoryResponse, RepositoryResponse, RepositoryView, StatusMessage,
 };
 
 use actix_multipart::Multipart; // Gives us Multipart
@@ -447,17 +445,14 @@ async fn create_repo_response(
     data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
     let namespace = data.namespace.clone();
     let name = data.name.clone();
-    let stated = stated_request().identity;
     let identity = match app_data.config.identity.repo_uuids_assigned_by() {
         IdentitySource::OxenServer => Some(RepoIdentity::minted(&namespace, &name)),
         IdentitySource::AuthProvider => {
-            RepoIdentity::from_supplied(data.repo_uuid.or(stated.repo_uuid), &name).map(
-                |identity| RepoIdentity {
-                    namespace: stated.namespace,
-                    name: stated.name,
-                    ..identity
-                },
-            )
+            RepoIdentity::from_supplied(data.repo_uuid, &name).map(|identity| RepoIdentity {
+                namespace: data.namespace_name.clone(),
+                name: data.repo_name.clone(),
+                ..identity
+            })
         }
     };
     if identity.is_none() {
@@ -567,17 +562,11 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
-    // Taken only where the repository opened, since an unreadable one carries no UUID to compare
-    // against and no lock to contend for.
-    let write_guard = match &repository {
-        Some(repository) => {
-            stated_request()
-                .identity
-                .check_addresses(repository.repo_uuid())?;
-            Some(repo_locks::acquire_write(repository)?)
-        }
-        None => None,
-    };
+    // Taken only where the repository opened, since an unreadable one has no lock to contend for.
+    let write_guard = repository
+        .as_ref()
+        .map(repo_locks::acquire_write)
+        .transpose()?;
 
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
@@ -611,7 +600,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
     ),
     request_body(
-        content = NamespaceView,
+        content = TransferNamespaceRequest,
         description = "Target namespace to transfer the repository to.",
         example = json!({
             "namespace": "new_org"
@@ -631,19 +620,18 @@ pub async fn transfer_namespace(
     // Parse body
     let from_namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
-    let data: NamespaceView = serde_json::from_str(&body)?;
+    let data: TransferNamespaceRequest = serde_json::from_str(&body)?;
     let to_namespace = data.namespace;
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
-    // Refuses a request that states a different repository than this one. Dropped before the move
-    // below: the repository holds its Merkle node store open, and the directory housing that store
-    // cannot be renamed under it.
+    // Dropped before the move below: the repository holds its Merkle node store open, and the
+    // directory housing that store cannot be renamed under it.
     drop(get_repo_async(app_data, &from_namespace, &name).await?);
 
     // A control plane states the destination's name; otherwise the destination position is itself
     // the name, and where neither holds there is no name to record.
-    let namespace_hint = stated_request().identity.namespace.or_else(|| {
+    let namespace_hint = data.namespace_name.or_else(|| {
         app_data
             .config
             .identity
@@ -679,10 +667,11 @@ pub async fn transfer_namespace(
 #[cfg(test)]
 mod tests {
     use crate::app_data::OxenAppData;
+    use crate::config::Config;
     use crate::errors::OxenHttpError;
     use crate::test;
-    use crate::transitional_identity::{StatedRequest, TransitionalIdentity, with_stated_request};
     use actix_web::{App, http, web};
+    use liboxen::api::requests::RepoNew;
     use liboxen::config::RepositoryConfig;
     use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
@@ -791,45 +780,6 @@ mod tests {
         Ok(())
     }
 
-    /// A repository the server cannot open is deleted unconditionally, so a request refused for
-    /// addressing a different repository must stop before reaching that removal.
-    #[actix_web::test]
-    async fn test_delete_refuses_a_request_for_another_repository() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Repo";
-
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let repo_dir = repo.path.clone();
-
-        let config_path = util::fs::config_filepath(&repo_dir);
-        let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
-        config.save(&config_path)?;
-
-        let stated = StatedRequest {
-            identity: TransitionalIdentity {
-                repo_uuid: Some(Uuid::new_v4()),
-                ..Default::default()
-            },
-            is_write: true,
-        };
-        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
-        let result = with_stated_request(stated, super::delete(req)).await;
-
-        assert!(
-            matches!(result, Err(OxenHttpError::BadRequest(_))),
-            "a delete addressing another repository must be refused"
-        );
-
-        // The removal runs in a background task, so give it time to do damage before asserting.
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        assert!(repo_dir.exists(), "repo dir should survive: {repo_dir:?}");
-
-        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
-        Ok(())
-    }
-
     /// A repository the server cannot open is deleted unconditionally, so a repository held by a
     /// maintenance operation must stop before reaching that removal rather than being cleared out
     /// from under the operation rewriting it.
@@ -866,47 +816,78 @@ mod tests {
         Ok(())
     }
 
-    /// Moving a repository relocates its directory, so a request stating a different repository
-    /// must be refused before anything moves.
+    /// A control plane addresses both positions by UUID, so the names it states in the body are
+    /// the only ones the created repository can record.
     #[actix_web::test]
-    async fn test_transfer_refuses_a_request_for_another_repository() -> Result<(), OxenError> {
+    async fn test_create_records_the_names_stated_in_the_body() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let app_data = OxenAppData {
+            path: sync_dir.clone(),
+            config: Config {
+                identity: toml::from_str(r#"repo_uuids_assigned_by = "auth-provider""#)
+                    .expect("a known source parses"),
+                ..Default::default()
+            },
+            test_mode: true,
+        };
+
+        let namespace = Uuid::new_v4().to_string();
+        let repo_uuid = Uuid::new_v4();
+        let mut data = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
+        data.repo_uuid = Some(repo_uuid);
+        data.namespace_name = Some("bessie".to_string());
+        data.repo_name = Some("cats".to_string());
+
+        let resp = super::create_repo_response(&app_data, data)
+            .await
+            .expect("create should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let repo_dir = sync_dir.join(&namespace).join(repo_uuid.to_string());
+        let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?
+            .identity
+            .expect("create records identity");
+        assert_eq!(identity.repo_uuid, repo_uuid);
+        assert_eq!(identity.namespace.as_deref(), Some("bessie"));
+        assert_eq!(identity.name.as_deref(), Some("cats"));
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// The destination position is a UUID where a control plane owns namespaces, so the name the
+    /// body states is what the moved repository records.
+    #[actix_web::test]
+    async fn test_transfer_records_the_namespace_name_stated_in_the_body() -> Result<(), OxenError>
+    {
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
         let repo_name = "Testing-Repo";
 
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let repo_dir = repo.path.clone();
-
-        let config_path = util::fs::config_filepath(&repo_dir);
+        let config_path = util::fs::config_filepath(&repo.path);
         let mut config = RepositoryConfig::from_file(&config_path)?;
         config.identity = Some(RepoIdentity::minted(namespace, repo_name));
         config.save(&config_path)?;
 
-        let stated = StatedRequest {
-            identity: TransitionalIdentity {
-                repo_uuid: Some(Uuid::new_v4()),
-                ..Default::default()
-            },
-            is_write: true,
-        };
         let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
-        let body = r#"{"namespace":"Other-Namespace"}"#.to_string();
-        let result = with_stated_request(stated, super::transfer_namespace(req, body)).await;
+        let body = r#"{"namespace":"Other-Namespace","namespace_name":"bessie"}"#.to_string();
+        let resp = super::transfer_namespace(req, body)
+            .await
+            .expect("transfer should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
 
-        assert!(
-            matches!(result, Err(OxenHttpError::BadRequest(_))),
-            "a transfer addressing another repository must be refused"
-        );
-        assert!(
-            repo_dir.exists(),
-            "repo dir should not have moved: {repo_dir:?}"
-        );
-        assert!(
-            !sync_dir.join("Other-Namespace").join(repo_name).exists(),
-            "the repo must not appear in the destination namespace"
+        let moved = sync_dir.join("Other-Namespace").join(repo_name);
+        let identity = RepositoryConfig::from_file(util::fs::config_filepath(&moved))?
+            .identity
+            .expect("identity is intact");
+        assert_eq!(
+            identity.namespace.as_deref(),
+            Some("bessie"),
+            "the body's name wins over the addressed position"
         );
 
-        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 }

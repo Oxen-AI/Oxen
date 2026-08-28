@@ -1,10 +1,8 @@
-use crate::app_data::OxenAppData;
-use crate::transitional_identity::{StatedRequest, TransitionalIdentity, with_stated_request};
 use actix_web::{
     Error, HttpMessage, HttpRequest,
     body::MessageBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
-    http::{Method, header},
+    http::header,
 };
 use futures_util::future::LocalBoxFuture;
 use liboxen::request_context::REQUEST_ID;
@@ -338,136 +336,10 @@ where
     }
 }
 
-/// Refuses a request whose transitional identity headers are present but unusable, and makes the
-/// parsed identity available to handlers through [`transitional_identity`].
-///
-/// Rejecting here rather than where a handler happens to look means a caller that meant to state
-/// identity is told it failed, instead of being served as though it had stated nothing.
-pub struct TransitionalIdentityMiddleware;
-
-impl<S, B> Transform<S, ServiceRequest> for TransitionalIdentityMiddleware
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type InitError = ();
-    type Transform = TransitionalIdentityMiddlewareService<S>;
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
-
-    fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(TransitionalIdentityMiddlewareService { service }))
-    }
-}
-
-pub struct TransitionalIdentityMiddlewareService<S> {
-    service: S,
-}
-
-impl<S, B> Service<ServiceRequest> for TransitionalIdentityMiddlewareService<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    forward_ready!(service);
-
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        // These headers are how a control plane above the server states identity. A server that
-        // owns its own namespaces is given real names in the URL, so a caller-stated one there is
-        // ignored for the same reason a caller-supplied UUID is: identity is not the caller's.
-        let states_identity = req.app_data::<OxenAppData>().is_some_and(|data| {
-            !data
-                .config
-                .identity
-                .repo_uuids_assigned_by()
-                .supplies_names()
-        });
-        if !states_identity {
-            return Box::pin(self.service.call(req));
-        }
-
-        let identity = match TransitionalIdentity::from_headers(req.headers()) {
-            Ok(identity) => identity,
-            Err(err) => return Box::pin(ready(Err(err.into()))),
-        };
-        if identity.is_empty() {
-            return Box::pin(self.service.call(req));
-        }
-
-        let is_write = !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
-        let stated = StatedRequest { identity, is_write };
-        Box::pin(with_stated_request(stated, self.service.call(req)))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::config::identity_policy::IdentityPolicy;
-    use crate::transitional_identity::REPO_UUID_HEADER;
-    use actix_web::test as actix_test;
-    use actix_web::{App, HttpResponse, web};
     use liboxen::request_context::get_request_id;
-
-    async fn responds_ok() -> HttpResponse {
-        HttpResponse::Ok().finish()
-    }
-
-    /// A malformed header is a 400, so a status other than 400 means the header was not read.
-    async fn status_for_a_malformed_header(config: Config) -> u16 {
-        let app_data = OxenAppData {
-            path: std::path::PathBuf::from("/tmp/does-not-need-to-exist"),
-            config,
-            test_mode: true,
-        };
-        let app = actix_test::init_service(
-            App::new()
-                .app_data(app_data)
-                .wrap(TransitionalIdentityMiddleware)
-                .route("/", web::get().to(responds_ok)),
-        )
-        .await;
-
-        let req = actix_test::TestRequest::get()
-            .uri("/")
-            .insert_header((REPO_UUID_HEADER, "not-a-uuid"))
-            .to_request();
-        // The middleware refuses by returning an error rather than a response, so both shapes
-        // have to be read for a status.
-        match actix_test::try_call_service(&app, req).await {
-            Ok(res) => res.status().as_u16(),
-            // The rendered response, not `status_code()`: `OxenHttpError` builds its status in
-            // `error_response`, which is the path actix renders through.
-            Err(err) => err.error_response().status().as_u16(),
-        }
-    }
-
-    /// A server that owns its own namespaces is given real names in the URL, so a caller stating
-    /// identity is ignored rather than obeyed or rejected.
-    #[actix_web::test]
-    async fn a_stated_identity_is_ignored_where_the_server_owns_its_namespaces() {
-        assert_eq!(status_for_a_malformed_header(Config::default()).await, 200);
-    }
-
-    #[actix_web::test]
-    async fn a_stated_identity_is_read_where_a_control_plane_owns_namespaces() {
-        let config = Config {
-            identity: toml::from_str::<IdentityPolicy>(
-                r#"repo_uuids_assigned_by = "auth-provider""#,
-            )
-            .expect("a known source parses"),
-            ..Default::default()
-        };
-        assert_eq!(status_for_a_malformed_header(config).await, 400);
-    }
 
     #[tokio::test]
     async fn test_request_id_task_local() {
@@ -586,13 +458,13 @@ mod tests {
     async fn test_request_start_log_middleware_passes_through() {
         use actix_web::{App, HttpResponse, http::header, test, web};
 
-        let app = actix_test::init_service(App::new().wrap(RequestStartLogMiddleware).route(
+        let app = test::init_service(App::new().wrap(RequestStartLogMiddleware).route(
             "/x",
             web::get().to(|| async { HttpResponse::Ok().finish() }),
         ))
         .await;
 
-        let req = actix_test::TestRequest::get()
+        let req = test::TestRequest::get()
             .uri("/x?page=1")
             .insert_header((header::USER_AGENT, "oxen-test-agent"))
             .insert_header((header::REFERER, "http://example.test/prev"))

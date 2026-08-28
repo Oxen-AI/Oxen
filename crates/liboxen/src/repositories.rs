@@ -195,19 +195,26 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
         })
 }
 
-/// Record `name` as what this repository is called.
+/// Record what this repository and its namespace are called, filling only hints the repository
+/// does not already hold.
 ///
-/// Writes nothing when the recorded name already matches, or when the repository carries no
-/// identity. Only the name is recorded here: a repository's namespace changes by being moved, so
-/// that hint is set by [`transfer_namespace`] rather than from whatever a request happens to state.
+/// Writes nothing when both hints are already set, when neither argument supplies one, or when the
+/// repository carries no identity. An existing hint is left as it is: a repository's namespace
+/// changes by being moved, so [`transfer_namespace`] is what updates that one.
 ///
 /// # Errors
 /// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
-pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenError> {
+pub fn record_name_hints(
+    repo: &LocalRepository,
+    namespace: Option<&str>,
+    name: Option<&str>,
+) -> Result<(), OxenError> {
     let Some(identity) = repo.identity.as_ref() else {
         return Ok(());
     };
-    if identity.name.as_deref() == Some(name) {
+    if (identity.namespace.is_some() || namespace.is_none())
+        && (identity.name.is_some() || name.is_none())
+    {
         return Ok(());
     }
 
@@ -216,8 +223,21 @@ pub fn record_name_hint(repo: &LocalRepository, name: &str) -> Result<(), OxenEr
     let _write = repo_locks::acquire_write(repo)?;
     let path = util::fs::config_filepath(&repo.path);
     let mut config = RepositoryConfig::from_file(&path)?;
-    if let Some(identity) = config.identity.as_mut() {
-        identity.name = Some(name.to_string());
+    let Some(identity) = config.identity.as_mut() else {
+        return Ok(());
+    };
+    let mut changed = false;
+    for (hint, value) in [
+        (&mut identity.namespace, namespace),
+        (&mut identity.name, name),
+    ] {
+        if let (None, Some(value)) = (&hint, value) {
+            *hint = Some(value.to_string());
+            changed = true;
+        }
+    }
+    if !changed {
+        return Ok(());
     }
     config.save(&path)?;
     Ok(())
@@ -440,6 +460,7 @@ mod tests {
     use crate::util;
     use std::path::{Path, PathBuf};
     use time::OffsetDateTime;
+    use uuid::Uuid;
 
     /// The identity a server that owns its namespaces would record for a new repo.
     fn server_identity(namespace: &str, name: &str) -> Option<RepoIdentity> {
@@ -513,36 +534,34 @@ mod tests {
         .await
     }
 
+    /// The identity an auth provider supplies carries no names, so the hints arrive later.
+    fn hintless_identity() -> Option<RepoIdentity> {
+        RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid")
+    }
+
     #[tokio::test]
-    async fn test_record_name_hint_updates_the_recorded_name() -> Result<(), OxenError> {
+    async fn test_record_name_hints_fills_hints_a_repo_does_not_hold() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
-            let repo =
-                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
-                    .await?;
+            let repo = repositories::create(&sync_dir, repo_new, hintless_identity(), None).await?;
 
-            repositories::record_name_hint(&repo, "kittens")?;
+            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
 
             let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
                 .identity
                 .expect("identity is intact");
+            assert_eq!(identity.namespace.as_deref(), Some("bessie"));
             assert_eq!(identity.name.as_deref(), Some("kittens"));
-            assert_eq!(
-                identity.namespace.as_deref(),
-                Some("ox"),
-                "only the name moves"
-            );
 
             Ok(())
         })
         .await
     }
 
-    /// A push is many write requests and the name changes on none of them, so an unchanged name
-    /// must not rewrite the config.
+    /// A hint already recorded is what the repository is called; a later request restating it
+    /// differently must not rename anything.
     #[tokio::test]
-    async fn test_record_name_hint_writes_nothing_when_the_name_already_matches()
-    -> Result<(), OxenError> {
+    async fn test_record_name_hints_leaves_hints_already_recorded() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
             let repo =
@@ -551,12 +570,17 @@ mod tests {
             let path = util::fs::config_filepath(&repo.path);
             let before = std::fs::metadata(&path)?.modified()?;
 
-            repositories::record_name_hint(&repo, "cats")?;
+            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
 
+            let identity = RepositoryConfig::from_file(&path)?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(identity.namespace.as_deref(), Some("ox"));
+            assert_eq!(identity.name.as_deref(), Some("cats"));
             assert_eq!(
                 std::fs::metadata(&path)?.modified()?,
                 before,
-                "an unchanged name must not touch the config"
+                "recording nothing new must not touch the config"
             );
 
             Ok(())
@@ -566,12 +590,13 @@ mod tests {
 
     /// Identity stays all-or-nothing: a repo carrying none does not acquire a bare name.
     #[tokio::test]
-    async fn test_record_name_hint_leaves_a_repo_without_identity_alone() -> Result<(), OxenError> {
+    async fn test_record_name_hints_leaves_a_repo_without_identity_alone() -> Result<(), OxenError>
+    {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
             let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
-            repositories::record_name_hint(&repo, "kittens")?;
+            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
 
             let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
             assert_eq!(config.identity, None);
@@ -584,17 +609,15 @@ mod tests {
     /// A maintenance operation runs with the repository to itself, so the hint write refuses its
     /// turn rather than rewriting the config underneath it.
     #[tokio::test]
-    async fn test_record_name_hint_refuses_while_a_maintenance_operation_holds_the_repo()
+    async fn test_record_name_hints_refuses_while_a_maintenance_operation_holds_the_repo()
     -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
-            let repo =
-                repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
-                    .await?;
+            let repo = repositories::create(&sync_dir, repo_new, hintless_identity(), None).await?;
 
             repo_locks::with_repo_exclusive(&repo, async {
                 assert!(matches!(
-                    repositories::record_name_hint(&repo, "kittens"),
+                    repositories::record_name_hints(&repo, None, Some("kittens")),
                     Err(OxenError::LockTimeout(_))
                 ));
                 Ok::<(), OxenError>(())
@@ -604,11 +627,7 @@ mod tests {
             let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
                 .identity
                 .expect("identity is intact");
-            assert_eq!(
-                identity.name.as_deref(),
-                Some("cats"),
-                "the hint is untouched"
-            );
+            assert_eq!(identity.name, None, "the hint is untouched");
 
             Ok(())
         })
