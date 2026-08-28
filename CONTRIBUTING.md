@@ -136,7 +136,7 @@ This enables OpenTelemetry tracing (`otel`), FFmpeg thumbnails (`ffmpeg`), and p
 
 ## Development Guidelines
 
-See [`.claude/CLAUDE.md`](.claude/CLAUDE.md) and the [CI workflows](.github/workflows) for project layout, build and test commands, and coding conventions (error handling, module organization, async I/O rules, etc.). In short:
+See [`AGENTS.md`](AGENTS.md) and the [CI workflows](.github/workflows) for project layout, build and test commands, and coding conventions (error handling, module organization, async I/O rules, etc.). In short:
 
 - Core functionality goes in `liboxen` first, then is exposed through the CLI and server.
 - Use `cargo fmt --all` and `cargo clippy --all-targets --workspace --no-deps -- -D warnings` before submitting.
