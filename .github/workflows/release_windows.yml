@@ -51,7 +51,7 @@ jobs:
 
       - name: Start EC2 runner
         id: start-ec2-runner
-        uses: Oxen-AI/ec2-github-runner-windows@v1
+        uses: Oxen-AI/ec2-github-runner-windows@v2.0.0
         with:
           mode: start
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
@@ -89,7 +89,7 @@ jobs:
       DEPTREE_BUCKET: oxen-release-build-cache
       # Generation prefix. Bump it when the archive's layout or the prune's rules change: the
       # fallback restore only ever lists trees under the current prefix, so a bump starts clean.
-      DEPTREE_PREFIX: deptree/v4
+      DEPTREE_PREFIX: deptree/v5
 
     steps:
       - name: Checkout
@@ -103,11 +103,22 @@ jobs:
       - name: Exclude build paths from Windows Defender
         run: |
           try {
-            Set-MpPreference -ExclusionPath @("C:\Windows\System32\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\ProgramData\chocolatey", "$env:TEMP")
-            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe")
+            Set-MpPreference -ExclusionPath @("C:\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\ProgramData\chocolatey", "$env:TEMP") -ErrorAction Stop
+            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe") -ErrorAction Stop
             Write-Host "Defender exclusions applied"
           } catch {
             Write-Host "Defender configuration unavailable: $_"
+          }
+          try {
+            $prefs = Get-MpPreference -ErrorAction Stop
+            Write-Host "Defender ExclusionPath: $($prefs.ExclusionPath -join ', ')"
+            Write-Host "Defender ExclusionProcess: $($prefs.ExclusionProcess -join ', ')"
+            $status = Get-MpComputerStatus -ErrorAction Stop
+            Write-Host "Defender real-time protection: $($status.RealTimeProtectionEnabled)"
+            Write-Host "Defender on-access protection: $($status.OnAccessProtectionEnabled)"
+            Write-Host "Defender tamper protection: $($status.IsTamperProtected)"
+          } catch {
+            Write-Host "Defender status unavailable: $_"
           }
 
       - name: Install dependencies
@@ -185,8 +196,16 @@ jobs:
           New-Item C:\deptree-build-start -ItemType File -Force | Out-Null
           # oxen-server is not supported on Windows; build the CLI only. The JSON stream names every
           # live unit's artifacts, fresh ones included, for the save step's prune.
-          cargo build --workspace --exclude oxen-py --exclude oxen-server --release --message-format=json-render-diagnostics | Set-Content C:\deptree-live.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Windows sporadically denies a write to a freshly created build artifact.
+          $attempts = 3
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            Write-Host "cargo build attempt $attempt of $attempts"
+            cargo build --workspace --exclude oxen-py --exclude oxen-server --release --message-format=json-render-diagnostics | Set-Content C:\deptree-live.json
+            $code = $LASTEXITCODE
+            if ($code -eq 0) { break }
+            if ($attempt -eq $attempts) { exit $code }
+            Write-Host "::warning::cargo build failed (exit $code), retrying"
+          }
 
       - name: Build Python wheels
         # Reaches the script as an environment variable rather than an expression expanded into the
@@ -357,7 +376,7 @@ jobs:
           aws-region: ${{ inputs.AWS_REGION }}
 
       - name: Stop EC2 runner
-        uses: Oxen-AI/ec2-github-runner-windows@v1
+        uses: Oxen-AI/ec2-github-runner-windows@v2.0.0
         with:
           mode: stop
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
