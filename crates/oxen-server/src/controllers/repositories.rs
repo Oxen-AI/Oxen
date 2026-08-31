@@ -633,6 +633,9 @@ pub async fn transfer_namespace(
     let data: TransferNamespaceRequest = serde_json::from_str(&body)?;
     reject_invalid_namespace_name(data.namespace_name.as_deref())?;
     let to_namespace = data.namespace;
+    // Checked before the repository opens, so a destination a namespace cannot be named refuses
+    // the request rather than moving the repository into it.
+    reject_invalid_namespace_name(Some(&to_namespace))?;
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
 
@@ -1006,6 +1009,38 @@ mod tests {
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// The destination a repository moves into holds to the namespace rule, so a request naming a
+    /// destination a namespace cannot have must be refused before anything moves.
+    #[actix_web::test]
+    async fn test_transfer_rejects_an_invalid_destination_namespace() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        // Valid in the repository position, and not in the namespace position.
+        let body = r#"{"namespace":"other.org"}"#.to_string();
+        let err = super::transfer_namespace(req, body)
+            .await
+            .expect_err("an invalid destination namespace must be refused");
+
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            repo_dir.exists(),
+            "repo dir should not have moved: {repo_dir:?}"
+        );
+        assert!(
+            !sync_dir.join("other.org").exists(),
+            "the destination namespace must not be created"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 
