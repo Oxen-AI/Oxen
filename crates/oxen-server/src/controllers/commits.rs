@@ -7,11 +7,12 @@ use liboxen::constants::VERSION_FILE_NAME;
 
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
-use liboxen::model::{Commit, LocalRepository};
+use liboxen::model::{Commit, LocalRepository, MerkleHash};
 use liboxen::opts::PaginateOpts;
 use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::util::fs::AtomicFile;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
@@ -44,6 +45,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::str::FromStr;
 use tokio::io::BufReader;
 use tokio_tar::Archive;
 use utoipa::IntoParams;
@@ -51,7 +53,7 @@ use utoipa::IntoParams;
 #[derive(Deserialize, Debug, IntoParams)]
 pub struct ChunkedDataUploadQuery {
     #[param(example = "a2c3d4e5f67890b1c2d3e4f5a6b7c8d9")]
-    pub hash: String, // UUID to tie all the chunks together (hash of the contents)
+    pub hash: String, // xxh3-128 hex of the whole payload: groups the chunks, and verifies the reassembly
     #[param(example = 1)]
     pub chunk_num: usize, // which chunk it is, so that we can combine it all in the end
     #[param(example = 10)]
@@ -751,6 +753,11 @@ pub async fn upload_chunk(
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let id = query.hash.clone();
+    // Parsed on every chunk so a malformed hash is refused before any bytes land, rather than
+    // after the last chunk has already paid for the whole upload.
+    let expected_hash = MerkleHash::from_str(&query.hash).map_err(|_| {
+        OxenHttpError::BadRequest("hash must be a hex-encoded xxh3-128 digest".into())
+    })?;
     let size = query.total_size;
     let chunk_num = query.chunk_num;
     let total_chunks = query.total_chunks;
@@ -803,6 +810,7 @@ pub async fn upload_chunk(
                         size,
                         query.is_compressed,
                         query.filename.to_owned(),
+                        expected_hash,
                     )
                     .await
                     {
@@ -837,6 +845,7 @@ async fn check_if_upload_complete_and_unpack(
     total_size: usize,
     is_compressed: bool,
     filename: Option<String>,
+    expected_hash: MerkleHash,
 ) -> Result<(), OxenError> {
     let mut files = util::fs::list_files_in_dir(&tmp_dir).await?;
 
@@ -883,7 +892,7 @@ async fn check_if_upload_complete_and_unpack(
                         .into(),
                 )
             })?;
-            unpack_to_file(&files, repo, &filename)?;
+            unpack_to_file(&files, repo, &filename, expected_hash)?;
         }
 
         log::debug!(
@@ -903,9 +912,8 @@ fn unpack_to_file(
     files: &[PathBuf],
     repo: &LocalRepository,
     filename: &str,
+    expected_hash: MerkleHash,
 ) -> Result<(), OxenError> {
-    // Append each buffer to the end of the large file
-    // TODO: better error handling...
     log::debug!("Got filename {filename}");
 
     // return path with native slashes
@@ -921,23 +929,14 @@ fn unpack_to_file(
         util::fs::create_dir_all(parent)?;
     }
 
-    let mut outf = std::fs::File::create(&full_path)
-        .map_err(|e| OxenError::file_create_error(&full_path, e))?;
+    // Callers sort `files`, so concatenating in slice order restores the original byte offsets.
+    // `expected_hash` covers the whole payload, so a chunk that arrived corrupt, truncated, or out
+    // of order fails here rather than being published.
+    AtomicFile::new(&full_path)
+        .with_hash(expected_hash)
+        .stream_from_paths(files)?;
 
-    for file in files.iter() {
-        log::debug!("Reading file bytes {file:?}");
-        let mut buffer: Vec<u8> = Vec::new();
-
-        let mut f = std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
-
-        f.read_to_end(&mut buffer)
-            .map_err(|e| OxenError::file_read_error(file, e))?;
-
-        log::debug!("Read {} file bytes from file {:?}", buffer.len(), file);
-
-        outf.write_all(&buffer)?;
-        log::debug!("Unpack successful! {full_path:?}");
-    }
+    log::debug!("Unpack successful! {full_path:?}");
     Ok(())
 }
 
@@ -1201,4 +1200,81 @@ fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
     Err(OxenError::basic_str(format!(
         "Could not get hash for file: {path:?}"
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test;
+    use liboxen::util::hasher;
+
+    /// Writes `parts` as sorted chunk files under `sync_dir` and returns their paths in order.
+    fn write_chunks(sync_dir: &Path, parts: &[&str]) -> Result<Vec<PathBuf>, OxenError> {
+        let chunk_dir = sync_dir.join("chunks");
+        util::fs::create_dir_all(&chunk_dir)?;
+        let mut chunks: Vec<PathBuf> = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            let chunk_path = chunk_dir.join(format!("chunk_{i}"));
+            std::fs::write(&chunk_path, part)?;
+            chunks.push(chunk_path);
+        }
+        Ok(chunks)
+    }
+
+    fn published_path(repo: &LocalRepository) -> PathBuf {
+        util::fs::oxen_hidden_dir(&repo.path)
+            .join("history")
+            .join("some_commit")
+            .join(VERSION_FILE_NAME)
+    }
+
+    /// Chunk files concatenate in slice order into the published version file, verified against the
+    /// payload hash the client sends. Guards two contracts `check_if_upload_complete_and_unpack`
+    /// relies on: callers sort the chunk paths, so slice order is byte-offset order; and the hex
+    /// `hash_buffer` produces round-trips into the `MerkleHash` the publish checks against.
+    #[test]
+    fn test_unpack_to_file_concatenates_chunks_in_order() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
+
+        let chunks = write_chunks(&sync_dir, &["alpha", "beta", "gamma"])?;
+        let expected = MerkleHash::from_str(&hasher::hash_buffer(b"alphabetagamma"))?;
+
+        unpack_to_file(&chunks, &repo, "history/some_commit/blob", expected)?;
+
+        assert_eq!(
+            util::fs::read_from_path(published_path(&repo))?,
+            "alphabetagamma"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Chunks that do not add up to the hash the client declared are never published, so a
+    /// corrupt, truncated, or reordered upload leaves no file for a reader to mistake for intact
+    /// data.
+    #[test]
+    fn test_unpack_to_file_rejects_a_payload_that_fails_its_hash() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
+
+        // The hash of the bytes the client meant to send, against chunks that arrived reordered.
+        let chunks = write_chunks(&sync_dir, &["gamma", "beta", "alpha"])?;
+        let expected = MerkleHash::from_str(&hasher::hash_buffer(b"alphabetagamma"))?;
+
+        let result = unpack_to_file(&chunks, &repo, "history/some_commit/blob", expected);
+
+        assert!(
+            matches!(result, Err(OxenError::HashMismatch { .. })),
+            "expected a hash mismatch, got {result:?}"
+        );
+        assert!(
+            !published_path(&repo).exists(),
+            "a payload that failed its hash must leave no published file"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
 }
