@@ -506,7 +506,13 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
         OxenError::InvalidRepoName(name) => {
             log::debug!("Invalid repo name: {name}");
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
-                "Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
+                "Invalid repository name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"
+            )))
+        }
+        OxenError::InvalidNamespaceName(name) => {
+            log::debug!("Invalid namespace name: {name}");
+            HttpResponse::BadRequest().json(StatusMessage::error(format!(
+                "Invalid namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}"
             )))
         }
         err => {
@@ -967,6 +973,35 @@ mod tests {
         assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
         assert!(
             !sync_dir.join(&namespace).exists(),
+            "nothing may be created for a refused request"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// The addressed namespace holds to the narrower namespace rule, so a name only the repository
+    /// position allows is a bad request rather than a server error.
+    #[actix_web::test]
+    async fn test_create_rejects_an_invalid_addressed_namespace() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let app_data = OxenAppData {
+            path: sync_dir.clone(),
+            config: Config::default(),
+            test_mode: false,
+        };
+
+        // Valid in the repository position, and not in the namespace position.
+        let namespace = "my.org";
+        let data = RepoNew::from_namespace_name(namespace, Uuid::new_v4().to_string(), None);
+
+        let resp = super::create_repo_response(&app_data, data)
+            .await
+            .expect("the error path builds a response");
+
+        assert_eq!(resp.status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            !sync_dir.join(namespace).exists(),
             "nothing may be created for a refused request"
         );
 
