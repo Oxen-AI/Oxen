@@ -1,10 +1,10 @@
 use crate::api::client;
-use crate::api::requests::RepoNew;
+use crate::api::requests::{RepoNew, TransferNamespaceRequest};
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::error::OxenError;
 use crate::model::{Branch, LocalRepository, Remote, RemoteRepository};
 use crate::view::repository::RepositoryCreationResponse;
-use crate::view::{NamespaceView, RepositoryResponse, StatusMessage};
+use crate::view::{RepositoryResponse, StatusMessage};
 use crate::{api, repositories};
 use serde_json::json;
 use serde_json::value;
@@ -285,13 +285,17 @@ pub async fn delete_from_url(url: String) -> Result<StatusMessage, OxenError> {
     }
 }
 
+/// Move `repository` into `to_namespace`, recording `to_namespace_name` as what that namespace is
+/// called where `to_namespace` addresses it by UUID.
 pub async fn transfer_namespace(
     repository: &RemoteRepository,
     to_namespace: &str,
+    to_namespace_name: Option<&str>,
 ) -> Result<RemoteRepository, OxenError> {
     let url = api::endpoint::url_from_repo(repository, "/transfer")?;
-    let params = serde_json::to_string(&NamespaceView {
+    let params = serde_json::to_string(&TransferNamespaceRequest {
         namespace: to_namespace.to_string(),
+        namespace_name: to_namespace_name.map(str::to_string),
     })?;
 
     let client = client::new_for_url(&url)?;
@@ -663,7 +667,8 @@ mod tests {
 
             let new_namespace = "new-namespace";
             let new_repository =
-                api::client::repositories::transfer_namespace(&remote_repo, new_namespace).await?;
+                api::client::repositories::transfer_namespace(&remote_repo, new_namespace, None)
+                    .await?;
 
             assert_eq!(new_repository.namespace, new_namespace);
             assert_eq!(new_repository.name, remote_repo.name);

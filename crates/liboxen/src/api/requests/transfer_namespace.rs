@@ -1,0 +1,18 @@
+//! Request payload for transferring a repository to another namespace.
+//!
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+/// The namespace a repository is being transferred into.
+#[derive(Deserialize, Serialize, Debug, Clone, ToSchema)]
+pub struct TransferNamespaceRequest {
+    /// The destination namespace, as addressed on disk. A UUID where a control plane owns
+    /// namespaces, and the namespace's name where the server owns its own.
+    pub namespace: String,
+    /// What the destination namespace is called, where `namespace` addresses it by UUID instead.
+    /// Recorded as the repository's namespace hint, and refused when it is not a valid namespace
+    /// name. A server that owns its own namespaces takes the name from the `namespace` position and
+    /// ignores this.
+    #[serde(default)]
+    pub namespace_name: Option<String>,
+}

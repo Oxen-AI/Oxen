@@ -3,7 +3,7 @@ use liboxen::{
     command::migrate::{self, Direction, try_apply_migration},
     core::repo_locks,
     error::OxenError,
-    migrations,
+    migrations, repositories,
     view::{ListRepositoryResponse, StatusMessage},
 };
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     errors::OxenHttpError,
     helpers::get_repo,
-    params::{app_data, path_param},
+    params::{app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name},
     tasks,
 };
 
@@ -48,6 +48,18 @@ pub struct RunMigrationRequest {
     /// always run. Defaults to false if unspecified.
     #[serde(default)]
     pub run_optional: bool,
+
+    /// What the namespace is called, where the URL addresses it by UUID instead. Recorded as a hint
+    /// once the migration has run and only where the repository holds none, and refused when it is
+    /// not a valid namespace name.
+    #[serde(default)]
+    pub namespace_name: Option<String>,
+
+    /// What the repository is called, where the URL addresses it by UUID instead. Recorded as a
+    /// hint once the migration has run and only where the repository holds none, and refused when
+    /// it is not a valid repository name.
+    #[serde(default)]
+    pub repo_name: Option<String>,
 }
 
 /// Runs a named migration's `up` or `down` on a single repository.
@@ -71,12 +83,16 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     let RunMigrationRequest {
         direction,
         run_optional,
+        namespace_name,
+        repo_name: repo_name_hint,
     } = if body.is_empty() {
         RunMigrationRequest::default()
     } else {
         serde_json::from_slice(&body)
             .map_err(|e| OxenHttpError::BadRequest(format!("Invalid request body: {e}").into()))?
     };
+    reject_invalid_namespace_name(namespace_name.as_deref())?;
+    reject_invalid_repo_name(repo_name_hint.as_deref())?;
 
     let migration = migrate::all_migrations(&migration_name).ok_or_else(|| {
         OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
@@ -98,6 +114,19 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     })
     .await?;
 
+    // Recorded outside the exclusive section: a migration writes the whole identity table, and a
+    // hint write takes a write reservation the exclusive section would block.
+    let hinted = repo.clone();
+    tasks::spawn_blocking(move || {
+        repositories::record_name_hints(
+            &hinted,
+            namespace_name.as_deref(),
+            repo_name_hint.as_deref(),
+        )
+    })
+    .await
+    .map_err(OxenError::from)??;
+
     log::info!(
         "Ran migration {migration_name} {direction} on {namespace}/{repo_name}",
         migration_name = migration_name,
@@ -114,10 +143,13 @@ mod tests {
     use super::*;
     use crate::app_data::OxenAppData;
     use crate::test;
-    use actix_web::{App, http, web};
+    use actix_web::{App, ResponseError, http, web};
+    use liboxen::config::RepositoryConfig;
     use liboxen::core::workspaces::workspace_name_index;
     use liboxen::error::OxenError;
+    use liboxen::model::RepoIdentity;
     use std::time::Duration;
+    use uuid::Uuid;
 
     #[actix_web::test]
     async fn test_run_up_on_single_repo() -> Result<(), OxenError> {
@@ -144,6 +176,7 @@ mod tests {
             serde_json::to_vec(&RunMigrationRequest {
                 direction: Direction::Up,
                 run_optional: false,
+                ..Default::default()
             })
             .expect("RunMigrationRequest is always serializable"),
         );
@@ -310,6 +343,38 @@ mod tests {
         Ok(())
     }
 
+    /// A caller that meant to state a name is told its request was wrong rather than served as
+    /// though it had stated nothing.
+    #[actix_web::test]
+    async fn test_run_rejects_an_invalid_name_in_the_body() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+        let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let body = web::Bytes::from(r#"{"direction":"up","repo_name":"has a space"}"#);
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+
+        let err = run(req, body)
+            .await
+            .expect_err("an invalid stated name must be refused");
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            err.to_string().contains("has a space"),
+            "expected the error to carry the rejected name, got: {err}"
+        );
+
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
+        Ok(())
+    }
+
     /// Body with a correctly-named field but the wrong JSON type
     /// (e.g. a string where a bool is expected) must be rejected.
     #[actix_web::test]
@@ -374,6 +439,95 @@ mod tests {
         }
 
         test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// The hub addresses a repository by UUID, so the names in the body are the only way the
+    /// migration endpoint learns what it is called. Its backfill caller depends on that.
+    #[actix_web::test]
+    async fn test_run_records_the_names_stated_in_the_body() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
+        std::fs::create_dir_all(&workspaces_dir)?;
+
+        // A repository placed by a control plane carries a UUID and no names.
+        let config_path = liboxen::util::fs::config_filepath(&repo.path);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid");
+        config.save(&config_path)?;
+
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+        let body = web::Bytes::from(
+            serde_json::to_vec(&RunMigrationRequest {
+                direction: Direction::Up,
+                run_optional: false,
+                namespace_name: Some("bessie".to_string()),
+                repo_name: Some("cats".to_string()),
+            })
+            .expect("RunMigrationRequest is always serializable"),
+        );
+
+        let resp = run(req, body).await.expect("run handler should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let identity = RepositoryConfig::from_file(&config_path)?
+            .identity
+            .expect("identity is intact");
+        assert_eq!(identity.namespace.as_deref(), Some("bessie"));
+        assert_eq!(identity.name.as_deref(), Some("cats"));
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A body that states no names is what every client other than the hub sends, and it must
+    /// leave the repository exactly as it was.
+    #[actix_web::test]
+    async fn test_run_records_nothing_when_the_body_states_no_names() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
+        std::fs::create_dir_all(&workspaces_dir)?;
+
+        let config_path = liboxen::util::fs::config_filepath(&repo.path);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid");
+        config.save(&config_path)?;
+
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+        let resp = run(req, web::Bytes::new())
+            .await
+            .expect("run handler should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let identity = RepositoryConfig::from_file(&config_path)?
+            .identity
+            .expect("identity is intact");
+        assert_eq!(identity.namespace, None);
+        assert_eq!(identity.name, None);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }

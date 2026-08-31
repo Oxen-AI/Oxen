@@ -45,6 +45,16 @@ pub struct RepoNew {
     /// plane that owns repository identity; `None` leaves the choice to the server.
     #[serde(default)]
     pub repo_uuid: Option<Uuid>,
+    /// What the namespace is called, where `namespace` addresses it by UUID instead. Recorded as a
+    /// hint beside the identity, ignored by a server that owns its own namespaces, and refused when
+    /// it is not a valid namespace name.
+    #[serde(default)]
+    pub namespace_name: Option<String>,
+    /// What the repository is called, where `name` addresses it by UUID instead. Recorded as a hint
+    /// beside the identity, ignored by a server that owns its own namespaces, and refused when it
+    /// is not a valid repository name.
+    #[serde(default)]
+    pub repo_name: Option<String>,
 }
 
 impl std::fmt::Display for RepoNew {
@@ -96,6 +106,8 @@ impl RepoNew {
             storage_kind,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         })
     }
 
@@ -125,6 +137,8 @@ impl RepoNew {
             storage_kind,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         }
     }
 
@@ -146,6 +160,8 @@ impl RepoNew {
             storage_kind,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         }
     }
 
@@ -166,6 +182,8 @@ impl RepoNew {
             storage_kind: None,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         }
     }
 
@@ -187,6 +205,8 @@ impl RepoNew {
             storage_kind,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         }
     }
 
@@ -217,6 +237,8 @@ impl RepoNew {
             storage_kind: None,
             merkle_node_backend: None,
             repo_uuid: None,
+            namespace_name: None,
+            repo_name: None,
         })
     }
 }

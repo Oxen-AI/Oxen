@@ -15,4 +15,3 @@ pub mod services;
 pub mod tasks;
 #[cfg(test)]
 pub(crate) mod test;
-pub mod transitional_identity;

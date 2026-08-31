@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 use dotenvy::from_filename;
-use liboxen::api::requests::RepoNew;
+use liboxen::api::requests::{RepoNew, TransferNamespaceRequest};
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use oxen_server::middleware::{
     MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
-    TransitionalIdentityMiddleware, request_id,
+    request_id,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -230,7 +230,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
             RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse,
             RepositoryStatsView, DataTypeView, DataTypeCount,
-            RepoNew, User,
+            RepoNew, TransferNamespaceRequest, User,
             // Commit Schemas
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit,
@@ -884,7 +884,6 @@ async fn start(
                 "/api/migrations/{migration_tstamp}",
                 web::get().to(controllers::migrations::list_unmigrated),
             )
-            .wrap(TransitionalIdentityMiddleware)
             .wrap(Condition::new(
                 enable_auth,
                 HttpAuthentication::bearer(auth::validator::validate),
