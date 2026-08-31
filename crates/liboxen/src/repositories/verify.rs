@@ -659,22 +659,38 @@ mod tests {
     async fn test_an_unreadable_vnode_is_named_and_its_siblings_still_checked()
     -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let nested = repo.path.join("nested");
-            util::fs::create_dir_all(&nested)?;
-            util::fs::write_to_path(nested.join("buried.txt"), "buried")?;
-            util::fs::write_to_path(repo.path.join("top.txt"), "top")?;
+            let mut repo = repo;
+            // One entry per vnode, so a single directory holds several of them.
+            repo.set_vnode_size(1);
+            test::populate_dir_with_txt_files(repo.path.join("nested"), "file", 4)?;
             repositories::add(&repo, &repo.path).await?;
-            let commit = repositories::commit(&repo, "Add both")?;
+            let commit = repositories::commit(&repo, "Add four files")?;
 
             let dir = repositories::tree::get_dir_with_children(&repo, &commit, "nested", None)?
                 .expect("the nested directory has a node");
-            let (vnode_hash, _) = MerkleTreeNode::read_children_from_hash(&repo, &dir.hash)?
-                .into_iter()
-                .find(|(_, child)| matches!(child.node, EMerkleTreeNode::VNode(_)))
-                .expect("the nested directory has a vnode");
+            let mut vnodes = Vec::new();
+            for (hash, child) in MerkleTreeNode::read_children_from_hash(&repo, &dir.hash)? {
+                if matches!(child.node, EMerkleTreeNode::VNode(_)) {
+                    let files = MerkleTreeNode::read_children_from_hash(&repo, &hash)?.len();
+                    vnodes.push((hash, files));
+                }
+            }
+            // Entries bucket into vnodes by a hash of their path, so which vnode holds what is
+            // fixed by the file names rather than chosen here.
+            let (damaged, hidden) = vnodes
+                .iter()
+                .filter(|(_, files)| *files > 0)
+                .min_by_key(|(_, files)| *files)
+                .copied()
+                .expect("the nested directory has a vnode holding entries");
+            let survivors = vnodes.iter().map(|(_, files)| files).sum::<usize>() - hidden;
+            assert!(
+                survivors >= 1,
+                "the fixture needs entries outside the damaged vnode: {vnodes:?}"
+            );
 
             repo.merkle_node_store().write_node(
-                &vnode_hash,
+                &damaged,
                 Bytes::from_static(b"not a node"),
                 Bytes::from_static(b"not children"),
             )?;
@@ -687,13 +703,14 @@ mod tests {
             );
             assert_eq!(
                 report.unreadable_nodes.sample[0].hash,
-                vnode_hash.to_string(),
+                damaged.to_string(),
                 "the finding names the vnode that could not be read, not its parent directory"
             );
-            assert!(
-                report.versions_checked >= 1,
-                "entries outside the damaged vnode are still checked: {report:?}"
+            assert_eq!(
+                report.versions_checked, survivors,
+                "every blob outside the damaged vnode is still checked: {report:?}"
             );
+            assert!(!report.is_healthy());
 
             Ok(())
         })
