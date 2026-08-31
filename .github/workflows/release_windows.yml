@@ -103,17 +103,17 @@ jobs:
       - name: Exclude build paths from Windows Defender
         run: |
           try {
-            Set-MpPreference -ExclusionPath @("C:\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\ProgramData\chocolatey", "$env:TEMP")
-            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe")
+            Set-MpPreference -ExclusionPath @("C:\actions-runner", "C:\Users\Administrator\.cargo", "C:\Users\Administrator\.rustup", "C:\ProgramData\chocolatey", "$env:TEMP") -ErrorAction Stop
+            Set-MpPreference -ExclusionProcess @("rustc.exe", "cargo.exe", "cl.exe", "link.exe", "cmake.exe", "python.exe", "git.exe") -ErrorAction Stop
             Write-Host "Defender exclusions applied"
           } catch {
             Write-Host "Defender configuration unavailable: $_"
           }
           try {
-            $prefs = Get-MpPreference
+            $prefs = Get-MpPreference -ErrorAction Stop
             Write-Host "Defender ExclusionPath: $($prefs.ExclusionPath -join ', ')"
             Write-Host "Defender ExclusionProcess: $($prefs.ExclusionProcess -join ', ')"
-            $status = Get-MpComputerStatus
+            $status = Get-MpComputerStatus -ErrorAction Stop
             Write-Host "Defender real-time protection: $($status.RealTimeProtectionEnabled)"
             Write-Host "Defender on-access protection: $($status.OnAccessProtectionEnabled)"
             Write-Host "Defender tamper protection: $($status.IsTamperProtected)"
