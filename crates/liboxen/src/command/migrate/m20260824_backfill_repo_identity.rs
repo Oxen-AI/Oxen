@@ -72,10 +72,11 @@ impl Migrate for BackfillRepoIdentityMigration {
 
 /// Who the repository at `repo_path` is, according to where it sits.
 ///
-/// A UUID-named directory was placed by a control plane that addresses repositories by UUID in
-/// both name positions, so it already holds the UUID it was assigned and keeps it, with the name
-/// hints left for whoever knows the real names. Any other directory is addressed by name, so the
-/// server owns the identity and records both names alongside a minted UUID.
+/// A control plane addresses repositories by UUID in both name positions, so a directory whose
+/// namespace and name both parse as UUIDs already holds the UUID it was assigned and keeps it,
+/// with the name hints left for whoever knows the real names. Any other directory is addressed by
+/// name, so the server owns the identity and records both names alongside a minted UUID. A
+/// repository whose name alone looks like a UUID is therefore still a named one.
 fn identity_from_path(repo_path: &Path) -> Result<RepoIdentity, OxenError> {
     let name = final_segment(repo_path)?;
     let namespace_dir = repo_path.parent().ok_or_else(|| {
@@ -83,9 +84,9 @@ fn identity_from_path(repo_path: &Path) -> Result<RepoIdentity, OxenError> {
     })?;
     let namespace = final_segment(namespace_dir)?;
 
-    Ok(match Uuid::parse_str(name) {
-        Ok(repo_uuid) => RepoIdentity::hintless(repo_uuid),
-        Err(_) => RepoIdentity::minted(namespace, name),
+    Ok(match (Uuid::parse_str(namespace), Uuid::parse_str(name)) {
+        (Ok(_), Ok(repo_uuid)) => RepoIdentity::hintless(repo_uuid),
+        _ => RepoIdentity::minted(namespace, name),
     })
 }
 
@@ -140,6 +141,31 @@ mod tests {
             assert_eq!(identity.repo_uuid, repo_uuid);
             assert_eq!(identity.namespace, None, "the namespace position is a UUID");
             assert_eq!(identity.name, None, "the name position is a UUID");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A server that owns its own namespaces can hold a repository whose name happens to parse as
+    /// a UUID. Its namespace is still a name, so the repository is name-addressed like any other.
+    #[tokio::test]
+    async fn test_a_uuid_shaped_name_under_a_named_namespace_is_name_addressed()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let uuid_shaped = Uuid::new_v4().to_string();
+            let repo = without_identity(&sync_dir, "ox", &uuid_shaped).await?;
+
+            BackfillRepoIdentityMigration.up(repo.clone())?;
+
+            let identity = recorded(&repo)?;
+            assert_eq!(identity.namespace.as_deref(), Some("ox"));
+            assert_eq!(identity.name.as_deref(), Some(uuid_shaped.as_str()));
+            assert_ne!(
+                identity.repo_uuid.to_string(),
+                uuid_shaped,
+                "a name that looks like a UUID is not the repository's identity"
+            );
 
             Ok(())
         })
