@@ -1850,27 +1850,28 @@ fn collect_added_from_dir(
 ) -> Result<(), OxenError> {
     added.nodes.insert(head_dir);
 
-    let (head_entries, head_vnodes) = match dir_entries(repo, &head_dir) {
-        Ok(entries) => entries,
+    let head = match dir_entries(repo, &head_dir) {
+        Ok(contents) => contents,
         Err(err) => {
-            // A node that will not parse hides everything beneath it, so it is recorded and the
-            // walk stops descending here instead of abandoning the rest of the tree.
+            // A directory node that will not parse hides everything beneath it, so it is recorded
+            // and the walk stops descending here instead of abandoning the rest of the tree.
             added.unreadable.insert(head_dir, err.to_string());
             return Ok(());
         }
     };
-    added.nodes.extend(head_vnodes);
+    added.nodes.extend(head.vnodes);
+    added.unreadable.extend(head.unreadable);
 
-    // An unreadable base prunes nothing, so every entry in head counts as added. The base commit
-    // reports its own damage when it is walked as a head in its own right.
+    // Damage on the base side prunes nothing: an entry it could not read is absent from
+    // `base_entries`, so the head entry of that name counts as added.
     let base_entries = match base_dir {
         Some(base_dir) => dir_entries(repo, &base_dir)
-            .map(|(entries, _)| entries)
+            .map(|contents| contents.entries)
             .unwrap_or_default(),
         None => HashMap::new(),
     };
 
-    for (name, entry) in head_entries {
+    for (name, entry) in head.entries {
         if base_entries
             .get(&name)
             .is_some_and(|base_entry| base_entry.hash == entry.hash)
@@ -1923,31 +1924,49 @@ struct DirEntry {
     kind: EntryKind,
 }
 
-/// The immediate file/dir entries of a directory node (flattening its vnode layer), keyed by name,
-/// plus the hashes of the vnodes traversed. Returns empty when the directory node is absent.
-fn dir_entries(
-    repo: &LocalRepository,
-    dir_hash: &MerkleHash,
-) -> Result<(HashMap<String, DirEntry>, Vec<MerkleHash>), OxenError> {
-    let mut entries = HashMap::new();
-    let mut vnode_hashes = Vec::new();
+/// What one directory node holds, gathered across its vnodes.
+struct DirContents {
+    entries: HashMap<String, DirEntry>,
+    vnodes: Vec<MerkleHash>,
+    /// VNodes the store holds but could not read, mapped to the failure. The entries each one
+    /// holds are absent from `entries`.
+    unreadable: HashMap<MerkleHash, String>,
+}
+
+/// Read the entries a directory node holds, descending through its vnodes.
+///
+/// A node the store does not hold reads as empty: an absent directory or vnode yields no entries
+/// and no failure. A node it holds but cannot parse does fail, the directory as an `Err` and a
+/// vnode as an entry in `unreadable` whose contents are then absent from `entries`.
+fn dir_entries(repo: &LocalRepository, dir_hash: &MerkleHash) -> Result<DirContents, OxenError> {
+    let mut contents = DirContents {
+        entries: HashMap::new(),
+        vnodes: Vec::new(),
+        unreadable: HashMap::new(),
+    };
 
     for (child_hash, child) in MerkleTreeNode::read_children_from_hash(repo, dir_hash)? {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                vnode_hashes.push(child_hash);
-                for (entry_hash, entry) in
-                    MerkleTreeNode::read_children_from_hash(repo, &child_hash)?
-                {
-                    insert_entry(&mut entries, entry_hash, &entry);
+                contents.vnodes.push(child_hash);
+                match MerkleTreeNode::read_children_from_hash(repo, &child_hash) {
+                    Ok(children) => {
+                        for (entry_hash, entry) in children {
+                            insert_entry(&mut contents.entries, entry_hash, &entry);
+                        }
+                    }
+                    // A vnode hides only the entries it holds, so its siblings are still read.
+                    Err(err) => {
+                        contents.unreadable.insert(child_hash, err.to_string());
+                    }
                 }
             }
             // Some trees may attach files/dirs directly under a directory node.
-            _ => insert_entry(&mut entries, child_hash, &child),
+            _ => insert_entry(&mut contents.entries, child_hash, &child),
         }
     }
 
-    Ok((entries, vnode_hashes))
+    Ok(contents)
 }
 
 fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node: &MerkleTreeNode) {

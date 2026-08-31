@@ -407,6 +407,7 @@ async fn check_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
     use crate::test;
     use crate::util;
     use bytes::Bytes;
@@ -648,6 +649,51 @@ mod tests {
                 "only the damaged subtree is skipped, not the whole commit: {report:?}"
             );
             assert!(!report.is_healthy());
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_an_unreadable_vnode_is_named_and_its_siblings_still_checked()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            util::fs::write_to_path(nested.join("buried.txt"), "buried")?;
+            util::fs::write_to_path(repo.path.join("top.txt"), "top")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Add both")?;
+
+            let dir = repositories::tree::get_dir_with_children(&repo, &commit, "nested", None)?
+                .expect("the nested directory has a node");
+            let (vnode_hash, _) = MerkleTreeNode::read_children_from_hash(&repo, &dir.hash)?
+                .into_iter()
+                .find(|(_, child)| matches!(child.node, EMerkleTreeNode::VNode(_)))
+                .expect("the nested directory has a vnode");
+
+            repo.merkle_node_store().write_node(
+                &vnode_hash,
+                Bytes::from_static(b"not a node"),
+                Bytes::from_static(b"not children"),
+            )?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(
+                report.unreadable_nodes.count, 1,
+                "the unreadable vnode is a finding: {report:?}"
+            );
+            assert_eq!(
+                report.unreadable_nodes.sample[0].hash,
+                vnode_hash.to_string(),
+                "the finding names the vnode that could not be read, not its parent directory"
+            );
+            assert!(
+                report.versions_checked >= 1,
+                "entries outside the damaged vnode are still checked: {report:?}"
+            );
 
             Ok(())
         })
