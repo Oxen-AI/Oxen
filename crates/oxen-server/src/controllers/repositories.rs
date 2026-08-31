@@ -629,16 +629,15 @@ pub async fn transfer_namespace(
     // directory housing that store cannot be renamed under it.
     drop(get_repo_async(app_data, &from_namespace, &name).await?);
 
-    // A control plane states the destination's name; otherwise the destination position is itself
-    // the name, and where neither holds there is no name to record.
-    let namespace_hint = data.namespace_name.or_else(|| {
-        app_data
-            .config
-            .identity
-            .repo_uuids_assigned_by()
-            .supplies_names()
-            .then(|| to_namespace.clone())
-    });
+    // Where the request's positions carry names, the destination position is the name and a
+    // body-stated one is ignored. Under a control plane the body is the only source, and a request
+    // that states none leaves the repository with no recorded namespace.
+    let identity_source = app_data.config.identity.repo_uuids_assigned_by();
+    let namespace_hint = if identity_source.supplies_names() {
+        Some(to_namespace.clone())
+    } else {
+        data.namespace_name
+    };
     let repo = repositories::transfer_namespace(
         &app_data.path,
         &name,
@@ -670,6 +669,7 @@ mod tests {
     use crate::config::Config;
     use crate::errors::OxenHttpError;
     use crate::test;
+    use actix_web::test::TestRequest;
     use actix_web::{App, http, web};
     use liboxen::api::requests::RepoNew;
     use liboxen::config::RepositoryConfig;
@@ -870,7 +870,19 @@ mod tests {
         config.identity = Some(RepoIdentity::minted(namespace, repo_name));
         config.save(&config_path)?;
 
-        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let req = TestRequest::with_uri("/")
+            .app_data(OxenAppData {
+                path: sync_dir.clone(),
+                config: Config {
+                    identity: toml::from_str(r#"repo_uuids_assigned_by = "auth-provider""#)
+                        .expect("a known source parses"),
+                    ..Default::default()
+                },
+                test_mode: false,
+            })
+            .param("namespace", namespace)
+            .param("repo_name", repo_name)
+            .to_http_request();
         let body = r#"{"namespace":"Other-Namespace","namespace_name":"bessie"}"#.to_string();
         let resp = super::transfer_namespace(req, body)
             .await
@@ -885,6 +897,42 @@ mod tests {
             identity.namespace.as_deref(),
             Some("bessie"),
             "the body's name wins over the addressed position"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// The destination position is the name where the server owns its namespaces, so the moved
+    /// repository records that and not a name stated in the body.
+    #[actix_web::test]
+    async fn test_transfer_ignores_a_body_name_where_the_position_is_the_name()
+    -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let config_path = util::fs::config_filepath(&repo.path);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
+        config.save(&config_path)?;
+
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        let body = r#"{"namespace":"Other-Namespace","namespace_name":"bessie"}"#.to_string();
+        let resp = super::transfer_namespace(req, body)
+            .await
+            .expect("transfer should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+
+        let moved = sync_dir.join("Other-Namespace").join(repo_name);
+        let identity = RepositoryConfig::from_file(util::fs::config_filepath(&moved))?
+            .identity
+            .expect("identity is intact");
+        assert_eq!(
+            identity.namespace.as_deref(),
+            Some("Other-Namespace"),
+            "the addressed position wins over the body's name"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;

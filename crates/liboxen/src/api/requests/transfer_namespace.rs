@@ -10,7 +10,8 @@ pub struct TransferNamespaceRequest {
     /// namespaces, and the namespace's name where the server owns its own.
     pub namespace: String,
     /// What the destination namespace is called, where `namespace` addresses it by UUID instead.
-    /// Recorded as the repository's namespace hint.
+    /// Recorded as the repository's namespace hint. A server that owns its own namespaces takes the
+    /// name from the `namespace` position and ignores this.
     #[serde(default)]
     pub namespace_name: Option<String>,
 }
