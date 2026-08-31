@@ -198,9 +198,10 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
 /// Record what this repository and its namespace are called, filling only hints the repository
 /// does not already hold.
 ///
-/// Writes nothing when both hints are already set, when neither argument supplies one, or when the
-/// repository carries no identity. An existing hint is left as it is: a repository's namespace
-/// changes by being moved, so [`transfer_namespace`] is what updates that one.
+/// Writes nothing when neither argument supplies a hint, when both are already recorded, or when
+/// the repository carries no identity. An existing hint is left as it is: a repository's namespace
+/// changes by being moved, so [`transfer_namespace`] is what updates that one. The identity to fill
+/// is read from the repository's config, so `repo` may have been opened before it was recorded.
 ///
 /// # Errors
 /// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
@@ -209,12 +210,7 @@ pub fn record_name_hints(
     namespace: Option<&str>,
     name: Option<&str>,
 ) -> Result<(), OxenError> {
-    let Some(identity) = repo.identity.as_ref() else {
-        return Ok(());
-    };
-    if (identity.namespace.is_some() || namespace.is_none())
-        && (identity.name.is_some() || name.is_none())
-    {
+    if namespace.is_none() && name.is_none() {
         return Ok(());
     }
 
@@ -537,6 +533,33 @@ mod tests {
     /// The identity an auth provider supplies carries no names, so the hints arrive later.
     fn hintless_identity() -> Option<RepoIdentity> {
         RepoIdentity::from_supplied(Some(Uuid::new_v4()), "not-a-uuid")
+    }
+
+    /// A migration records identity while its caller holds the repository it opened beforehand, so
+    /// the hints follow the config rather than that snapshot.
+    #[tokio::test]
+    async fn test_record_name_hints_fills_hints_recorded_after_the_repo_was_opened()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|sync_dir| async move {
+            let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
+            let path = util::fs::config_filepath(&repo.path);
+
+            let mut config = RepositoryConfig::from_file(&path)?;
+            config.identity = hintless_identity();
+            config.save(&path)?;
+
+            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
+
+            let identity = RepositoryConfig::from_file(&path)?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(identity.namespace.as_deref(), Some("bessie"));
+            assert_eq!(identity.name.as_deref(), Some("kittens"));
+
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]
