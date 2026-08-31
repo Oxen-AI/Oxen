@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     errors::OxenHttpError,
     helpers::get_repo,
-    params::{app_data, path_param},
+    params::{app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name},
     tasks,
 };
 
@@ -49,13 +49,15 @@ pub struct RunMigrationRequest {
     #[serde(default)]
     pub run_optional: bool,
 
-    /// What the namespace is called, where the URL addresses it by UUID instead. Recorded as a
-    /// hint once the migration has run, and only where the repository holds none.
+    /// What the namespace is called, where the URL addresses it by UUID instead. Recorded as a hint
+    /// once the migration has run and only where the repository holds none, and refused when it is
+    /// not a valid namespace name.
     #[serde(default)]
     pub namespace_name: Option<String>,
 
     /// What the repository is called, where the URL addresses it by UUID instead. Recorded as a
-    /// hint once the migration has run, and only where the repository holds none.
+    /// hint once the migration has run and only where the repository holds none, and refused when
+    /// it is not a valid repository name.
     #[serde(default)]
     pub repo_name: Option<String>,
 }
@@ -89,6 +91,8 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
         serde_json::from_slice(&body)
             .map_err(|e| OxenHttpError::BadRequest(format!("Invalid request body: {e}").into()))?
     };
+    reject_invalid_namespace_name(namespace_name.as_deref())?;
+    reject_invalid_repo_name(repo_name_hint.as_deref())?;
 
     let migration = migrate::all_migrations(&migration_name).ok_or_else(|| {
         OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
@@ -139,7 +143,7 @@ mod tests {
     use super::*;
     use crate::app_data::OxenAppData;
     use crate::test;
-    use actix_web::{App, http, web};
+    use actix_web::{App, ResponseError, http, web};
     use liboxen::config::RepositoryConfig;
     use liboxen::core::workspaces::workspace_name_index;
     use liboxen::error::OxenError;
@@ -334,6 +338,38 @@ mod tests {
             }
             other => panic!("expected BadRequest for unknown field, got {other:?}"),
         }
+
+        test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// A caller that meant to state a name is told its request was wrong rather than served as
+    /// though it had stated nothing.
+    #[actix_web::test]
+    async fn test_run_rejects_an_invalid_name_in_the_body() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+        let _repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        let body = web::Bytes::from(r#"{"direction":"up","repo_name":"has a space"}"#);
+        let req = test::repo_request_with_param(
+            &sync_dir,
+            "/",
+            namespace,
+            repo_name,
+            "migration_name",
+            "add_workspace_name_index",
+        );
+
+        let err = run(req, body)
+            .await
+            .expect_err("an invalid stated name must be refused");
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            err.to_string().contains("has a space"),
+            "expected the error to carry the rejected name, got: {err}"
+        );
 
         test::cleanup_repo_and_sync_dir(_repo, &sync_dir)?;
         Ok(())

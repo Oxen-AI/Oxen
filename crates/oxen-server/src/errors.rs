@@ -665,7 +665,22 @@ impl error::ResponseError for OxenHttpError {
                                 "title":
                                     "Invalid Repository Name",
                                 "detail":
-                                    format!("Invalid repository or namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
+                                    format!("Invalid repository name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+"),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::InvalidNamespaceName(name) => {
+                        log::debug!("Invalid namespace name: {name}");
+                        let error_json = json!({
+                            "error": {
+                                "type": "invalid_namespace_name",
+                                "title":
+                                    "Invalid Namespace Name",
+                                "detail":
+                                    format!("Invalid namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}"),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,

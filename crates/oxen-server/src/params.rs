@@ -94,6 +94,32 @@ pub fn path_param<'a>(request: &'a HttpRequest, param: &str) -> Result<&'a str, 
     Ok(value)
 }
 
+/// Checks a repository name a request body states, against the same rule as a name in a request's
+/// path.
+///
+/// # Errors
+/// [`OxenError::InvalidRepoName`] when the stated name is not a valid repository name.
+pub fn reject_invalid_repo_name(stated: Option<&str>) -> Result<(), OxenHttpError> {
+    if let Some(name) = stated.filter(|name| !repositories::is_valid_repo_name(name)) {
+        return Err(OxenError::InvalidRepoName(name.into()).into());
+    }
+
+    Ok(())
+}
+
+/// Checks a namespace name a request body states, against the same rule as a namespace in a
+/// request's path.
+///
+/// # Errors
+/// [`OxenError::InvalidNamespaceName`] when the stated name is not a valid namespace name.
+pub fn reject_invalid_namespace_name(stated: Option<&str>) -> Result<(), OxenHttpError> {
+    if let Some(name) = stated.filter(|name| !repositories::is_valid_namespace_name(name)) {
+        return Err(OxenError::InvalidNamespaceName(name.into()).into());
+    }
+
+    Ok(())
+}
+
 /// Dynamically accesses a query parameter by name.
 ///
 /// Unlike path params, this returns an empty string if the query parameter is not found in the request.

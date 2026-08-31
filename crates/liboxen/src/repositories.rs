@@ -292,11 +292,25 @@ pub fn transfer_namespace(
     }
 }
 
-static VALID_NAME_RE: LazyLock<Regex> =
+static VALID_REPO_NAME_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[[:alnum:]][[:alnum:]_.\-]+$").unwrap());
 
-fn is_valid_repo_name(name: &str) -> bool {
-    VALID_NAME_RE.is_match(name)
+// A namespace is addressed by whatever control plane owns namespaces above the server, so it holds
+// to the narrower rule those names have to satisfy as well.
+static VALID_NAMESPACE_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[[:alnum:]][[:alnum:]_\-]{1,49}$").unwrap());
+
+/// Whether `name` is valid in the repository position: an alphanumeric first character, then one or
+/// more alphanumerics, `_`, `.`, or `-`, so at least two characters in all.
+pub fn is_valid_repo_name(name: &str) -> bool {
+    VALID_REPO_NAME_RE.is_match(name)
+}
+
+/// Whether `name` is valid in the namespace position, which is stricter than the repository
+/// position: an alphanumeric first character, then one to forty-nine alphanumerics, `_`, or `-`, so
+/// no `.` and at most fifty characters in all.
+pub fn is_valid_namespace_name(name: &str) -> bool {
+    VALID_NAMESPACE_NAME_RE.is_match(name)
 }
 
 /// Create a repository under `root_dir`, recording `identity` as who it is.
@@ -312,8 +326,8 @@ pub async fn create(
     }
 
     // Validate namespace
-    if !is_valid_repo_name(&new_repo.namespace) {
-        return Err(OxenError::InvalidRepoName(new_repo.namespace.into()));
+    if !is_valid_namespace_name(&new_repo.namespace) {
+        return Err(OxenError::InvalidNamespaceName(new_repo.namespace.into()));
     }
 
     let repo_dir = root_dir
@@ -893,6 +907,32 @@ mod tests {
         assert!(!repositories::is_valid_repo_name("repo!name"));
     }
 
+    #[test]
+    fn test_is_valid_namespace_name_accepts_valid_names() {
+        assert!(repositories::is_valid_namespace_name("ox"));
+        assert!(repositories::is_valid_namespace_name("my-org"));
+        assert!(repositories::is_valid_namespace_name("my_org"));
+        assert!(repositories::is_valid_namespace_name("MyOrg123"));
+        // A control plane addresses a namespace by UUID.
+        assert!(repositories::is_valid_namespace_name(
+            &Uuid::new_v4().to_string()
+        ));
+        assert!(repositories::is_valid_namespace_name(&"a".repeat(50)));
+    }
+
+    #[test]
+    fn test_is_valid_namespace_name_rejects_invalid_names() {
+        // Valid in the repository position, so the two rules cannot be one.
+        assert!(!repositories::is_valid_namespace_name("my.org"));
+        assert!(!repositories::is_valid_namespace_name("v2.0.1"));
+        assert!(!repositories::is_valid_namespace_name(&"a".repeat(51)));
+        assert!(!repositories::is_valid_namespace_name("a"));
+        assert!(!repositories::is_valid_namespace_name(""));
+        assert!(!repositories::is_valid_namespace_name("-org"));
+        assert!(!repositories::is_valid_namespace_name("org name"));
+        assert!(!repositories::is_valid_namespace_name("org/name"));
+    }
+
     #[tokio::test]
     async fn test_local_repository_api_create_rejects_invalid_name() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
@@ -924,10 +964,10 @@ mod tests {
 
             assert!(result.is_err(), "Expected error but got: {result:?}");
             match result.unwrap_err() {
-                OxenError::InvalidRepoName(invalid_name) => {
+                OxenError::InvalidNamespaceName(invalid_name) => {
                     assert_eq!(invalid_name.to_string(), namespace);
                 }
-                other => panic!("Expected InvalidRepoName error, got: {other:?}"),
+                other => panic!("Expected InvalidNamespaceName error, got: {other:?}"),
             }
 
             Ok(())

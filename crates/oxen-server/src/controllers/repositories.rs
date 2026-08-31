@@ -2,7 +2,9 @@ use crate::app_data::OxenAppData;
 use crate::config::identity_policy::IdentitySource;
 use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, get_repo_async};
-use crate::params::{app_data, path_param};
+use crate::params::{
+    app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name,
+};
 
 use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt;
@@ -442,6 +444,8 @@ async fn create_repo_response(
     app_data: &OxenAppData,
     mut data: RepoNew,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    reject_invalid_namespace_name(data.namespace_name.as_deref())?;
+    reject_invalid_repo_name(data.repo_name.as_deref())?;
     data.storage_kind = Some(app_data.config.storage.resolve(data.storage_kind)?);
     let namespace = data.namespace.clone();
     let name = data.name.clone();
@@ -621,6 +625,7 @@ pub async fn transfer_namespace(
     let from_namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let data: TransferNamespaceRequest = serde_json::from_str(&body)?;
+    reject_invalid_namespace_name(data.namespace_name.as_deref())?;
     let to_namespace = data.namespace;
 
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
@@ -670,7 +675,7 @@ mod tests {
     use crate::errors::OxenHttpError;
     use crate::test;
     use actix_web::test::TestRequest;
-    use actix_web::{App, http, web};
+    use actix_web::{App, ResponseError, http, web};
     use liboxen::api::requests::RepoNew;
     use liboxen::config::RepositoryConfig;
     use liboxen::core::repo_locks;
@@ -936,6 +941,68 @@ mod tests {
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// A blank name is refused wherever it is stated, including on a server that would ignore the
+    /// names a request states.
+    #[actix_web::test]
+    async fn test_create_rejects_a_blank_stated_name() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let app_data = OxenAppData {
+            path: sync_dir.clone(),
+            config: Config::default(),
+            test_mode: false,
+        };
+
+        let namespace = Uuid::new_v4().to_string();
+        let repo_uuid = Uuid::new_v4();
+        let mut data = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
+        data.namespace_name = Some("   ".to_string());
+
+        let err = super::create_repo_response(&app_data, data)
+            .await
+            .expect_err("a blank stated name must be refused");
+
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            !sync_dir.join(&namespace).exists(),
+            "nothing may be created for a refused request"
+        );
+
+        test::cleanup_sync_dir(&sync_dir)?;
+        Ok(())
+    }
+
+    /// Moving a repository relocates its directory, so a request stating a name a namespace cannot
+    /// have must be refused before anything moves.
+    #[actix_web::test]
+    async fn test_transfer_rejects_an_invalid_stated_namespace_name() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Repo";
+
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let repo_dir = repo.path.clone();
+
+        let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
+        // Valid in the repository position, and not in the namespace position.
+        let body = r#"{"namespace":"Other-Namespace","namespace_name":"my.org"}"#.to_string();
+        let err = super::transfer_namespace(req, body)
+            .await
+            .expect_err("an invalid stated namespace name must be refused");
+
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert!(
+            repo_dir.exists(),
+            "repo dir should not have moved: {repo_dir:?}"
+        );
+        assert!(
+            !sync_dir.join("Other-Namespace").join(repo_name).exists(),
+            "the repo must not appear in the destination namespace"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
 }

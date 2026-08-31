@@ -70,8 +70,13 @@ pub enum OxenError {
     RepoAlreadyExists(Box<RepoNew>),
 
     /// Error when creating a repository: repo names are restricted.
-    #[error("Invalid repository or namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
+    #[error("Invalid repository name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
+
+    /// Error when creating a repository: namespace names are restricted, and more tightly than
+    /// repository names.
+    #[error("Invalid namespace name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}")]
+    InvalidNamespaceName(StringError),
 
     #[error(
         "Invalid repository URL. Expecting 3 '/' parts to extract the namespace and repository name in the path of this URL: {0}"
@@ -976,6 +981,7 @@ impl OxenError {
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
