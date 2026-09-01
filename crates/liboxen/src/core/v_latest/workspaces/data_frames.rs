@@ -214,6 +214,23 @@ pub fn get_queryable_data_frame_workspace(
 
 /// Rebuild the staged table for `path` from the committed file, discarding any staged edits.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    p_index(workspace, path, Rebuild::Always).await
+}
+
+/// Index `path` only if its staged table is absent, leaving an already-indexed frame and the
+/// staged edits it holds untouched.
+pub async fn index_if_absent(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    p_index(workspace, path, Rebuild::OnlyIfAbsent).await
+}
+
+/// Whether [`p_index`] rebuilds a table that is already fully indexed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rebuild {
+    Always,
+    OnlyIfAbsent,
+}
+
+async fn p_index(workspace: &Workspace, path: &Path, rebuild: Rebuild) -> Result<(), OxenError> {
     // Is tabular just looks at the file extensions
     let file_node =
         repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
@@ -254,6 +271,23 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     };
     util::fs::create_dir_all(parent)?;
 
+    // Fast path: an already-indexed table needs no committed file, and materializing one is a
+    // whole-file fetch from the version store. This read is advisory only. The authoritative check
+    // is the one under the data frame's write guard below, which is what makes the decision and the
+    // rebuild atomic, so a table that looks indexed here and is gone by then still rebuilds.
+    if rebuild == Rebuild::OnlyIfAbsent {
+        let db_path = db_path.clone();
+        let already_indexed = tokio::task::spawn_blocking(move || {
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| Ok(df_db::table_is_fully_indexed(conn, TABLE_NAME)?))
+            })
+        })
+        .await??;
+        if already_indexed {
+            return Ok(());
+        }
+    }
+
     let version_store = repo.version_store();
     let hash_str = file_hash.to_string();
 
@@ -279,11 +313,18 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
     tokio::task::spawn_blocking(move || {
-        // Hold the data frame exclusively for the whole rebuild: it drops the staged table before
-        // building the replacement, so a row write that overlaps is discarded by the drop.
+        // Hold the data frame exclusively for the whole rebuild. Under `OnlyIfAbsent` that also
+        // covers the emptiness check, so the rebuild cannot proceed on a table another caller
+        // populated after the caller's own check.
         with_data_frame_write(&db_path, || {
             with_df_db_manager(&db_path, |manager| {
                 manager.with_conn(|conn| {
+                    if rebuild == Rebuild::OnlyIfAbsent
+                        && df_db::table_is_fully_indexed(conn, TABLE_NAME)?
+                    {
+                        return Ok(());
+                    }
+
                     // Drop any prior table (possibly partial or stale) and commit that
                     // drop before the rebuild, so a failed rebuild leaves no table at
                     // all rather than rolling back to a partial one.
