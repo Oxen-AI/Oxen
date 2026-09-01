@@ -36,20 +36,14 @@ impl RepoIdentity {
         }
     }
 
-    /// The identity for a repository whose UUID an auth provider assigned, taken from
-    /// `supplied_repo_uuid` or read off the `name` position, which the provider sets to the UUID.
-    ///
-    /// `None` when neither carries one, leaving the repository with no identity rather than one
-    /// that disagrees with the directory it was created in. Name hints stay unset, because neither
-    /// position holds a name.
-    pub fn from_supplied(supplied_repo_uuid: Option<Uuid>, name: &str) -> Option<Self> {
-        supplied_repo_uuid
-            .or_else(|| Uuid::parse_str(name).ok())
-            .map(|repo_uuid| RepoIdentity {
-                repo_uuid,
-                namespace: None,
-                name: None,
-            })
+    /// The identity for a repository a control plane placed and addresses by UUID, whose names
+    /// this server has not been told.
+    pub fn hintless(repo_uuid: Uuid) -> Self {
+        RepoIdentity {
+            repo_uuid,
+            namespace: None,
+            name: None,
+        }
     }
 }
 
@@ -68,43 +62,13 @@ mod tests {
         assert_eq!(identity.name.as_deref(), Some("cats"));
     }
 
-    /// The auth provider passes the repo UUID in the name position, so that is the identity and
-    /// neither position is a name.
-    #[test]
-    fn auth_provider_reads_the_repo_uuid_out_of_the_name_position() {
-        let repo_uuid = Uuid::new_v4();
-        let identity = RepoIdentity::from_supplied(None, &repo_uuid.to_string())
-            .expect("the name position carries the identity");
-
-        assert_eq!(identity.repo_uuid, repo_uuid);
-        assert_eq!(identity.namespace, None);
-        assert_eq!(identity.name, None);
-    }
-
-    #[test]
-    fn auth_provider_prefers_a_supplied_uuid_over_the_name_position() {
-        let supplied = Uuid::new_v4();
-        let in_name_position = Uuid::new_v4();
-        let identity = RepoIdentity::from_supplied(Some(supplied), &in_name_position.to_string())
-            .expect("a supplied UUID is an identity");
-
-        assert_eq!(identity.repo_uuid, supplied);
-    }
-
-    /// Assigning here would write a UUID that disagrees with the directory the repo lives in, and
-    /// every later step derives from that config. Recording nothing leaves identity
-    /// all-or-nothing, so the backfill can treat its presence as a binary.
-    #[test]
-    fn auth_provider_records_nothing_rather_than_assigning() {
-        assert_eq!(RepoIdentity::from_supplied(None, "cats"), None);
-    }
-
     /// Storage, index keys, and directory names all compare these as strings, so the stored form
     /// has to be the canonical lowercase hyphenated one no matter which form arrived.
     #[test]
     fn uuids_serialize_canonically_whatever_form_arrived() {
-        let identity = RepoIdentity::from_supplied(None, "5abd211ee25c494bba0f44ad542443d7")
-            .expect("an unhyphenated UUID is still a UUID");
+        let identity = RepoIdentity::hintless(
+            Uuid::parse_str("5abd211ee25c494bba0f44ad542443d7").expect("a valid UUID"),
+        );
         let toml = toml::to_string(&identity).expect("serialize");
         assert!(
             toml.contains("5abd211e-e25c-494b-ba0f-44ad542443d7"),
@@ -115,12 +79,7 @@ mod tests {
     #[test]
     fn absent_name_hints_are_not_serialized() {
         let repo_uuid = Uuid::new_v4();
-        let toml = toml::to_string(&RepoIdentity {
-            repo_uuid,
-            namespace: None,
-            name: None,
-        })
-        .expect("serialize");
+        let toml = toml::to_string(&RepoIdentity::hintless(repo_uuid)).expect("serialize");
 
         assert_eq!(toml, format!("repo_uuid = \"{repo_uuid}\"\n"));
     }

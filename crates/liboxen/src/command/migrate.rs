@@ -8,6 +8,9 @@ pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
 pub mod m20260626_migrate_merkle_nodes_to_lmdb;
 pub use m20260626_migrate_merkle_nodes_to_lmdb::MerkleNodesToLmdbMigration;
 
+pub mod m20260824_backfill_repo_identity;
+pub use m20260824_backfill_repo_identity::BackfillRepoIdentityMigration;
+
 pub mod m20260824_backfill_workspace_created_at;
 pub use m20260824_backfill_workspace_created_at::BackfillWorkspaceCreatedAtMigration;
 use serde::{Deserialize, Serialize};
@@ -88,9 +91,10 @@ pub trait Migrate: Send + Sync {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 3] = [
+pub const ALL_MIGRATIONS: [&dyn Migrate; 4] = [
     &AddWorkspaceNameIndexMigration,
     &MerkleNodesToLmdbMigration,
+    &BackfillRepoIdentityMigration,
     &BackfillWorkspaceCreatedAtMigration,
 ];
 
