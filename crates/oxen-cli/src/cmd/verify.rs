@@ -52,8 +52,11 @@ impl RunCmd for VerifyCmd {
 
 fn print_report(report: &VerifyReport) {
     println!(
-        "Checked {} branches, {} commits, {} version files",
-        report.branches_checked, report.commits_checked, report.versions_checked
+        "Checked {} branches, {} workspaces, {} commits, {} version files",
+        report.branches_checked,
+        report.workspaces_checked,
+        report.commits_checked,
+        report.versions_checked
     );
 
     if report.is_healthy() {
@@ -66,6 +69,14 @@ fn print_report(report: &VerifyReport) {
         "Branches whose head commit is missing",
         &report.dangling_branches,
         |d| format!("{} -> {}", d.branch, d.commit_id),
+    );
+    print_findings(
+        "Workspaces pinned to a missing commit",
+        &report.dangling_workspaces,
+        |w| match &w.name {
+            Some(name) => format!("{} ({name}) -> {}", w.workspace, w.commit_id),
+            None => format!("{} -> {}", w.workspace, w.commit_id),
+        },
     );
     print_findings(
         "Commits naming a missing parent",

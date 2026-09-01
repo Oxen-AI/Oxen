@@ -2,8 +2,9 @@
 //!
 //! Read-only integrity checks for a repository.
 //!
-//! Answers one question: does everything this repository's commits reference actually exist, and
-//! does it look like what the tree says it is. Nothing here mutates a repository.
+//! Answers one question: does everything this repository's commits and workspaces reference
+//! actually exist, and does it look like what the tree says it is. Nothing here mutates a
+//! repository.
 //!
 //! Findings are reported as counts plus a bounded sample.
 
@@ -15,8 +16,10 @@ use std::path::PathBuf;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, NewCommit};
 use crate::repositories;
+use crate::repositories::commits;
 use crate::repositories::commits::commit_writer::compute_commit_id;
 use crate::repositories::tree::DeclaredSizes;
+use crate::repositories::workspaces;
 
 /// Examples of each finding a report carries alongside the count.
 const SAMPLE_LIMIT: usize = 10;
@@ -58,6 +61,15 @@ impl<T> Findings<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DanglingBranch {
     pub branch: String,
+    pub commit_id: String,
+}
+
+/// A workspace pinned to a commit the repository does not have.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DanglingWorkspace {
+    /// The workspace's own id when its config records one, else the directory it lives in.
+    pub workspace: String,
+    pub name: Option<String>,
     pub commit_id: String,
 }
 
@@ -108,7 +120,9 @@ pub struct VerifyReport {
     pub branches_checked: usize,
     pub commits_checked: usize,
     pub versions_checked: usize,
+    pub workspaces_checked: usize,
     pub dangling_branches: Findings<DanglingBranch>,
+    pub dangling_workspaces: Findings<DanglingWorkspace>,
     pub dangling_parents: Findings<DanglingParent>,
     pub misaddressed_commits: Findings<MisaddressedCommit>,
     pub missing_nodes: Findings<String>,
@@ -122,6 +136,7 @@ impl VerifyReport {
     /// Whether the pass found nothing wrong.
     pub fn is_healthy(&self) -> bool {
         self.dangling_branches.is_empty()
+            && self.dangling_workspaces.is_empty()
             && self.dangling_parents.is_empty()
             && self.misaddressed_commits.is_empty()
             && self.missing_nodes.is_empty()
@@ -134,6 +149,7 @@ impl VerifyReport {
     /// Findings across every class.
     pub fn total_findings(&self) -> usize {
         self.dangling_branches.count
+            + self.dangling_workspaces.count
             + self.dangling_parents.count
             + self.misaddressed_commits.count
             + self.missing_nodes.count
@@ -144,7 +160,8 @@ impl VerifyReport {
     }
 }
 
-/// Check that everything the repository's commits reference is present and the right size.
+/// Check that everything the repository's commits and workspaces reference is present and the
+/// right size.
 ///
 /// Reads only. Cost scales with the repository's distinct object count, which is also held in
 /// memory: no blob contents are read, and each distinct content hash costs one version-store
@@ -153,6 +170,7 @@ pub async fn verify_repo(repo: &LocalRepository) -> Result<VerifyReport, OxenErr
     let mut report = VerifyReport::default();
 
     check_branch_heads(repo, &mut report).await?;
+    check_workspace_pins(repo, &mut report).await?;
     let commits = check_commits(repo, &mut report).await?;
     let versions = check_tree_nodes(repo, &commits, &mut report).await?;
     check_versions(repo, versions, &mut report).await?;
@@ -185,6 +203,57 @@ async fn check_branch_heads(
         .await??;
 
     report.dangling_branches = dangling;
+    Ok(())
+}
+
+/// Every workspace's pinned commit resolves.
+///
+/// A workspace pins the commit it was created against, independently of where any branch points.
+/// The commit walk covers branch ancestry only.
+async fn check_workspace_pins(
+    repo: &LocalRepository,
+    report: &mut VerifyReport,
+) -> Result<(), OxenError> {
+    type WorkspaceFindings = (usize, Findings<DanglingWorkspace>);
+
+    // Sync core: listing workspace dirs, reading each config, and resolving each pin is file and
+    // DB IO, one blocking unit.
+    let walk_repo = repo.clone();
+    let (checked, dangling) =
+        tokio::task::spawn_blocking(move || -> Result<WorkspaceFindings, OxenError> {
+            let mut checked = 0;
+            let mut dangling = Findings::default();
+
+            for dir in workspaces::list_dirs(&walk_repo)? {
+                // A directory holding no config is not a workspace.
+                let Some(config) = workspaces::read_config(&dir)? else {
+                    continue;
+                };
+                checked += 1;
+
+                if commits::get_by_id(&walk_repo, &config.workspace_commit_id)?.is_some() {
+                    continue;
+                }
+
+                let workspace = config.workspace_id.unwrap_or_else(|| {
+                    dir.file_name().map_or_else(
+                        || dir.display().to_string(),
+                        |name| name.to_string_lossy().into_owned(),
+                    )
+                });
+                dangling.record(DanglingWorkspace {
+                    workspace,
+                    name: config.workspace_name,
+                    commit_id: config.workspace_commit_id,
+                });
+            }
+
+            Ok((checked, dangling))
+        })
+        .await??;
+
+    report.workspaces_checked = checked;
+    report.dangling_workspaces = dangling;
     Ok(())
 }
 
@@ -407,6 +476,7 @@ async fn check_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Workspace;
     use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
     use crate::test;
     use crate::util;
@@ -947,6 +1017,127 @@ mod tests {
                 report.dangling_branches.count, 0,
                 "the branch head itself still resolves"
             );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_a_workspace_whose_pin_resolves_is_counted_and_not_a_finding()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add a")?;
+
+            workspaces::create(&repo, &commit, "ws-sound", true)?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(report.workspaces_checked, 1);
+            assert!(report.dangling_workspaces.is_empty());
+            assert!(report.is_healthy(), "a resolvable pin is not a finding");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Nothing but the pin references the commit. The total-findings assertion holds the line
+    /// that no other class covers it.
+    #[tokio::test]
+    async fn test_a_workspace_pinned_to_a_missing_commit_is_reported() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add a")?;
+
+            let workspace = workspaces::create_with_name(
+                &repo,
+                &commit,
+                "ws-stranded",
+                Some("history_workspace".to_string()),
+                true,
+            )
+            .await?;
+            let absent = "deadbeefdeadbeefdeadbeefdeadbeef";
+            workspaces::update_commit(&workspace, absent)?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(report.workspaces_checked, 1);
+            assert_eq!(report.dangling_workspaces.count, 1, "{report:?}");
+            let dangling = &report.dangling_workspaces.sample[0];
+            assert_eq!(dangling.workspace, "ws-stranded");
+            assert_eq!(dangling.name.as_deref(), Some("history_workspace"));
+            assert_eq!(dangling.commit_id, absent);
+            assert!(!report.is_healthy());
+
+            assert_eq!(
+                report.total_findings(),
+                1,
+                "the commit walk reaches nothing that names the pinned commit: {report:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_a_directory_holding_no_config_is_not_counted_as_a_workspace()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "Add a")?;
+
+            util::fs::create_dir_all(Workspace::workspaces_dir(&repo).join("leftover"))?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(report.workspaces_checked, 0);
+            assert!(report.dangling_workspaces.is_empty());
+            assert!(report.is_healthy());
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A config written before the id was recorded still identifies its workspace, by the
+    /// directory it lives in.
+    #[tokio::test]
+    async fn test_a_workspace_config_without_an_id_is_named_by_its_directory()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = repo.path.join("a.txt");
+            util::fs::write_to_path(&path, "alpha")?;
+            repositories::add(&repo, &path).await?;
+            let commit = repositories::commit(&repo, "Add a")?;
+
+            let workspace = workspaces::create(&repo, &commit, "ws-idless", true)?;
+            let dir = workspace.dir();
+            let config_path = Workspace::config_path_from_dir(&dir);
+            util::fs::write_to_path(
+                &config_path,
+                "workspace_commit_id = \"deadbeefdeadbeefdeadbeefdeadbeef\"\nis_editable = true\n",
+            )?;
+
+            let report = verify_repo(&repo).await?;
+
+            assert_eq!(report.dangling_workspaces.count, 1, "{report:?}");
+            let dangling = &report.dangling_workspaces.sample[0];
+            let dir_name = dir
+                .file_name()
+                .expect("the workspace directory has a name")
+                .to_string_lossy();
+            assert_eq!(dangling.workspace, dir_name);
+            assert_eq!(dangling.name, None);
 
             Ok(())
         })
