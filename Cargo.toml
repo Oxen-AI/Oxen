@@ -106,6 +106,12 @@ mockito = "1.1.0"
 mp4 = "0.14.0"
 num_cpus = "1.16.0"
 opentelemetry = "0.32"
+# Bridges `tracing` events to OTLP log records. Its minor tracks the `opentelemetry` family's, so
+# bump the two together. It reads the trace and span id off whatever OpenTelemetry context is
+# current rather than off the `tracing` span, which only lines up because `tracing-opentelemetry`
+# activates a span's context on entry; a build that turns that off exports log records with no
+# trace id.
+opentelemetry-appender-tracing = "0.32"
 # The OTLP/HTTP encoding is chosen by this feature list, not at runtime. Binary protobuf comes
 # from the default "http-proto"; adding "http-json" back would make JSON the exporter's default
 # encoding, which is why the builder names its encoding instead of inheriting it.
@@ -113,14 +119,7 @@ opentelemetry = "0.32"
 # "tls-roots" supplies the platform trust store that `ClientTlsConfig::with_native_roots()` reads,
 # and "tls-ring" supplies the crypto provider it runs on. Without a provider feature the gRPC
 # exporter refuses to build for an `https://` endpoint, which disables export.
-opentelemetry-otlp = { version = "0.32", features = [
-    "grpc-tonic",
-    "gzip-http",
-    "gzip-tonic",
-    "tls-ring",
-    "tls-roots",
-    "trace",
-] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "gzip-http", "gzip-tonic", "logs", "tls-ring", "tls-roots", "trace"] }
 opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 os_path = "0.8.0"
 page_size = "0.6.0"

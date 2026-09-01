@@ -6,6 +6,7 @@ Remote repositories have the same internal structure as local ones, with the cav
 **Notable configuration sections**:
 - [Prometheus Metrics](#prometheus-metrics)
 - [OpenTelemetry Tracing](#opentelemetry-tracing)
+- [OTLP Log Export](#otlp-log-export)
 - [FmtSpan Events](#fmtspan-events)
 - [Stacking Tracing Layers | Writing Spans to Logs & OTel](#stacking-tracing-layers)
 
@@ -244,7 +245,8 @@ OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.vendor.example:443 oxen-server start
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | The traces signal endpoint, taking precedence over the collector endpoint above. It already names the signal, so it is posted to exactly as configured under HTTP and needs `/v1/traces` in it. | *(none)* |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Transport: `grpc`, or `http` / `http/protobuf` / `http/json` for HTTP. The payload is binary protobuf whichever of the three spellings is used. | `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | The same setting for span exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_PROTOCOL` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_PROTOCOL` resolves to)* |
-| `OXEN_OTEL_FILTER` | Which spans and events are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
+| `OXEN_OTEL_FILTER` | Which spans, events, and log records are exported. Same syntax as `RUST_LOG`, and independent of it. | `info` |
+| `OTEL_LOGS_EXPORTER` | `otlp` to also export events as OTLP log records; `none` or unset exports none. See [OTLP log export](#otlp-log-export). | *(none)* |
 
 A variable set to a blank value counts as unset.
 
@@ -262,8 +264,8 @@ These standard `OTEL_*` variables are read by the SDK itself:
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_SERVICE_NAME` | `service.name` on every exported span. | `oxen-server` |
-| `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` resource attributes. This is where `deployment.environment` is set — nothing else supplies it. | *(none)* |
+| `OTEL_SERVICE_NAME` | `service.name` on everything exported, spans and log records alike. | `oxen-server` |
+| `OTEL_RESOURCE_ATTRIBUTES` | Comma-separated `key=value` resource attributes. This is where `deployment.environment.name` is set — nothing else supplies it. | *(none)* |
 | `OTEL_TRACES_SAMPLER` | `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`. | `parentbased_always_on` |
 | `OTEL_TRACES_SAMPLER_ARG` | Sampling probability, `0.0`–`1.0`, for the ratio samplers. | `1.0` |
 | `OTEL_BSP_MAX_QUEUE_SIZE`, `OTEL_BSP_SCHEDULE_DELAY`, `OTEL_BSP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BSP_EXPORT_TIMEOUT` | Batch-processor tuning: queue depth, how often a batch drains, batch size, and how long the processor waits on one export. | `4096`, `2000` ms, `512`, `30000` ms |
@@ -274,9 +276,10 @@ These standard `OTEL_*` variables are read by the SDK itself:
 
 Every span carries `service.name`, `service.version`, and — when a caller sent
 an `x-oxen-request-id` header, or the server minted one — `oxen.request_id`.
-`deployment.environment` is there too once `OTEL_RESOURCE_ATTRIBUTES` sets it.
-`tracing-actix-web` records a second field named `request_id`; that one is its
-own per-request uuid, private to this process. Correlate on `oxen.request_id`.
+`deployment.environment.name` is there too once `OTEL_RESOURCE_ATTRIBUTES` sets
+it. `tracing-actix-web` records a second field named `request_id`; that one is
+its own per-request uuid, private to this process. Correlate on
+`oxen.request_id`.
 
 The default sampler is parent-based, so a caller that has already made a
 sampling decision and sent it in `traceparent` is honored. To sample a share of
@@ -289,6 +292,46 @@ OTEL_TRACES_SAMPLER=parentbased_traceidratio OTEL_TRACES_SAMPLER_ARG=0.1
 When the `otel` feature is not compiled in, no OpenTelemetry dependencies are
 included and the env vars are ignored (the server logs an error at startup if
 an endpoint is configured, rather than silently dropping it).
+
+### OTLP log export
+
+Set `OTEL_LOGS_EXPORTER=otlp` and the server also exports its `tracing` events
+as OTLP log records, over the endpoint and transport span export already uses.
+Unset, or `none`, exports no log records at all, so a build with the `otel`
+feature behaves exactly as it did before this was configured.
+
+Each record carries the trace and span id of the span the event was recorded
+in, which is what lets a backend show a log line against the request that
+produced it.
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+OTEL_LOGS_EXPORTER=otlp \
+oxen-server start
+```
+
+Stdout is untouched by any of this. `RUST_LOG` alone decides what the server
+prints, so a host that collects stdout keeps collecting exactly what it did.
+
+| Variable | Description | Default |
+|---|---|---|
+| `OTEL_LOGS_EXPORTER` | `otlp` to export log records, `none` or unset for no log export. Comma-separated, and `otlp` is the only exporter compiled in. | *(none)* |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | The logs signal endpoint, taking precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`. It already names the signal, so it is posted to exactly as configured under HTTP and needs `/v1/logs` in it. | *(none)* |
+| `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` | The transport for log exports alone, and takes precedence over `OTEL_EXPORTER_OTLP_PROTOCOL` where both are set. | *(whatever `OTEL_EXPORTER_OTLP_PROTOCOL` resolves to)* |
+| `OTEL_EXPORTER_OTLP_LOGS_COMPRESSION`, `OTEL_EXPORTER_OTLP_LOGS_TIMEOUT` | The compression and per-request timeout for log exports alone, each taking precedence over its collector-wide counterpart. | *(whatever the collector-wide variable resolves to)* |
+| `OTEL_BLRP_MAX_QUEUE_SIZE`, `OTEL_BLRP_SCHEDULE_DELAY`, `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE`, `OTEL_BLRP_EXPORT_TIMEOUT` | Batch-processor tuning for log records, the counterpart to the `OTEL_BSP_*` variables above. | `4096`, `2000` ms, `512`, `30000` ms |
+
+`OXEN_OTEL_FILTER` selects log records as well as spans, so one variable decides
+what leaves the process over OTLP and the two signals cannot drift to
+disagreeing levels. Log records are the one exception: the `opentelemetry`,
+`opentelemetry_sdk`, and `opentelemetry_otlp` targets are always excluded,
+whatever the filter says. An export failure logs an error, and exporting that
+error would hand the exporter a fresh record for every one it fails to deliver.
+
+Events inside a span are still recorded as span events on the exported span, so
+turning log export on reports each one twice: once in the trace and once in the
+logs. That is the cost of having log lines searchable on their own rather than
+only reachable by opening the trace they belong to.
 
 ### Inbound trace context
 

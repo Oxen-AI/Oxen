@@ -91,9 +91,10 @@ RUN cargo chef cook --release --features liboxen/ffmpeg,oxen-server/otel \
     -p oxen-cli -p oxen-server --recipe-path recipe.json
 
 COPY . .
-# `oxen-server/otel` compiles the OTLP span exporter and inbound W3C trace-context extraction into
-# the binary; both stay dormant until an OTLP endpoint is configured at runtime. Named explicitly
-# rather than via the `production` feature, which additionally turns on `perf-logging`.
+# `oxen-server/otel` compiles the OTLP span and log-record exporters and inbound W3C trace-context
+# extraction into the binary; all stay dormant until an OTLP endpoint is configured at runtime, and
+# log export additionally waits on OTEL_LOGS_EXPORTER. Named explicitly rather than via the
+# `production` feature, which additionally turns on `perf-logging`.
 RUN cargo build --workspace --exclude oxen-py --release --features liboxen/ffmpeg,oxen-server/otel
 
 # The CLI ships without a symbol table. Only oxen-server reports panics.

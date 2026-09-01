@@ -38,10 +38,12 @@ pub struct TracingGuard {
     _file_guard: Option<WorkerGuard>,
     #[cfg(feature = "otel")]
     _tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    #[cfg(feature = "otel")]
+    _logger_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
 }
 
 impl TracingGuard {
-    /// Export whatever spans are still queued and stop the OTLP pipeline.
+    /// Export whatever spans and log records are still queued and stop the OTLP pipelines.
     ///
     /// An async program should await this before its last return to the runtime, and is the reason
     /// this method exists: the exporter's transport is a task on that runtime, so the flush only
@@ -53,30 +55,43 @@ impl TracingGuard {
     /// Idempotent, and a no-op without an OTLP endpoint configured.
     pub async fn shutdown(&self) {
         #[cfg(feature = "otel")]
-        if let Some(provider) = self._tracer_provider.clone() {
-            // The provider's shutdown blocks until the batch processor has drained, so it goes to
-            // the blocking pool; awaiting the handle leaves the runtime free to carry the spans.
-            match tokio::task::spawn_blocking(move || shutdown_provider(&provider)).await {
-                Ok(()) => {}
-                Err(e) => eprintln!("warning: OTel tracer provider shutdown task failed: {e}"),
+        {
+            let tracer_provider = self._tracer_provider.clone();
+            let logger_provider = self._logger_provider.clone();
+            if tracer_provider.is_none() && logger_provider.is_none() {
+                return;
+            }
+            // A provider's shutdown blocks until its batch processor has drained, so it goes to
+            // the blocking pool; awaiting the handle leaves the runtime free to carry the batches.
+            let flush = tokio::task::spawn_blocking(move || {
+                if let Some(provider) = tracer_provider {
+                    report_shutdown("tracer", provider.shutdown());
+                }
+                if let Some(provider) = logger_provider {
+                    report_shutdown("logger", provider.shutdown());
+                }
+            });
+            if let Err(e) = flush.await {
+                eprintln!("warning: OTel provider shutdown task failed: {e}");
             }
         }
     }
 }
 
-/// Shut down `provider`, reporting anything but success and an already-completed shutdown.
+/// Report the result of shutting down the `what` provider, ignoring an already-completed shutdown.
 ///
-/// The global subscriber holds an Arc clone of the tracer provider (via OpenTelemetryLayer →
-/// SdkTracer → SdkTracerProvider), so dropping the provider alone never brings the Arc refcount to
-/// zero — `TracerProviderInner::drop()` never fires, and the `BatchSpanProcessor`'s pending spans
-/// are never flushed. Shutting it down explicitly is what exports them.
+/// The global subscriber holds an Arc clone of each provider (the tracer provider via
+/// OpenTelemetryLayer → SdkTracer → SdkTracerProvider, the logger provider via
+/// OpenTelemetryTracingBridge → SdkLogger → SdkLoggerProvider), so dropping a provider alone never
+/// brings the Arc refcount to zero — its inner `drop()` never fires, and the batch processor's
+/// pending records are never flushed. Shutting it down explicitly is what exports them.
 #[cfg(feature = "otel")]
-fn shutdown_provider(provider: &opentelemetry_sdk::trace::SdkTracerProvider) {
-    match provider.shutdown() {
+fn report_shutdown(what: &str, result: opentelemetry_sdk::error::OTelSdkResult) {
+    match result {
         // Already done by an earlier call, the atexit handler, or Drop. All three routes are
         // expected, and the SDK guards against double-shutdown with an atomic flag.
         Ok(()) | Err(opentelemetry_sdk::error::OTelSdkError::AlreadyShutdown) => {}
-        Err(e) => eprintln!("warning: OTel tracer provider shutdown failed: {e}"),
+        Err(e) => eprintln!("warning: OTel {what} provider shutdown failed: {e}"),
     }
 }
 
@@ -85,34 +100,56 @@ impl Drop for TracingGuard {
         // The last-resort flush, for a synchronous program and for an async one that returned
         // without awaiting `shutdown`. See that method for why it is not enough on its own.
         #[cfg(feature = "otel")]
-        if let Some(ref provider) = self._tracer_provider {
-            shutdown_provider(provider);
+        {
+            if let Some(ref provider) = self._tracer_provider {
+                report_shutdown("tracer", provider.shutdown());
+            }
+            if let Some(ref provider) = self._logger_provider {
+                report_shutdown("logger", provider.shutdown());
+            }
         }
     }
 }
 
-/// Ensures the OTel tracer provider is shut down (and pending spans flushed)
-/// when the process exits, even if [`TracingGuard`] is stored in a static
-/// whose `Drop` impl will never run.
+/// Ensures the OTel providers are shut down (and pending spans and log
+/// records flushed) when the process exits, even if [`TracingGuard`] is stored
+/// in a static whose `Drop` impl will never run.
 ///
-/// A clone of the [`SdkTracerProvider`] is stored in a process-global
-/// [`OnceLock`] and a C `atexit` callback is registered to call `shutdown()`
-/// on it. `shutdown()` is idempotent (guarded by an atomic flag), so it is
-/// safe for both [`TracingGuard::drop`] and the `atexit` handler to call it.
+/// A clone of each provider is stored in a process-global [`OnceLock`] and a C
+/// `atexit` callback is registered to call `shutdown()` on it. `shutdown()` is
+/// idempotent (guarded by an atomic flag), so it is safe for both
+/// [`TracingGuard::drop`] and the `atexit` handler to call it.
 #[cfg(feature = "otel")]
 mod atexit_flush {
-    use std::sync::OnceLock;
+    use std::sync::{Once, OnceLock};
 
-    static PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLock::new();
+    static TRACER_PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLock::new();
+    static LOGGER_PROVIDER: OnceLock<opentelemetry_sdk::logs::SdkLoggerProvider> = OnceLock::new();
+    static HANDLER: Once = Once::new();
 
     extern "C" fn on_exit() {
-        if let Some(provider) = PROVIDER.get() {
+        if let Some(provider) = TRACER_PROVIDER.get() {
+            let _ = provider.shutdown();
+        }
+        if let Some(provider) = LOGGER_PROVIDER.get() {
             let _ = provider.shutdown();
         }
     }
 
-    /// Store a clone of the provider and register the `atexit` callback.
-    /// Only the first call has any effect; subsequent calls are no-ops.
+    /// Flush this tracer provider from the `atexit` handler.
+    pub(super) fn register_tracer(provider: opentelemetry_sdk::trace::SdkTracerProvider) {
+        let _ = TRACER_PROVIDER.set(provider);
+        register();
+    }
+
+    /// Flush this logger provider from the `atexit` handler.
+    pub(super) fn register_logger(provider: opentelemetry_sdk::logs::SdkLoggerProvider) {
+        let _ = LOGGER_PROVIDER.set(provider);
+        register();
+    }
+
+    /// Register the `atexit` callback. Only the first call has any effect;
+    /// subsequent calls are no-ops, so the two providers share one handler.
     ///
     /// # Safety
     ///
@@ -123,24 +160,22 @@ mod atexit_flush {
     ///   every platform this project targets (Linux, macOS, Windows).
     /// - The registered callback (`on_exit`) is an `extern "C" fn` with no
     ///   captures, satisfying `atexit`'s function-pointer requirement.
-    /// - `on_exit` only accesses `PROVIDER`, a `OnceLock` that is `Sync` and
-    ///   fully initialized before the callback can ever fire.
-    /// - `SdkTracerProvider::shutdown()` is synchronous, blocking, and
+    /// - `on_exit` only accesses `TRACER_PROVIDER` and `LOGGER_PROVIDER`, both
+    ///   `OnceLock`s that are `Sync` and fully initialized before the callback
+    ///   can ever fire.
+    /// - Each provider's `shutdown()` is synchronous, blocking, and
     ///   idempotent (guarded by an atomic flag), so it is safe to call from
     ///   the single-threaded `atexit` context even if [`TracingGuard::drop`]
     ///   already called it.
-    pub(super) fn register(provider: opentelemetry_sdk::trace::SdkTracerProvider) -> bool {
-        if PROVIDER.set(provider).is_err() {
-            return false;
-        }
-        unsafe extern "C" {
-            safe fn atexit(f: extern "C" fn()) -> core::ffi::c_int;
-        }
-        let registered = atexit(on_exit) == 0;
-        if !registered {
-            eprintln!("warning: failed to register OTel atexit flush handler");
-        }
-        registered
+    fn register() {
+        HANDLER.call_once(|| {
+            unsafe extern "C" {
+                safe fn atexit(f: extern "C" fn()) -> core::ffi::c_int;
+            }
+            if atexit(on_exit) != 0 {
+                eprintln!("warning: failed to register OTel atexit flush handler");
+            }
+        });
     }
 }
 
@@ -168,13 +203,21 @@ mod atexit_flush {
 /// `"http/protobuf"`, or `"http/json"`, where the last three all mean HTTP. Unset, it defaults to
 /// HTTP. Spans are encoded as binary protobuf under either transport.
 ///
+/// **OTLP log export** (opt-in via `OTEL_LOGS_EXPORTER=otlp`, requires the `otel` feature): also
+/// export events as OTLP log records, over the endpoint and transport span export already uses.
+/// `none` or unset leaves it off, and stdout logging is unaffected either way. Each record carries
+/// the trace and span id of the span the event was recorded in, which is what correlates a log
+/// line with its trace.
+///
 /// **Filtering** is per-layer, not global. `RUST_LOG` (falling back to `default`) gates the log
-/// destinations — stderr, the JSON file, and the caller-supplied layer. Span export is gated
+/// destinations — stderr, the JSON file, and the caller-supplied layer. OTLP export is gated
 /// separately by `OXEN_OTEL_FILTER`, defaulting to `info`, the level `#[tracing::instrument]` and
 /// the HTTP root span are recorded at. Traces therefore export at the stock `RUST_LOG` level, and
 /// raising log verbosity for debugging does not change what is exported. Either variable set to a
 /// value the filter parser cannot use falls back to the level that applies when it is unset, and
-/// names the rejected directives on stderr.
+/// names the rejected directives on stderr. `OXEN_OTEL_FILTER` gates spans and OTLP log records
+/// alike, except that log records never carry the exporter's own crates; see
+/// [`OTEL_LOG_EXCLUDED_TARGETS`].
 ///
 /// Returns a [TracingGuard]. The caller **must** hold the guard in a named binding for the
 /// lifetime of the application — dropping it flushes the non-blocking writer and stops span
@@ -251,25 +294,50 @@ pub fn init_tracing_with_layer(
     // concrete subscriber type (`S`) changes with each `.with()` call and
     // `OpenTelemetryLayer<S, T>` must match the exact inner subscriber.
     #[cfg(feature = "otel")]
-    let (m_otel_layer, m_tracer_provider, m_endpoint_p) = match otel_endpoint() {
-        Some((var, endpoint)) => {
-            let protocol = otel_protocol()?;
+    let (m_otel_layer, m_tracer_provider, m_endpoint_p) =
+        match otel_endpoint("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") {
+            Some((var, endpoint)) => {
+                let protocol = otel_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")?;
 
-            match build_otel_layer(app_name, &protocol) {
-                (Some(layer), Some(provider)) => {
-                    atexit_flush::register(provider.clone());
-                    (
-                        Some(layer),
-                        Some(provider),
-                        Some(format!("{protocol} (protobuf) -> {var}={endpoint}")),
-                    )
+                match build_otel_layer(app_name, &protocol) {
+                    (Some(layer), Some(provider)) => {
+                        atexit_flush::register_tracer(provider.clone());
+                        (
+                            Some(layer),
+                            Some(provider),
+                            Some(format!("{protocol} (protobuf) -> {var}={endpoint}")),
+                        )
+                    }
+                    _ => (None, None, None),
                 }
-                _ => (None, None, None),
             }
-        }
 
-        None => (None, None, None),
-    };
+            None => (None, None, None),
+        };
+
+    // The OTLP log pipeline, a second exporter over the same endpoint and transport. Independent
+    // of the span pipeline: either can be configured, fail to build, or be left off on its own.
+    #[cfg(feature = "otel")]
+    let (m_log_layer, m_logger_provider, m_log_endpoint_p) =
+        match otel_endpoint("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").filter(|_| otel_logs_enabled()) {
+            Some((var, endpoint)) => {
+                let protocol = otel_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL")?;
+
+                match build_otel_log_layer(app_name, &protocol) {
+                    Some((layer, provider)) => {
+                        atexit_flush::register_logger(provider.clone());
+                        (
+                            Some(layer),
+                            Some(provider),
+                            Some(format!("{protocol} (protobuf) -> {var}={endpoint}")),
+                        )
+                    }
+                    None => (None, None, None),
+                }
+            }
+
+            None => (None, None, None),
+        };
 
     // .try_init() also installs the tracing-log bridge (forwarding log::* calls into tracing)
     // when the `tracing-log` feature is enabled.
@@ -279,11 +347,19 @@ pub fn init_tracing_with_layer(
         let otel_directives = otel_filter_directives();
         let otel_layer = m_otel_layer
             .map(|layer| layer.with_filter(env_filter(&otel_directives, OTEL_DEFAULT_FILTER)));
-        registry.with(otel_layer).try_init()?;
+        let log_directives = otel_log_filter_directives();
+        let log_layer = m_log_layer
+            .map(|layer| layer.with_filter(env_filter(&log_directives, OTEL_DEFAULT_FILTER)));
+        registry.with(otel_layer).with(log_layer).try_init()?;
 
         if let Some(protocol_and_endpoint) = m_endpoint_p {
             log::info!(
                 "OpenTelemetry tracing enabled (endpoint: {protocol_and_endpoint}, span filter: {otel_directives})"
+            );
+        }
+        if let Some(protocol_and_endpoint) = m_log_endpoint_p {
+            log::info!(
+                "OpenTelemetry log export enabled (endpoint: {protocol_and_endpoint}, record filter: {log_directives})"
             );
         }
     }
@@ -293,6 +369,7 @@ pub fn init_tracing_with_layer(
         registry.try_init()?;
 
         if non_empty_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").is_some()
+            || non_empty_env("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").is_some()
             || non_empty_env("OTEL_EXPORTER_OTLP_ENDPOINT").is_some()
         {
             log::error!(
@@ -312,6 +389,8 @@ pub fn init_tracing_with_layer(
         _file_guard: m_worker_guard,
         #[cfg(feature = "otel")]
         _tracer_provider: m_tracer_provider,
+        #[cfg(feature = "otel")]
+        _logger_provider: m_logger_provider,
     })
 }
 
@@ -336,6 +415,53 @@ fn otel_filter_directives() -> String {
     non_empty_env(OTEL_FILTER_ENV).unwrap_or_else(|| OTEL_DEFAULT_FILTER.to_string())
 }
 
+/// Env var turning OTLP log export on, per the OpenTelemetry SDK's own configuration: `otlp`
+/// exports, and `none` or unset does not.
+#[cfg(feature = "otel")]
+const OTEL_LOGS_EXPORTER_ENV: &str = "OTEL_LOGS_EXPORTER";
+
+/// Targets held out of OTLP log export unconditionally: the exporter's own crates. A failing
+/// export logs an error, and turning that error into a log record hands the exporter a fresh
+/// record for every one it fails to deliver.
+#[cfg(feature = "otel")]
+const OTEL_LOG_EXCLUDED_TARGETS: &str =
+    "opentelemetry=off,opentelemetry_sdk=off,opentelemetry_otlp=off";
+
+/// Whether `OTEL_LOGS_EXPORTER` asks for OTLP log records.
+#[cfg(feature = "otel")]
+fn otel_logs_enabled() -> bool {
+    logs_exporter_selects_otlp(non_empty_env(OTEL_LOGS_EXPORTER_ENV).as_deref())
+}
+
+/// Read a configured `OTEL_LOGS_EXPORTER` as a decision to export log records over OTLP. Off
+/// unless the value names the OTLP exporter, so a deployment that has not opted in exports nothing
+/// and `none` reads as the "no exporter" it means everywhere else in the OpenTelemetry ecosystem.
+///
+/// The variable takes a comma-separated list, and `otlp` is the only exporter this build carries,
+/// so any list naming it selects it.
+#[cfg(feature = "otel")]
+fn logs_exporter_selects_otlp(configured: Option<&str>) -> bool {
+    configured.is_some_and(|value| {
+        value
+            .split(',')
+            .any(|exporter| exporter.trim().eq_ignore_ascii_case("otlp"))
+    })
+}
+
+/// The filter directives OTLP log export uses: span export's, with the exporter's own crates
+/// silenced.
+///
+/// Reusing `OXEN_OTEL_FILTER` keeps one variable deciding what leaves the process over OTLP, so a
+/// deployment cannot end up exporting spans and log records at levels that disagree. `RUST_LOG`
+/// stays in charge of stdout either way.
+///
+/// [`OTEL_LOG_EXCLUDED_TARGETS`] goes last, and the filter parser lets the later directive for a
+/// target win, so the exclusion holds whatever `OXEN_OTEL_FILTER` says about those targets.
+#[cfg(feature = "otel")]
+fn otel_log_filter_directives() -> String {
+    format!("{},{OTEL_LOG_EXCLUDED_TARGETS}", otel_filter_directives())
+}
+
 /// Whether the environment already names a service, in which case the app's own name is not used.
 ///
 /// `service_name_var` is `OTEL_SERVICE_NAME`'s raw value, and `attributes_service_name` is the
@@ -352,20 +478,18 @@ fn env_names_a_service(
         .any(|name| !name.trim().is_empty())
 }
 
-/// The endpoint variable that enables export, and its value, reported for the startup line.
+/// The endpoint variable that enables export of `signal_var`'s signal, and its value, reported for
+/// the startup line. The signal's own variable wins over the collector-wide one, per OTLP.
 ///
 /// Read only to decide whether to build an exporter at all: without one the exporter defaults to
-/// `http://localhost:4318` and every process would push spans there. The exporter reads these same
-/// variables itself and applies the OTLP precedence and signal-path rules, so the value is not
-/// passed along.
+/// `http://localhost:4318` and every process would push telemetry there. The exporter reads these
+/// same variables itself and applies the OTLP precedence and signal-path rules, so the value is
+/// not passed along.
 #[cfg(feature = "otel")]
-fn otel_endpoint() -> Option<(&'static str, String)> {
-    [
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "OTEL_EXPORTER_OTLP_ENDPOINT",
-    ]
-    .into_iter()
-    .find_map(|var| non_empty_env(var).map(|value| (var, value)))
+fn otel_endpoint(signal_var: &'static str) -> Option<(&'static str, String)> {
+    [signal_var, "OTEL_EXPORTER_OTLP_ENDPOINT"]
+        .into_iter()
+        .find_map(|var| non_empty_env(var).map(|value| (var, value)))
 }
 
 /// The value of `name`, or `None` when it is unset or blank.
@@ -474,16 +598,13 @@ impl std::fmt::Display for Protocol {
     }
 }
 
-/// The transport OTLP export uses, from the traces-specific protocol variable or the general one.
+/// The transport OTLP export uses, from `signal_var`'s protocol variable or the general one.
 #[cfg(feature = "otel")]
-fn otel_protocol() -> Result<Protocol, TelemetryError> {
-    let (var, configured) = [
-        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL",
-        "OTEL_EXPORTER_OTLP_PROTOCOL",
-    ]
-    .into_iter()
-    .find_map(|var| non_empty_env(var).map(|value| (var, Some(value))))
-    .unwrap_or(("OTEL_EXPORTER_OTLP_PROTOCOL", None));
+fn otel_protocol(signal_var: &'static str) -> Result<Protocol, TelemetryError> {
+    let (var, configured) = [signal_var, "OTEL_EXPORTER_OTLP_PROTOCOL"]
+        .into_iter()
+        .find_map(|var| non_empty_env(var).map(|value| (var, Some(value))))
+        .unwrap_or(("OTEL_EXPORTER_OTLP_PROTOCOL", None));
     parse_otel_protocol(var, configured.as_deref())
 }
 
@@ -511,6 +632,35 @@ fn parse_otel_protocol(
     }
 }
 
+/// The resource identifying this process on every span and log record it exports.
+///
+/// `Resource::builder` already applies the standard detectors, so `OTEL_SERVICE_NAME` and
+/// `OTEL_RESOURCE_ATTRIBUTES` (where `deployment.environment.name` is set) are picked up here. The
+/// attributes added on top take precedence over the detectors, so `service.name` is only supplied
+/// as the fallback for a deployment that names no service of its own.
+#[cfg(feature = "otel")]
+fn otel_resource(app_name: &str) -> opentelemetry_sdk::Resource {
+    use opentelemetry::{Key, KeyValue};
+    use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
+
+    let attributes_service_name = EnvResourceDetector::new()
+        .detect()
+        .get(&Key::from_static_str("service.name"))
+        .map(|name| name.to_string());
+    let mut builder = Resource::builder().with_attributes([KeyValue::new(
+        "service.version",
+        crate::constants::OXEN_VERSION,
+    )]);
+    if !env_names_a_service(
+        std::env::var("OTEL_SERVICE_NAME").ok().as_deref(),
+        attributes_service_name.as_deref(),
+    ) {
+        builder = builder.with_service_name(app_name.to_string());
+    }
+    builder.build()
+}
+
 /// Build an OpenTelemetry tracing layer that exports spans via OTLP.
 ///
 /// The exporter reads the endpoint from the environment, appending the OTLP signal path to a
@@ -530,13 +680,10 @@ where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     use opentelemetry::trace::TracerProvider;
-    use opentelemetry::{Key, KeyValue};
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_otlp::WithTonicConfig;
     use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
-    use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::TraceContextPropagator;
-    use opentelemetry_sdk::resource::{EnvResourceDetector, ResourceDetector};
     use opentelemetry_sdk::trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider};
 
     let exporter = match protocol {
@@ -574,25 +721,7 @@ where
         }
     };
 
-    // `Resource::builder` already applies the standard detectors, so `OTEL_SERVICE_NAME` and
-    // `OTEL_RESOURCE_ATTRIBUTES` (where `deployment.environment` is set) land on every span. The
-    // attributes added here take precedence over the detectors, so `service.name` is only supplied
-    // as the fallback for a deployment that names no service of its own.
-    let attributes_service_name = EnvResourceDetector::new()
-        .detect()
-        .get(&Key::from_static_str("service.name"))
-        .map(|name| name.to_string());
-    let mut builder = Resource::builder().with_attributes([KeyValue::new(
-        "service.version",
-        crate::constants::OXEN_VERSION,
-    )]);
-    if !env_names_a_service(
-        std::env::var("OTEL_SERVICE_NAME").ok().as_deref(),
-        attributes_service_name.as_deref(),
-    ) {
-        builder = builder.with_service_name(app_name.to_string());
-    }
-    let resource = builder.build();
+    let resource = otel_resource(app_name);
 
     // A collector that is slow, unreachable, or black-holing must cost the process bounded memory
     // and never back-pressure a request thread: the queue is fixed, and the processor drops spans
@@ -631,6 +760,77 @@ where
     let layer = tracing_opentelemetry::layer().with_tracer(tracer);
 
     (Some(layer), Some(provider))
+}
+
+/// Build a tracing layer that exports events as OTLP log records.
+///
+/// The exporter reads the endpoint from the environment, appending `/v1/logs` to a collector
+/// endpoint and dialing a logs endpoint as configured.
+///
+/// Each record carries the trace and span id of the tracing span the event was recorded in, but
+/// only while the registry also holds a `tracing-opentelemetry` layer: that layer is what
+/// activates a span's OpenTelemetry context, and the SDK's logger stamps the record from whatever
+/// context is current.
+///
+/// Returns the layer and the provider, or `None` when the exporter cannot be built.
+#[cfg(feature = "otel")]
+fn build_otel_log_layer(
+    app_name: &str,
+    protocol: &Protocol,
+) -> Option<(
+    opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge<
+        opentelemetry_sdk::logs::SdkLoggerProvider,
+        opentelemetry_sdk::logs::SdkLogger,
+    >,
+    opentelemetry_sdk::logs::SdkLoggerProvider,
+)> {
+    use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_otlp::WithTonicConfig;
+    use opentelemetry_otlp::tonic_types::transport::ClientTlsConfig;
+    use opentelemetry_sdk::logs::{BatchConfigBuilder, BatchLogProcessor, SdkLoggerProvider};
+
+    let exporter = match protocol {
+        // Named rather than left to the exporter's default, for the reason given in
+        // `build_otel_layer`: an enabled "http-json" feature anywhere in the graph would otherwise
+        // switch the encoding without a compile error.
+        Protocol::Http => opentelemetry_otlp::LogExporter::builder()
+            .with_http()
+            .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
+            .build()
+            .inspect_err(|err| eprintln!("[ERROR] failed to build OTel HTTP log exporter: {err}"))
+            .ok()?,
+        Protocol::Grpc => opentelemetry_otlp::LogExporter::builder()
+            .with_tonic()
+            .with_tls_config(ClientTlsConfig::new().with_native_roots())
+            .build()
+            .inspect_err(|err| eprintln!("[ERROR] failed to build OTel gRPC log exporter: {err}"))
+            .ok()?,
+    };
+
+    // Bounded like the span queue and for the same reason: a collector that is slow or unreachable
+    // costs the process a fixed amount of memory, and the processor drops records once the queue
+    // is full rather than back-pressuring the thread that logged. Each field is only set when the
+    // operator left the matching `OTEL_BLRP_*` variable unset, so tuning through the standard
+    // variables still works.
+    let mut batch_config = BatchConfigBuilder::default();
+    if std::env::var_os("OTEL_BLRP_MAX_QUEUE_SIZE").is_none() {
+        batch_config = batch_config.with_max_queue_size(4096);
+    }
+    if std::env::var_os("OTEL_BLRP_SCHEDULE_DELAY").is_none() {
+        batch_config = batch_config.with_scheduled_delay(std::time::Duration::from_secs(2));
+    }
+    let processor = BatchLogProcessor::builder(exporter)
+        .with_batch_config(batch_config.build())
+        .build();
+
+    let provider = SdkLoggerProvider::builder()
+        .with_log_processor(processor)
+        .with_resource(otel_resource(app_name))
+        .build();
+
+    let layer = OpenTelemetryTracingBridge::new(&provider);
+    Some((layer, provider))
 }
 
 #[cfg(test)]
@@ -766,9 +966,11 @@ mod tests {
     #[cfg(feature = "otel")]
     mod otel_tests {
         use super::super::{
-            Protocol, TelemetryError, env_names_a_service, otel_filter_directives,
-            parse_otel_protocol,
+            OTEL_DEFAULT_FILTER, OTEL_LOG_EXCLUDED_TARGETS, Protocol, TelemetryError, env_filter,
+            env_names_a_service, logs_exporter_selects_otlp, otel_filter_directives,
+            otel_log_filter_directives, parse_otel_protocol,
         };
+        use opentelemetry::trace::{SpanId, TraceId};
 
         /// Nothing configured is HTTP, the transport `OTEL_EXPORTER_OTLP_PROTOCOL` carries by
         /// default across the OTLP ecosystem.
@@ -877,6 +1079,136 @@ mod tests {
             // OXEN_OTEL_FILTER would otherwise decide this one's outcome.
             if std::env::var_os("OXEN_OTEL_FILTER").is_none() {
                 assert_eq!(otel_filter_directives(), "info");
+            }
+        }
+
+        /// Only a value naming the OTLP exporter turns log export on. Anything else, `none`
+        /// included, leaves a deployment exporting no log records at all.
+        #[test]
+        fn only_otlp_selects_log_export() {
+            for selected in ["otlp", "OTLP", " otlp ", "none,otlp", "otlp,console"] {
+                assert!(
+                    logs_exporter_selects_otlp(Some(selected)),
+                    "{selected} should select OTLP log export"
+                );
+            }
+            for unselected in [None, Some(""), Some("none"), Some("console"), Some("otl")] {
+                assert!(
+                    !logs_exporter_selects_otlp(unselected),
+                    "{unselected:?} should leave log export off"
+                );
+            }
+        }
+
+        /// The log filter carries span export's directives, so one variable decides what leaves
+        /// the process over OTLP.
+        #[test]
+        fn the_log_filter_extends_the_span_filter() {
+            let directives = otel_log_filter_directives();
+            assert!(
+                directives.starts_with(&otel_filter_directives()),
+                "{directives} should begin with the span filter's directives"
+            );
+            assert!(
+                directives.ends_with(OTEL_LOG_EXCLUDED_TARGETS),
+                "{directives} should end with the excluded targets"
+            );
+        }
+
+        /// A log record picks up the trace and span id of the tracing span it was recorded in,
+        /// which is what lets a backend show a log line against its trace. `tracing-opentelemetry`
+        /// activates the span's OpenTelemetry context on entry and the SDK's logger reads it, so
+        /// nothing here wires the two together by hand.
+        ///
+        /// The exporter's own crates stay out of the export even when the directives ask for them,
+        /// since exporting an export failure is what makes a failing exporter generate work for
+        /// itself.
+        #[test]
+        fn log_records_carry_their_span_and_never_the_exporters_own_crates() {
+            use opentelemetry::trace::{TraceContextExt, TracerProvider};
+            use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+            use opentelemetry_sdk::logs::{SdkLoggerProvider, SimpleLogProcessor};
+            use opentelemetry_sdk::trace::SdkTracerProvider;
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+            use tracing_subscriber::Layer;
+            use tracing_subscriber::layer::SubscriberExt;
+
+            let exporter = CollectingLogExporter::default();
+            let logger_provider = SdkLoggerProvider::builder()
+                .with_log_processor(SimpleLogProcessor::new(exporter.clone()))
+                .build();
+            let tracer_provider = SdkTracerProvider::builder().build();
+
+            // A directive asking for the excluded targets, to prove the exclusion outranks it.
+            let directives = format!("info,opentelemetry_sdk=trace,{OTEL_LOG_EXCLUDED_TARGETS}");
+            let subscriber = tracing_subscriber::registry()
+                .with(tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("oxen")))
+                .with(
+                    OpenTelemetryTracingBridge::new(&logger_provider)
+                        .with_filter(env_filter(&directives, OTEL_DEFAULT_FILTER)),
+                );
+
+            let expected_trace_id = tracing::subscriber::with_default(subscriber, || {
+                let span = tracing::info_span!("request");
+                let _entered = span.enter();
+                tracing::info!("handled the request");
+                tracing::error!(target: "opentelemetry_sdk", "export failed");
+                span.context().span().span_context().trace_id()
+            });
+
+            assert_ne!(
+                expected_trace_id,
+                TraceId::INVALID,
+                "the tracing span should have a real trace id to correlate against"
+            );
+
+            let exported = exporter.exported();
+            assert_eq!(
+                exported.len(),
+                1,
+                "only the application's own event should be exported, got {exported:?}"
+            );
+            let (trace_id, span_id) = exported[0];
+            assert_eq!(trace_id, expected_trace_id);
+            assert_ne!(
+                span_id,
+                SpanId::INVALID,
+                "the record should name the span it was recorded in"
+            );
+        }
+
+        /// Collects the trace and span id of every record handed to it, standing in for a
+        /// collector.
+        #[derive(Debug, Default, Clone)]
+        struct CollectingLogExporter {
+            records: std::sync::Arc<std::sync::Mutex<Vec<(TraceId, SpanId)>>>,
+        }
+
+        impl CollectingLogExporter {
+            fn exported(&self) -> Vec<(TraceId, SpanId)> {
+                self.records
+                    .lock()
+                    .expect("the exporter's records should not be poisoned")
+                    .clone()
+            }
+        }
+
+        impl opentelemetry_sdk::logs::LogExporter for CollectingLogExporter {
+            async fn export(
+                &self,
+                batch: opentelemetry_sdk::logs::LogBatch<'_>,
+            ) -> opentelemetry_sdk::error::OTelSdkResult {
+                let mut records = self
+                    .records
+                    .lock()
+                    .expect("the exporter's records should not be poisoned");
+                for (record, _scope) in batch.iter() {
+                    let context = record
+                        .trace_context()
+                        .expect("an exported record should carry a trace context");
+                    records.push((context.trace_id, context.span_id));
+                }
+                Ok(())
             }
         }
     }

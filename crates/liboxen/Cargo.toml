@@ -37,6 +37,7 @@ metrics = ["dep:metrics"]
 otel = [
     "dep:opentelemetry",
     "dep:opentelemetry_sdk",
+    "dep:opentelemetry-appender-tracing",
     "dep:opentelemetry-otlp",
     "dep:tracing-opentelemetry",
 ]
@@ -99,6 +100,7 @@ minus = { workspace = true }
 mp4 = { workspace = true }
 num_cpus = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
+opentelemetry-appender-tracing = { workspace = true, optional = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }
 os_path = { workspace = true }
