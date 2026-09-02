@@ -6,7 +6,7 @@ use crate::constants::{
 };
 use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db;
-use crate::core::db::data_frames::df_db::with_df_db_manager;
+use crate::core::db::data_frames::df_db::{with_db_closed, with_df_db_manager};
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
@@ -510,27 +510,18 @@ pub async fn rename(
     let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
     let new_db_path_parent = new_db_path.parent().unwrap();
 
-    // Explicitly checkpoint and then close the cached connection before copying.
-    // CHECKPOINT forces DuckDB to flush its WAL into the main database file.
-    // Without this, the copy could include a WAL file that references the
-    // original catalog name, causing replay failures when the copy is opened.
-    with_df_db_manager(&og_db_path, |manager| {
-        manager.with_conn(|conn| {
-            if let Err(e) = conn.execute_batch("CHECKPOINT") {
-                log::warn!("rename: CHECKPOINT before copy failed for {og_db_path:?}: {e}");
-            }
-            Ok(())
-        })
+    // The source database is closed and held while its files are copied and removed, so nothing
+    // can write into a database that is about to be deleted. Closing checkpoints the WAL into the
+    // database file first, so the copy carries a whole database and no WAL file that would be
+    // replayed against the copy.
+    with_db_closed(&og_db_path, || -> Result<(), OxenError> {
+        if !new_db_path_parent.exists() {
+            util::fs::create_dir_all(new_db_path_parent)?;
+        }
+        util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
+        util::fs::remove_dir_all(og_db_path_parent)?;
+        Ok(())
     })?;
-    df_db::remove_df_db_from_cache(&og_db_path)?;
-
-    if !new_db_path_parent.exists() {
-        util::fs::create_dir_all(new_db_path_parent)?;
-    }
-
-    util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
-
-    util::fs::remove_dir_all(og_db_path_parent)?;
 
     // Use staged_db_manager
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;

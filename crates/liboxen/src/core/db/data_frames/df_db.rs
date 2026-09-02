@@ -1,5 +1,32 @@
 //! Abstraction over DuckDB database to write and read dataframes from disk.
 //!
+//! # One instance per database file
+//!
+//! Opening a DuckDB file this process already has open yields a second, independent database
+//! rather than joining the first: DuckDB's single-writer protection is a file lock, and a file lock
+//! only excludes other processes. Two instances diverge, and whichever folds its state into the
+//! file last is the one that survives, so the other's writes are gone while both callers were told
+//! they succeeded. That is true of any write, a lone `INSERT` included, so making a write atomic in
+//! SQL does not remove the need for the rule below.
+//!
+//! The connection cache is what enforces it. Every access to a database file goes through
+//! [`with_df_db_manager`], whose cache entry is this process's one connection to that file behind a
+//! mutex, so callers that share the entry share the instance and take turns on it. For that to
+//! hold, an entry must never leave the cache while a caller holds it: the cache closes idle
+//! connections under LRU pressure but skips entries in use, running over its nominal size by the
+//! number of operations in flight instead. Filesystem work on a database's files goes through
+//! [`with_db_closed`], which closes the connection and holds the entry so nobody reopens the file
+//! underneath the work.
+//!
+//! The mutex on the connection is therefore also the lock on the data frame. An operation that must
+//! be atomic against other operations on the same data frame (a check followed by a rebuild, a read
+//! followed by a write back) runs inside one `with_conn` closure. The closure is synchronous, so the
+//! lock cannot be held across an `.await`, and it is not reentrant.
+//!
+//! shortcut: in-process only, so this serializes access within one oxen-server process. If the
+//! server is ever run as more than one process per repository, this needs a lock the processes
+//! share, such as a lock file next to the database.
+//!
 
 use crate::constants::{
     DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL,
@@ -27,13 +54,13 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 use sql_query_builder as sql;
 
-const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
+/// Number of idle connections the cache keeps open. Entries in use do not count against it.
+pub(crate) const DF_DB_CACHE_SIZE: usize = 100;
 
 /// Total DuckDB threads per connection, including the caller: `external_threads`
 /// defaults to 1, so each connection runs `DUCKDB_THREADS - 1` workers.
@@ -53,20 +80,65 @@ const DUCKDB_MAX_MEMORY: &str = "512MiB";
 /// A cached DuckDB connection slot; `None` when no connection is currently open.
 type CachedConn = Arc<Mutex<Option<duckdb::Connection>>>;
 
-// Static cache of DuckDB instances with LRU eviction
+// Process-wide connection cache, one entry per database file. Unbounded at the `LruCache` level
+// because `evict_idle` enforces the size: the cache itself would evict whatever is least recently
+// used, including an entry a caller still holds.
 static DF_DB_INSTANCES: LazyLock<RwLock<LruCache<PathBuf, CachedConn>>> =
-    LazyLock::new(|| RwLock::new(LruCache::new(DF_DB_CACHE_SIZE)));
+    LazyLock::new(|| RwLock::new(LruCache::unbounded()));
 
-/// Removes a database instance from the cache.
-pub fn remove_df_db_from_cache(db_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let db_path = db_path.as_ref().to_path_buf();
-    let mut instances = DF_DB_INSTANCES.write();
-    let _ = instances.pop(&db_path);
-    Ok(())
+/// Close idle connections, least recently used first, until the cache is within
+/// `DF_DB_CACHE_SIZE`. An entry a caller holds is never removed: it is this process's one
+/// connection to that file, and removing it would let the next caller open a second one. The cache
+/// runs over its size by the number of operations in flight instead.
+///
+/// Runs under the cache's write lock, which is what makes the idle test sound: every clone of an
+/// entry is taken under the read or write lock, so a count of one (the cache's own) cannot grow
+/// before the pop.
+fn evict_idle(cache: &mut LruCache<PathBuf, CachedConn>) {
+    while cache.len() > DF_DB_CACHE_SIZE {
+        // `iter` runs from most to least recently used.
+        let victim = cache
+            .iter()
+            .rev()
+            .find(|(_, slot)| Arc::strong_count(slot) == 1)
+            .map(|(path, _)| path.clone());
+        let Some(victim) = victim else {
+            break;
+        };
+        // The last reference: dropping it closes the connection, which checkpoints its WAL.
+        cache.pop(&victim);
+    }
 }
 
-/// Removes a database instance and all its subdirectories from the cache.
-/// This is mostly useful in test cleanup to ensure all DB instances are removed.
+/// Run `work` with the database at `db_path` closed and held: any open connection is checkpointed
+/// and closed first, and no caller can open one until `work` returns. For filesystem operations on
+/// the database's files, such as copying or removing them. Opens nothing itself, so a `db_path`
+/// with no database on disk stays that way.
+///
+/// Not reentrant: `work` must not access `db_path` through this module.
+pub(crate) fn with_db_closed<T>(db_path: &Path, work: impl FnOnce() -> T) -> T {
+    let entry = {
+        let mut cache = DF_DB_INSTANCES.write();
+        let entry = cache
+            .get_or_insert(db_path.to_path_buf(), || Arc::new(Mutex::new(None)))
+            .clone();
+        evict_idle(&mut cache);
+        entry
+    };
+    let mut slot = entry.lock();
+    if let Some(conn) = slot.take() {
+        // Fold the WAL into the database file so the files on disk are the whole database.
+        // Dropping the connection checkpoints too, so a failure here only costs a warning.
+        if let Err(e) = conn.execute_batch("CHECKPOINT") {
+            log::warn!("with_db_closed: CHECKPOINT before close failed for {db_path:?}: {e}");
+        }
+    }
+    work()
+}
+
+/// Removes every cache entry under `db_path_prefix`, whether or not a caller holds it. For tearing
+/// down a directory tree that is being deleted (a workspace, a repository, a test's data), where an
+/// operation still in flight on it is the caller's race rather than the cache's.
 pub fn remove_df_db_from_cache_with_children(
     db_path_prefix: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
@@ -196,6 +268,8 @@ where
             // Wrap the connection in a Mutex and store it in the cache
             let db_lock = Arc::new(Mutex::new(Some(conn)));
             cache_w.put(db_path.clone(), db_lock.clone());
+            // The new entry is held by `db_lock`, so it is never the one closed here.
+            evict_idle(&mut cache_w);
             db_lock
         }
     };
@@ -1362,7 +1436,7 @@ mod tests {
                 Ok(())
             })?;
 
-            remove_df_db_from_cache(&db_file)?;
+            with_db_closed(&db_file, || {});
             Ok(())
         })
     }
@@ -1703,6 +1777,67 @@ mod tests {
         flush_all_df_db_connections();
     }
 
+    // An entry a caller holds survives LRU pressure; the same entry, once idle, does not. Both the
+    // hold and the pressure go through `with_db_closed`, so the test opens no database file.
+    #[test]
+    #[serial_test::serial(df_db_cache)]
+    fn test_an_entry_in_use_is_never_evicted() {
+        let held = PathBuf::from("/df-db-cache-test/held");
+        let flood = |round: usize| {
+            for i in 0..=DF_DB_CACHE_SIZE {
+                let filler = PathBuf::from(format!("/df-db-cache-test/flood-{round}-{i}"));
+                with_db_closed(&filler, || {});
+            }
+        };
+
+        with_db_closed(&held, || {
+            flood(0);
+            assert!(
+                DF_DB_INSTANCES.read().contains(&held),
+                "LRU pressure evicted an entry a caller was holding"
+            );
+        });
+
+        flood(1);
+        assert!(
+            !DF_DB_INSTANCES.read().contains(&held),
+            "an idle entry survived LRU pressure"
+        );
+    }
+
+    // `with_db_closed` closes the cached connection, and the next use reopens it and sees the
+    // same database. A path with no database on disk gets none.
+    #[test]
+    fn test_with_db_closed_closes_and_the_next_use_reopens() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let db_file = dir.join("closed.db");
+            with_df_db_manager(&db_file, |manager| {
+                manager.with_conn(|conn| {
+                    conn.execute_batch("CREATE TABLE t AS SELECT 1 AS x")?;
+                    Ok(())
+                })
+            })?;
+
+            with_db_closed(&db_file, || {});
+            // Evicted counts as closed too, so only an entry still present is inspected.
+            if let Some(entry) = DF_DB_INSTANCES.read().peek(&db_file) {
+                assert!(
+                    entry.lock().is_none(),
+                    "with_db_closed left the connection open"
+                );
+            }
+            let exists = with_df_db_manager(&db_file, |manager| {
+                manager.with_conn(|conn| Ok(table_exists(conn, "t")?))
+            })?;
+            assert!(exists, "the reopened connection does not see the table");
+
+            let missing = dir.join("missing.db");
+            with_db_closed(&missing, || {});
+            assert!(!missing.exists(), "with_db_closed created a database file");
+            Ok(())
+        })
+    }
+
     #[test]
     #[serial_test::serial(df_db_cache)]
     fn test_with_df_db_manager_recovers_after_corrupt_wal() -> Result<(), OxenError> {
@@ -1721,8 +1856,8 @@ mod tests {
                 conn.execute_batch("CHECKPOINT")?;
             }
 
-            // Evict from cache so the next access creates a fresh connection.
-            remove_df_db_from_cache(&db_file)?;
+            // Close any cached connection so the next access opens a fresh one.
+            with_db_closed(&db_file, || {});
 
             // Write a corrupt WAL to simulate a container kill.
             std::fs::write(&wal_file, b"corrupt WAL data").expect("failed to write corrupt WAL");
@@ -1738,8 +1873,8 @@ mod tests {
                 "table should exist after WAL recovery through with_df_db_manager"
             );
 
-            // Clean up cache for other tests.
-            remove_df_db_from_cache(&db_file)?;
+            // Close the connection before the directory goes away.
+            with_db_closed(&db_file, || {});
             Ok(())
         })
     }
@@ -1852,7 +1987,7 @@ mod tests {
                 "API serialization must not preserve JSON-string quoting on JSON[] elements"
             );
 
-            remove_df_db_from_cache(&db_file)?;
+            with_db_closed(&db_file, || {});
             Ok(())
         })
     }

@@ -9,34 +9,22 @@ use crate::{core, repositories};
 
 use crate::constants::{OXEN_ID_COL, OXEN_ROW_ID_COL, TABLE_NAME};
 
-use crate::core::data_frame_locks::with_data_frame_write;
 use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::model::LocalRepository;
-use crate::repositories::workspaces::data_frames::duckdb_path;
 
 use std::path::Path;
 
 /// Append `data` as a new row and return it as staged, `_oxen_id` included.
-///
-/// Serialized against the other writes on this data frame: overlapping writes can end up on
-/// separate DuckDB databases over the same file and discard one another's rows. See
-/// [`crate::core::data_frame_locks`].
 pub fn add(
     _repo: &LocalRepository,
     workspace: &Workspace,
     file_path: impl AsRef<Path>,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
-    let file_path = file_path.as_ref();
-    with_data_frame_write(&duckdb_path(workspace, file_path), || {
-        core::v_latest::workspaces::data_frames::rows::add(workspace, file_path, data)
-    })
+    core::v_latest::workspaces::data_frames::rows::add(workspace, file_path, data)
 }
 
 /// Overwrite the row `row_id` with `data` and return it as staged.
-///
-/// Serialized against the other writes on this data frame, which here also covers the gap between
-/// reading the row and writing it back. See [`add`].
 pub fn update(
     _repo: &LocalRepository,
     workspace: &Workspace,
@@ -44,40 +32,27 @@ pub fn update(
     row_id: &str,
     data: &serde_json::Value,
 ) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
-    with_data_frame_write(&duckdb_path(workspace, path), || {
-        core::v_latest::workspaces::data_frames::rows::update(workspace, path, row_id, data)
-    })
+    core::v_latest::workspaces::data_frames::rows::update(workspace, path, row_id, data)
 }
 
 /// Overwrite each `{row_id, value}` pair in `data` and return the ids updated.
-///
-/// Serialized against the other writes on this data frame. See [`add`].
 pub fn batch_update(
     _repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
     data: &serde_json::Value,
 ) -> Result<Vec<UpdateResult>, OxenError> {
-    let path = path.as_ref();
-    with_data_frame_write(&duckdb_path(workspace, path), || {
-        core::v_latest::workspaces::data_frames::rows::batch_update(workspace, path, data)
-    })
+    core::v_latest::workspaces::data_frames::rows::batch_update(workspace, path, data)
 }
 
 /// Remove the row `row_id` and return it as it was before the delete.
-///
-/// Serialized against the other writes on this data frame. See [`add`].
 pub fn delete(
     _repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
     row_id: &str,
 ) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref();
-    with_data_frame_write(&duckdb_path(workspace, path), || {
-        core::v_latest::workspaces::data_frames::rows::delete(workspace, path, row_id)
-    })
+    core::v_latest::workspaces::data_frames::rows::delete(workspace, path, row_id)
 }
 
 pub fn get_by_id(
