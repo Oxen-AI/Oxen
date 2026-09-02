@@ -35,6 +35,21 @@ use sql_query_builder as sql;
 
 const DF_DB_CACHE_SIZE: NonZeroUsize = NonZeroUsize::new(100).unwrap();
 
+/// Total DuckDB threads per connection, including the caller: `external_threads`
+/// defaults to 1, so each connection runs `DUCKDB_THREADS - 1` workers.
+///
+/// Unset, DuckDB sizes every pool to the host's core count, so the thread count
+/// scales with the host times `DF_DB_CACHE_SIZE`. Scans below DuckDB's
+/// 122,880-row row group are single-threaded regardless, so the surplus parks.
+const DUCKDB_THREADS: i64 = 5;
+
+/// Memory ceiling per DuckDB connection. Unset, DuckDB allows each instance 80%
+/// of available memory, independently of every other cached connection.
+///
+/// A ceiling, not a reservation: these databases are file-backed, so a query over
+/// it spills to `<db path>.tmp` rather than failing. Byte sizes only, no percentages.
+const DUCKDB_MAX_MEMORY: &str = "512MiB";
+
 /// A cached DuckDB connection slot; `None` when no connection is currently open.
 type CachedConn = Arc<Mutex<Option<duckdb::Connection>>>;
 
@@ -228,10 +243,14 @@ impl DfDBManager {
 }
 
 /// Open a read-write DuckDB connection at `path` with external file access enabled.
-// The one sanctioned `Connection::open` call; disallowed elsewhere (see clippy.toml).
+// The one sanctioned read-write `open_with_flags` call; disallowed elsewhere (see
+// clippy.toml).
 #[allow(clippy::disallowed_methods)]
 fn open_duckdb_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Error> {
-    duckdb::Connection::open(path)
+    let config = duckdb::Config::default()
+        .threads(DUCKDB_THREADS)?
+        .max_memory(DUCKDB_MAX_MEMORY)?;
+    duckdb::Connection::open_with_flags(path, config)
 }
 
 /// Open a hardened, read-only DuckDB connection at `path`: external file access
@@ -242,6 +261,8 @@ fn open_duckdb_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Err
 #[allow(clippy::disallowed_methods)]
 fn open_hardened_query_connection(path: &Path) -> Result<duckdb::Connection, duckdb::Error> {
     let config = duckdb::Config::default()
+        .threads(DUCKDB_THREADS)?
+        .max_memory(DUCKDB_MAX_MEMORY)?
         .access_mode(duckdb::AccessMode::ReadOnly)?
         .enable_external_access(false)?
         .enable_autoload_extension(false)?
@@ -1223,6 +1244,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_connections_cap_the_duckdb_thread_pool() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let db_file = dir.join("data.db");
+
+            let conn = get_connection(&db_file)?;
+            conn.execute_batch("CREATE TABLE df AS SELECT 42 AS x")?;
+            let rw_threads: i64 = conn.query_row(
+                "SELECT CAST(current_setting('threads') AS BIGINT)",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                rw_threads, DUCKDB_THREADS,
+                "read-write connections must cap the thread pool"
+            );
+            // DuckDB echoes the limit in MiB with one decimal, so this literal tracks
+            // `DUCKDB_MAX_MEMORY` and must change with it.
+            let rw_memory: String =
+                conn.query_row("SELECT current_setting('memory_limit')", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(
+                rw_memory, "512.0 MiB",
+                "read-write connections must cap memory"
+            );
+            drop(conn);
+
+            // The hardened connection also sets `lock_configuration`, so this asserts
+            // the cap is applied rather than rejected as locked configuration.
+            let hardened = open_hardened_query_connection(&db_file)?;
+            let hardened_threads: i64 = hardened.query_row(
+                "SELECT CAST(current_setting('threads') AS BIGINT)",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                hardened_threads, DUCKDB_THREADS,
+                "hardened connections must cap the thread pool"
+            );
+            let hardened_memory: String =
+                hardened.query_row("SELECT current_setting('memory_limit')", [], |row| {
+                    row.get(0)
+                })?;
+            assert_eq!(
+                hardened_memory, "512.0 MiB",
+                "hardened connections must cap memory"
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_hardened_query_conn_blocks_file_access_but_reads_tables() -> Result<(), OxenError> {
         test::run_empty_dir_test(|dir| {
             let db_file = dir.join("data.db");
@@ -1591,19 +1665,18 @@ mod tests {
                 wal_file.exists(),
                 "WAL should exist before flush — disable_checkpoint_on_shutdown is set"
             );
-            let cache_len_before = DF_DB_INSTANCES.read().len();
             assert!(
-                cache_len_before > 0,
+                DF_DB_INSTANCES.read().peek(&db_file).is_some(),
                 "cache should have the entry we just opened"
             );
 
             flush_all_df_db_connections();
 
-            // Cache must be drained — every Arc removed, every connection dropped.
-            assert_eq!(
-                DF_DB_INSTANCES.read().len(),
-                0,
-                "cache should be empty after flush"
+            // Assert on our key, not on the cache being empty: tests sharing the
+            // `DF_DB_INSTANCES` static run in parallel and repopulate it.
+            assert!(
+                DF_DB_INSTANCES.read().peek(&db_file).is_none(),
+                "flush should have removed the cached connection"
             );
 
             // Reopen WITHOUT going through recovery (no stale-WAL handling needed
