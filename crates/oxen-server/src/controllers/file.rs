@@ -158,9 +158,14 @@ pub async fn get(
 
     let entry = match workspace {
         Some(ws) => {
-            let staged_db_manager = get_staged_db_manager(staged_repo)?;
+            // Scoped so the staged db handle is released before the awaits below, rather than
+            // held for the length of the response.
+            let staged_node = {
+                let staged_db_manager = get_staged_db_manager(staged_repo)?;
+                staged_db_manager.read_from_staged_db(&path)?
+            };
             // Try staged DB first
-            if let Some(staged_node) = staged_db_manager.read_from_staged_db(&path)? {
+            if let Some(staged_node) = staged_node {
                 match staged_node.node.node {
                     EMerkleTreeNode::File(f) => Ok(f),
                     _ => Err(OxenError::NotAFile(path.clone().into())),
