@@ -439,7 +439,8 @@ async fn handle_multipart_creation(
 
 /// Create the repository from a [`RepoNew`] and build the response that both creation routes
 /// (JSON and multipart) send back. `data.storage_kind` is resolved against the server's storage
-/// policy (`None` selects the server default).
+/// policy (`None` selects the server default). Where a control plane assigns repository UUIDs, the
+/// request must carry one and is refused otherwise.
 async fn create_repo_response(
     app_data: &OxenAppData,
     mut data: RepoNew,
@@ -450,17 +451,29 @@ async fn create_repo_response(
     let namespace = data.namespace.clone();
     let name = data.name.clone();
     let identity = match app_data.config.identity.repo_uuids_assigned_by() {
-        IdentitySource::OxenServer => Some(RepoIdentity::minted(&namespace, &name)),
-        IdentitySource::AuthProvider => data.repo_uuid.map(|repo_uuid| RepoIdentity {
-            repo_uuid,
+        IdentitySource::OxenServer => RepoIdentity::minted(&namespace, &name),
+        // The control plane owns the UUID here, and the server has no way to tell a request that
+        // omitted one from a request that wants one assigned. Minting would give the repository an
+        // identity that agrees with nothing else and that no migration will correct, since the
+        // backfill skips a repository that already holds one.
+        IdentitySource::AuthProvider => RepoIdentity {
+            repo_uuid: data.repo_uuid.ok_or_else(|| {
+                OxenHttpError::BadRequest(
+                    "repo_uuid is required where a control plane assigns repository UUIDs".into(),
+                )
+            })?,
             namespace: data.namespace_name.clone(),
             name: data.repo_name.clone(),
-        }),
+        },
     };
-    if identity.is_none() {
-        log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
-    }
-    match repositories::create(&app_data.path, data, identity, app_data.config.storage.s3()).await {
+    match repositories::create(
+        &app_data.path,
+        data,
+        Some(identity),
+        app_data.config.storage.s3(),
+    )
+    .await
+    {
         Ok(repo) => {
             // The repository exists by this point, so a failed lookup only degrades the
             // response's latest_commit to None rather than failing the creation.
@@ -867,10 +880,11 @@ mod tests {
         Ok(())
     }
 
-    /// A control plane that states no UUID gets no identity, even where the name position holds
-    /// one: a repository named like a UUID must not be able to choose its own storage identity.
+    /// A control plane that supplies no UUID gets a refusal, so a repository named like a UUID can
+    /// neither claim that UUID as its storage identity nor be created without one at all.
     #[actix_web::test]
-    async fn test_create_records_no_identity_without_a_stated_repo_uuid() -> Result<(), OxenError> {
+    async fn test_create_is_refused_when_the_request_supplies_no_repo_uuid() -> Result<(), OxenError>
+    {
         let sync_dir = test::get_sync_dir()?;
         let app_data = OxenAppData {
             path: sync_dir.clone(),
@@ -886,16 +900,17 @@ mod tests {
         let in_name_position = Uuid::new_v4();
         let data = RepoNew::from_namespace_name(&namespace, in_name_position.to_string(), None);
 
-        let resp = super::create_repo_response(&app_data, data)
+        let err = super::create_repo_response(&app_data, data)
             .await
-            .expect("create should succeed");
-        assert_eq!(resp.status(), http::StatusCode::OK);
+            .expect_err("create should be refused");
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
 
+        // Refused before anything is written, so a retry carrying the UUID is not blocked by a
+        // half-created repository sitting in the way.
         let repo_dir = sync_dir.join(&namespace).join(in_name_position.to_string());
-        let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?;
         assert!(
-            config.identity.is_none(),
-            "the name position must not become the repository's identity"
+            !repo_dir.exists(),
+            "a refused create must leave no repository behind: {repo_dir:?}"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
