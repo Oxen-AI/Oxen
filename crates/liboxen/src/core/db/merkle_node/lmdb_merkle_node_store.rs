@@ -187,8 +187,8 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
             // Each complete node contributes two keys; key off the node-tagged one so each hash
             // appears once, and require the children key to also be present so an incomplete
             // record (node key without its children key) is not reported as a valid node.
-            for item in db.iter(txn)? {
-                let (key, _value) = item?;
+            for item in db.iter_keys(txn)? {
+                let key = item?;
                 if key.len() == KEY_LEN && key[16] == NODE_TAG {
                     let mut hash_le = [0u8; 16];
                     hash_le.copy_from_slice(&key[..16]);
