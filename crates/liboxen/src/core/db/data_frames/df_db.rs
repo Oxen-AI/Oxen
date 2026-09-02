@@ -2284,6 +2284,8 @@ mod tests {
             ("SELECT * FROM df", true),
             ("SELECT a, b FROM df", true),
             ("SELECT a AS x FROM df", true),
+            // An unbounded statement still resolves the column a page orders by.
+            ("SELECT * FROM df LIMIT ALL", true),
             // A quoted name reads as the same table.
             (r#"SELECT "df".a FROM "df""#, true),
             ("SELECT DISTINCT a FROM df", false),
