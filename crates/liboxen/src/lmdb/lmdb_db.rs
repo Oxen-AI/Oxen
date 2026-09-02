@@ -8,10 +8,10 @@
 //! multi-byte integer scanned in numeric order — would have to be encoded big-endian so byte order
 //! matches numeric order, so this layer does not model it (and exposes no scan API).
 //!
-//! READ SAFETY: every read COPIES the value out of the read txn into owned `bytes::Bytes` before
-//! returning. No method hands a caller a slice that borrows the mmap, so a returned value can
-//! outlive the short `RoTxn` it was read under — callers never have to keep a txn open just to
-//! hold onto a value.
+//! READ SAFETY: every value a read returns is COPIED out of the read txn into owned `bytes::Bytes`,
+//! so it can outlive the short `RoTxn` it was read under and no caller has to keep a txn open just
+//! to hold a value. Keys are copied the same way except in `iter_keys`, which borrows them from the
+//! mmap: its items cannot outlive the txn, so copy any key that has to be kept.
 
 use bytes::Bytes;
 use heed::types::{Bytes as HeedBytes, DecodeIgnore};
