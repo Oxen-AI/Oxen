@@ -520,6 +520,10 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
 
     log::debug!("workspace::delete cleaning up workspace dir: {workspace_dir:?}");
 
+    // Close the staged db before anything else is mutated: a refusal here leaves the whole
+    // workspace intact for the caller to retry.
+    core::staged::close_staged_db(&workspace.workspace_repo.path)?;
+
     // Remove from name index before deleting the workspace directory
     if let Some(ref name) = workspace.name
         && workspace_name_index::index_exists(&workspace.base_repo)
@@ -534,8 +538,6 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
         }
     }
 
-    // Clean up caches before deleting the workspace
-    core::staged::close_staged_db(&workspace.workspace_repo.path)?;
     // Drop cached DuckDB connections rooted in this workspace before removing the dir. On NFS,
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
     df_db::remove_df_db_from_cache_with_children(&workspace_dir)?;
@@ -1486,6 +1488,55 @@ mod tests {
             );
 
             drop(reader);
+            Ok(())
+        })
+        .await
+    }
+
+    /// A delete that cannot close the staged db leaves the workspace untouched (directory, name
+    /// index, and registry entry), so the caller still holding the handle keeps reading through
+    /// it and a later delete removes the workspace once that caller is gone.
+    #[tokio::test]
+    async fn test_delete_keeps_the_workspace_while_the_staged_db_is_held() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "Adding hello file")?;
+
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &commit,
+                "wid-held-delete",
+                Some("named-held-delete".to_string()),
+                true,
+            )
+            .await?;
+
+            let workspace_hello_file = workspace.dir().join("hello.txt");
+            util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
+            repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
+
+            let reader = get_staged_db_manager(&workspace.workspace_repo)?;
+
+            assert!(repositories::workspaces::delete(&workspace).is_err());
+            assert!(workspace.dir().exists());
+            assert!(
+                repositories::workspaces::get_by_name(&repo, "named-held-delete")?.is_some(),
+                "the refused delete dropped the name index entry"
+            );
+
+            // The registry entry survived, so a caller arriving after the refused delete shares
+            // the open handle instead of colliding with RocksDB's per-directory LOCK.
+            let after = get_staged_db_manager(&workspace.workspace_repo)?;
+            assert!(after.read_from_staged_db("hello.txt")?.is_some());
+
+            drop(after);
+            drop(reader);
+            repositories::workspaces::delete(&workspace)?;
+            assert!(!workspace.dir().exists());
+
             Ok(())
         })
         .await

@@ -137,8 +137,15 @@ async fn commit_inner(
         // update the workspace config to point to the new commit
         repositories::workspaces::update_commit(workspace, &commit_id)?;
     } else {
-        // Unnamed workspaces are deleted on commit
-        repositories::workspaces::delete(workspace)?;
+        // Unnamed workspaces are deleted on commit. The commit has already landed at this point:
+        // a delete that cannot run yet leaves the directory for a later delete to remove.
+        if let Err(err) = repositories::workspaces::delete(workspace) {
+            tracing::error!(
+                workspace_id = %workspace.id,
+                cause = ?err,
+                "Workspace commit landed but the workspace could not be deleted"
+            );
+        }
     }
 
     Ok(commit)

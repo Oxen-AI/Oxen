@@ -41,15 +41,23 @@ static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
 /// other callers drop their handles. Callers that only want the entries gone want
 /// [`StagedDBManager::clear`], which keeps the shared handle open.
 ///
-/// A handle still open when the wait runs out keeps RocksDB's per-directory `LOCK`, so the next
-/// opener collides with it until that caller finishes.
+/// Errors when a handle is still open once the wait runs out, keeping the registry entry so later
+/// callers go on sharing that handle. Leave the directory in place until a later close succeeds.
 pub(crate) fn close_staged_db(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let staged_dir = util::fs::oxen_hidden_dir(repository_path).join(STAGED_DIR);
-    for _ in 0..db::OPEN_RETRIES {
+    let mut attempts = 0;
+    loop {
         let mut instances = DB_INSTANCES.lock();
         match instances.get(&staged_dir) {
             Some(weak) if weak.strong_count() > 0 => {
                 drop(instances);
+                attempts += 1;
+                if attempts >= db::OPEN_RETRIES {
+                    return Err(OxenError::internal_error(format!(
+                        "Staged db {} is still open elsewhere after waiting to close it",
+                        staged_dir.display()
+                    )));
+                }
                 sleep(db::OPEN_RETRY_INTERVAL);
             }
             _ => {
@@ -58,9 +66,6 @@ pub(crate) fn close_staged_db(repository_path: impl AsRef<Path>) -> Result<(), O
             }
         }
     }
-    DB_INSTANCES.lock().remove(&staged_dir);
-    log::warn!("Staged db {staged_dir:?} still open elsewhere after waiting to close it");
-    Ok(())
 }
 
 /// Removes tombstone entries under `repository_path` from the registry. Live entries are
