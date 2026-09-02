@@ -8,7 +8,7 @@ use tokio::sync::Mutex as TokioMutex;
 use crate::constants::STAGED_DIR;
 use crate::core;
 use crate::core::refs::with_ref_manager;
-use crate::core::staged::remove_from_cache;
+use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::workspaces;
 use crate::error::OxenError;
@@ -116,10 +116,10 @@ async fn commit_inner(
         )?
     };
 
-    // Clear the staged db
-    log::debug!("Removing staged_db_path: {staged_db_path:?}");
-    remove_from_cache(&workspace.workspace_repo.path)?;
-    util::fs::remove_dir_all(staged_db_path)?;
+    // Clear through the shared handle rather than dropping it and removing the directory: the next
+    // reader's open would collide with RocksDB's per-directory LOCK until the last holder finishes.
+    log::debug!("Clearing staged db: {staged_db_path:?}");
+    get_staged_db_manager(&workspace.workspace_repo)?.clear()?;
 
     // DEBUG
     // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;

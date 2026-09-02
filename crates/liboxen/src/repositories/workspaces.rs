@@ -535,7 +535,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     }
 
     // Clean up caches before deleting the workspace
-    core::staged::remove_from_cache(&workspace.workspace_repo.path)?;
+    core::staged::close_staged_db(&workspace.workspace_repo.path)?;
     // Drop cached DuckDB connections rooted in this workspace before removing the dir. On NFS,
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
     df_db::remove_df_db_from_cache_with_children(&workspace_dir)?;
@@ -1435,6 +1435,57 @@ mod tests {
             assert!(current_path.exists());
             assert!(!legacy_path.exists());
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// A workspace read that is in flight when a commit lands keeps the staged db handle it
+    /// already holds, and a read arriving after the commit opens against that same handle
+    /// instead of colliding with RocksDB's per-directory LOCK.
+    #[tokio::test]
+    async fn test_commit_leaves_a_held_staged_db_handle_usable() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello_file = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello_file, "Hello")?;
+            repositories::add(&repo, &hello_file).await?;
+            let commit = repositories::commit(&repo, "Adding hello file")?;
+
+            // Named, so the commit updates the workspace rather than deleting it.
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &commit,
+                "wid-held",
+                Some("named-held".to_string()),
+                true,
+            )
+            .await?;
+
+            let workspace_hello_file = workspace.dir().join("hello.txt");
+            util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
+            repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
+
+            let reader = get_staged_db_manager(&workspace.workspace_repo)?;
+
+            repositories::workspaces::commit(
+                &workspace,
+                &NewCommitBody {
+                    message: "Updating hello file".to_string(),
+                    author: "Bessie".to_string(),
+                    email: "bessie@oxen.ai".to_string(),
+                },
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
+
+            let after = get_staged_db_manager(&workspace.workspace_repo)?;
+            assert!(after.read_from_staged_db("hello.txt")?.is_none());
+            assert!(
+                repositories::workspaces::status::status_from_dir(&workspace, Path::new(""))?
+                    .is_clean()
+            );
+
+            drop(reader);
             Ok(())
         })
         .await
