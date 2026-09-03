@@ -14,8 +14,10 @@ use crate::repositories;
 use crate::util;
 use crate::view::PaginatedDirEntries;
 use crate::view::entries::{EMetadataEntry, ResourceVersion};
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::Path;
+use time::OffsetDateTime;
 
 use super::index::CommitMerkleTree;
 
@@ -135,16 +137,15 @@ pub fn list_directory_with_depth(
     log::debug!("list_directory got {} entries", entries.len());
     drop(_perf_entries);
 
-    let _perf_paginate = crate::perf_guard!("core::entries::paginate_entries");
-    let (entries, pagination) = util::paginate(entries, page, page_size);
-    let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
-    drop(_perf_paginate);
-
+    // The workspace overlay adds entries of its own, so it has to run before pagination or its
+    // additions land on every page and are counted on none.
     let _perf_workspace = crate::perf_guard!("core::entries::populate_workspace_data");
     let entries: Vec<EMetadataEntry> = if let Some(workspace) = parsed_resource.workspace.as_ref() {
-        repositories::workspaces::populate_entries_with_workspace_data(
+        let mut entries = repositories::workspaces::populate_entries_with_workspace_data(
             repo, directory, workspace, &entries,
-        )?
+        )?;
+        sort_workspace_entries(&mut entries, sort_opts);
+        entries
     } else {
         entries
             .into_iter()
@@ -152,6 +153,11 @@ pub fn list_directory_with_depth(
             .collect()
     };
     drop(_perf_workspace);
+
+    let _perf_paginate = crate::perf_guard!("core::entries::paginate_entries");
+    let (entries, pagination) = util::paginate(entries, page, page_size);
+    let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
+    drop(_perf_paginate);
 
     Ok(PaginatedDirEntries {
         dir: dir_entry,
@@ -270,30 +276,58 @@ pub fn dir_entries_with_depth(
 }
 
 fn sort_entries(entries: &mut [MetadataEntry], sort_opts: &SortOpts) {
-    use std::cmp::Ordering;
-
     entries.sort_by(|a, b| {
-        // Directories always come first
-        let dir_cmp = b.is_dir.cmp(&a.is_dir);
-        if dir_cmp != Ordering::Equal {
-            return dir_cmp;
-        }
-
-        let field_cmp = match sort_opts.sort_by {
-            SortBy::Name => a.filename.cmp(&b.filename),
-            SortBy::Date => {
-                let a_ts = a.latest_commit.as_ref().map(|c| c.timestamp);
-                let b_ts = b.latest_commit.as_ref().map(|c| c.timestamp);
-                a_ts.cmp(&b_ts)
-            }
-        };
-
-        if sort_opts.reverse {
-            field_cmp.reverse()
-        } else {
-            field_cmp
-        }
+        compare_entries(
+            (
+                a.is_dir,
+                &a.filename,
+                a.latest_commit.as_ref().map(|c| c.timestamp),
+            ),
+            (
+                b.is_dir,
+                &b.filename,
+                b.latest_commit.as_ref().map(|c| c.timestamp),
+            ),
+            sort_opts,
+        )
     });
+}
+
+/// Order a listing the workspace overlay has merged its own entries into.
+fn sort_workspace_entries(entries: &mut [EMetadataEntry], sort_opts: &SortOpts) {
+    entries.sort_by(|a, b| {
+        compare_entries(
+            (a.is_dir(), a.filename(), a.latest_commit_timestamp()),
+            (b.is_dir(), b.filename(), b.latest_commit_timestamp()),
+            sort_opts,
+        )
+    });
+}
+
+/// Compare two entries by `(is_dir, filename, last commit time)`. Directories come first, then the
+/// requested field. Filename breaks a tie on date, so the ordering is total: paging through a
+/// listing twice cannot show the same entry on two pages, or miss one entirely, because two
+/// entries sharing a timestamp swapped places between the requests.
+fn compare_entries(
+    a: (bool, &str, Option<OffsetDateTime>),
+    b: (bool, &str, Option<OffsetDateTime>),
+    sort_opts: &SortOpts,
+) -> Ordering {
+    let dir_cmp = b.0.cmp(&a.0);
+    if dir_cmp != Ordering::Equal {
+        return dir_cmp;
+    }
+
+    let field_cmp = match sort_opts.sort_by {
+        SortBy::Name => a.1.cmp(b.1),
+        SortBy::Date => a.2.cmp(&b.2).then_with(|| a.1.cmp(b.1)),
+    };
+
+    if sort_opts.reverse {
+        field_cmp.reverse()
+    } else {
+        field_cmp
+    }
 }
 
 fn dir_node_to_metadata_entry(
