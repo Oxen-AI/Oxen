@@ -302,7 +302,11 @@ feature behaves exactly as it did before this was configured.
 
 Each record carries the trace and span id of the span the event was recorded
 in, which is what lets a backend show a log line against the request that
-produced it.
+produced it. That depends on span export being active in the same process:
+naming only `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` exports records with an empty
+trace id and nothing to correlate them against. The server warns at startup
+when it is configured that way, and reports an error when `OTEL_LOGS_EXPORTER`
+asks for log export and no endpoint resolves at all.
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
@@ -323,10 +327,22 @@ prints, so a host that collects stdout keeps collecting exactly what it did.
 
 `OXEN_OTEL_FILTER` selects log records as well as spans, so one variable decides
 what leaves the process over OTLP and the two signals cannot drift to
-disagreeing levels. Log records are the one exception: the `opentelemetry`,
-`opentelemetry_sdk`, and `opentelemetry_otlp` targets are always excluded,
-whatever the filter says. An export failure logs an error, and exporting that
-error would hand the exporter a fresh record for every one it fails to deliver.
+disagreeing levels. Log records have one exception, applied whatever the filter
+says: the exporter's own crates (`opentelemetry`, `opentelemetry_sdk`,
+`opentelemetry_otlp`) and the transport it sends over (`reqwest`, `hyper`,
+`hyper_util`, `h2`, `tonic`, `tower`) never become log records.
+
+Every export is network IO that logs, so exporting those lines feeds the
+exporter a fresh batch for every batch it delivers, and the loop sustains
+itself for as long as the process runs. It stays dormant at the default `info`,
+where those crates are near-silent, and arrives the moment someone raises
+`OXEN_OTEL_FILTER` to `debug` to look into an export problem: measured that way
+against a collector, an idle server spent most of a batch on its own
+connection-pool and HTTP/2 frame chatter.
+
+The transport crates carry this repo's own HTTP client too, so the exclusion
+costs the backend any client-side detail from a push or a pull. `RUST_LOG`
+still puts all of it on stderr, which is where that detail is useful.
 
 Events inside a span are still recorded as span events on the exported span, so
 turning log export on reports each one twice: once in the trace and once in the

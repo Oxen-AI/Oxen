@@ -345,6 +345,7 @@ pub fn init_tracing_with_layer(
     #[cfg(feature = "otel")]
     {
         let otel_directives = otel_filter_directives();
+        let exporting_spans = m_otel_layer.is_some();
         let otel_layer = m_otel_layer
             .map(|layer| layer.with_filter(env_filter(&otel_directives, OTEL_DEFAULT_FILTER)));
         let log_directives = otel_log_filter_directives();
@@ -360,6 +361,23 @@ pub fn init_tracing_with_layer(
         if let Some(protocol_and_endpoint) = m_log_endpoint_p {
             log::info!(
                 "OpenTelemetry log export enabled (endpoint: {protocol_and_endpoint}, record filter: {log_directives})"
+            );
+            // The trace and span id on a record come from the span layer having activated the
+            // span's context. Without that layer every record carries an empty trace id, which
+            // looks like a backend that will not correlate rather than a server that never sent
+            // the ids. Reachable by naming only the logs endpoint.
+            if !exporting_spans {
+                log::warn!(
+                    "OpenTelemetry log export is on without span export, so every log record carries an empty trace id. Configure OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT to correlate records with traces."
+                );
+            }
+        } else if otel_logs_enabled() && otel_endpoint("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").is_none()
+        {
+            // An opt-in that resolves to no endpoint. Silence here reads as a backend that is
+            // dropping the records. A failed exporter build reports itself, so this covers only
+            // the case where nothing named an endpoint at all.
+            log::error!(
+                "OTEL_LOGS_EXPORTER asks for OTLP log export but no OTLP endpoint is configured! (Ignoring)"
             );
         }
     }
@@ -420,12 +438,22 @@ fn otel_filter_directives() -> String {
 #[cfg(feature = "otel")]
 const OTEL_LOGS_EXPORTER_ENV: &str = "OTEL_LOGS_EXPORTER";
 
-/// Targets held out of OTLP log export unconditionally: the exporter's own crates. A failing
-/// export logs an error, and turning that error into a log record hands the exporter a fresh
-/// record for every one it fails to deliver.
+/// Targets held out of OTLP log export unconditionally: the exporter's own crates, and the HTTP
+/// and gRPC stacks it sends over.
+///
+/// Every export is itself network IO that logs, so exporting those lines feeds the exporter a
+/// fresh batch for every batch it delivers, and the loop sustains itself for as long as the
+/// process runs. It is dormant at the default `info`, where these crates are near-silent, and
+/// arrives the moment someone raises `OXEN_OTEL_FILTER` to `debug` to look into an export problem.
+/// Measured at `debug` against a collector, a single idle server spent most of a batch on its own
+/// connection-pool and HTTP/2 frame chatter, crowding out the records worth reading.
+///
+/// The transport crates carry this repo's own HTTP client as well, so excluding them costs the
+/// backend any client-side detail from a push or a pull. `RUST_LOG` still puts all of it on
+/// stderr, which is where that detail is useful, and export at `debug` could not deliver it
+/// through the noise anyway.
 #[cfg(feature = "otel")]
-const OTEL_LOG_EXCLUDED_TARGETS: &str =
-    "opentelemetry=off,opentelemetry_sdk=off,opentelemetry_otlp=off";
+const OTEL_LOG_EXCLUDED_TARGETS: &str = "opentelemetry=off,opentelemetry_sdk=off,     opentelemetry_otlp=off,reqwest=off,hyper=off,hyper_util=off,h2=off,tonic=off,tower=off";
 
 /// Whether `OTEL_LOGS_EXPORTER` asks for OTLP log records.
 #[cfg(feature = "otel")]
@@ -1120,9 +1148,9 @@ mod tests {
         /// activates the span's OpenTelemetry context on entry and the SDK's logger reads it, so
         /// nothing here wires the two together by hand.
         ///
-        /// The exporter's own crates stay out of the export even when the directives ask for them,
-        /// since exporting an export failure is what makes a failing exporter generate work for
-        /// itself.
+        /// The exporter's own crates and the transport it sends over stay out of the export even
+        /// when the directives ask for them, since exporting what an export logs is what makes an
+        /// exporter generate work for itself.
         #[test]
         fn log_records_carry_their_span_and_never_the_exporters_own_crates() {
             use opentelemetry::trace::{TraceContextExt, TracerProvider};
@@ -1139,8 +1167,10 @@ mod tests {
                 .build();
             let tracer_provider = SdkTracerProvider::builder().build();
 
-            // A directive asking for the excluded targets, to prove the exclusion outranks it.
-            let directives = format!("info,opentelemetry_sdk=trace,{OTEL_LOG_EXCLUDED_TARGETS}");
+            // Directives asking for excluded targets, to prove the exclusion outranks them. `h2`
+            // stands in for the transport crates, whose frame logging is the loudest of them.
+            let directives =
+                format!("info,opentelemetry_sdk=trace,h2=trace,{OTEL_LOG_EXCLUDED_TARGETS}");
             let subscriber = tracing_subscriber::registry()
                 .with(tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("oxen")))
                 .with(
@@ -1153,6 +1183,8 @@ mod tests {
                 let _entered = span.enter();
                 tracing::info!("handled the request");
                 tracing::error!(target: "opentelemetry_sdk", "export failed");
+                tracing::debug!(target: "h2", "send");
+                tracing::debug!(target: "hyper_util", "pooling idle connection");
                 span.context().span().span_context().trace_id()
             });
 
