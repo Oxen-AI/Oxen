@@ -765,7 +765,13 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, D
             // row and drop any ORDER BY — a sort would scan the whole table
             // just to answer a schema question.
             query.order_by = None;
-            query.limit = Some(SqlExpr::Value(SqlValue::Number("1".into(), false)));
+            let one = SqlExpr::Value(SqlValue::Number("1".into(), false));
+            // DuckDB takes LIMIT or FETCH, never both: the cap goes on
+            // whichever clause the statement already carries.
+            match &mut query.fetch {
+                Some(fetch) => fetch.quantity = Some(one),
+                None => query.limit = Some(one),
+            }
         }
         ast
     };
@@ -1439,6 +1445,44 @@ mod tests {
             let df = select_str(&conn, &sql, None)?;
 
             assert_eq!(df.height(), 2, "DISTINCT should deduplicate 'red': {df:?}");
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_fetch_first_survives_special_column_injection() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let db_file = data_dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+
+            conn.execute(
+                &format!(
+                    "CREATE TABLE {TABLE_NAME} (
+                        color VARCHAR,
+                        {OXEN_ID_COL} VARCHAR DEFAULT (uuid()::VARCHAR),
+                        num INTEGER
+                    )"
+                ),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "INSERT INTO {TABLE_NAME} (color, num)
+                     VALUES ('red', 1), ('blue', 2), ('green', 3)"
+                ),
+                [],
+            )?;
+
+            // A statement that bounds itself with FETCH keeps that bound. Pairing it with a
+            // LIMIT is a DuckDB syntax error that fails the whole read.
+            let sql = format!("SELECT color FROM {TABLE_NAME} FETCH FIRST 2 ROWS ONLY");
+            let df = select_str(&conn, &sql, None)?;
+
+            assert_eq!(df.height(), 2, "FETCH FIRST 2 should read two rows: {df:?}");
+            assert!(
+                df.column(OXEN_ID_COL).is_ok(),
+                "{OXEN_ID_COL} should be injected into the projection: {df:?}"
+            );
             Ok(())
         })
     }
