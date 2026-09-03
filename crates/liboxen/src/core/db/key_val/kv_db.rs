@@ -1,6 +1,6 @@
 use crate::error::OxenError;
 
-use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode};
+use rocksdb::{DBWithThreadMode, IteratorMode, ThreadMode, WriteBatch};
 use std::str;
 
 /// More efficient than get since it does not actual deserialize the value
@@ -62,13 +62,14 @@ pub fn list_keys<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<Vec<String>,
     Ok(keys)
 }
 
-/// Remove all values from the db
+/// Remove all values from the db in one atomic write, so a reader sees either every value or none
 pub fn clear<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<(), OxenError> {
     let iter = db.iterator(IteratorMode::Start);
+    let mut batch = WriteBatch::default();
     for item in iter {
         match item {
             Ok((key, _)) => {
-                db.delete(key)?;
+                batch.delete(key);
             }
             _ => {
                 return Err(OxenError::basic_str(
@@ -77,5 +78,6 @@ pub fn clear<T: ThreadMode>(db: &DBWithThreadMode<T>) -> Result<(), OxenError> {
             }
         }
     }
+    db.write(batch)?;
     Ok(())
 }

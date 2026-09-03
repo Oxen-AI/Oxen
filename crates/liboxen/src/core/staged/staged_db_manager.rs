@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
 use crate::core::db;
+use crate::core::db::key_val::kv_db;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::StagedEntryStatus;
@@ -25,21 +26,46 @@ use crate::util;
 // Weak-ref registry of open staged DB handles, keyed by `.oxen/staged` dir. The strong
 // `Arc<RwLock<DB>>` lives only as long as some [`StagedDBManager`] holds it; when the last
 // caller drops, RocksDB closes and the entry becomes a tombstone that the next opener prunes.
-// There is no capacity cap, so an in-use entry can never be evicted — the shared-Arc
-// invariant that compound read-modify-write sequences rely on holds unconditionally.
+// There is no capacity cap, so nothing evicts an in-use entry on its own and every caller for one
+// directory shares the handle that compound read-modify-write sequences rely on.
+// [`remove_from_cache_with_children`] is the one way to drop a live entry: the caller still holding
+// it keeps RocksDB's per-directory `LOCK`, and the next opener collides with it for as long as that
+// caller lives. [`close_staged_db`] waits for the handle to drain rather than orphaning it.
 // A brief LOCK collision is still possible when an open races the tail of a concurrent
 // close (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero);
 // see [`get_staged_db_manager`] for the bounded-retry that waits it out.
 static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Removes this repository's tombstone entry from the registry. Live entries (someone still
-/// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
-pub fn remove_from_cache(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
+/// Closes this repository's staged DB so its directory can be removed, blocking briefly while
+/// other callers drop their handles. Callers that only want the entries gone want
+/// [`StagedDBManager::clear`], which keeps the shared handle open.
+///
+/// Errors when a handle is still open once the wait runs out, keeping the registry entry so later
+/// callers go on sharing that handle. Leave the directory in place until a later close succeeds.
+pub(crate) fn close_staged_db(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let staged_dir = util::fs::oxen_hidden_dir(repository_path).join(STAGED_DIR);
-    let mut instances = DB_INSTANCES.lock();
-    instances.remove(&staged_dir);
-    Ok(())
+    let mut attempts = 0;
+    loop {
+        let mut instances = DB_INSTANCES.lock();
+        match instances.get(&staged_dir) {
+            Some(weak) if weak.strong_count() > 0 => {
+                drop(instances);
+                attempts += 1;
+                if attempts >= db::OPEN_RETRIES {
+                    return Err(OxenError::internal_error(format!(
+                        "Staged db {} is still open elsewhere after waiting to close it",
+                        staged_dir.display()
+                    )));
+                }
+                sleep(db::OPEN_RETRY_INTERVAL);
+            }
+            _ => {
+                instances.remove(&staged_dir);
+                return Ok(());
+            }
+        }
+    }
 }
 
 /// Removes tombstone entries under `repository_path` from the registry. Live entries are
@@ -315,6 +341,12 @@ impl StagedDBManager {
     /// Delete an entry from the staged db (convenience method)
     pub fn delete_entry(&self, path: impl AsRef<Path>) -> Result<(), OxenError> {
         self.delete_entry_with_lock(path, None)
+    }
+
+    /// Delete every staged entry, leaving the staged db open and shared with other callers.
+    /// A concurrent reader sees either the full set of entries or none of them.
+    pub(crate) fn clear(&self) -> Result<(), OxenError> {
+        kv_db::clear(&self.staged_db.write())
     }
 
     /// Write a directory node to the staged db

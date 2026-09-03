@@ -93,9 +93,13 @@ pub async fn get(
     let path = path_param(&req, "path")?.to_string();
     log::debug!("got workspace file path {:?}", path);
 
-    // First, look for the file in the workspace staged_db
-    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    let file_node = match staged_db_manager.read_from_staged_db(&path)? {
+    // First, look for the file in the workspace staged_db. Scoped so the staged db handle is
+    // released before the awaits below, rather than held for the length of the response.
+    let staged_node = {
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        staged_db_manager.read_from_staged_db(&path)?
+    };
+    let file_node = match staged_node {
         Some(staged_node) => match staged_node.node.node {
             EMerkleTreeNode::File(f) => Ok(f),
             _ => Err(OxenError::NotAFile(PathBuf::from(&path).into())),
