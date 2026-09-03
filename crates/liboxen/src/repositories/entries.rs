@@ -1488,4 +1488,56 @@ mod tests {
         })
         .await
     }
+
+    /// A staged entry can land on a path the commit tree already fills with the other kind of
+    /// entry. Committing the workspace resolves that in favor of what is staged, so the listing
+    /// has to show the same thing rather than the entry being superseded.
+    #[tokio::test]
+    async fn test_list_workspace_directory_staged_entry_replaces_committed_entry()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // `to_dir` is committed as a file, `to_file` as a directory.
+            util::fs::write_to_path(repo.path.join("to_dir"), "a file for now")?;
+            let committed_dir = repo.path.join("to_file");
+            util::fs::create_dir_all(&committed_dir)?;
+            util::fs::write_to_path(committed_dir.join("child.txt"), "child")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding a file and a directory")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, Uuid::new_v4().to_string(), true)?;
+
+            // Stage beneath the committed file, turning it into a directory.
+            let inside = workspace.workspace_repo.path.join("to_dir").join("in.txt");
+            util::fs::create_dir_all(inside.parent().unwrap())?;
+            util::fs::write_to_path(&inside, "staged")?;
+            repositories::workspaces::files::add(&workspace, &inside).await?;
+
+            // Stage the committed directory's own path as a file.
+            let as_file = workspace.workspace_repo.path.join("to_file");
+            util::fs::write_to_path(&as_file, "a file now")?;
+            repositories::workspaces::files::add(&workspace, &as_file).await?;
+
+            let paginated = list_workspace_dir(&repo, &workspace, Path::new(""))?;
+
+            // One entry per name, each of the kind the commit will produce. Sorted by name here
+            // because the overlay appends its own entries; ordering across the merge is its own
+            // concern.
+            let mut kinds: Vec<(&str, bool)> = paginated
+                .entries
+                .iter()
+                .map(|e| (e.filename(), e.is_dir()))
+                .collect();
+            kinds.sort();
+            assert_eq!(kinds, vec![("to_dir", true), ("to_file", false)]);
+
+            // Both are staged, so both are annotated.
+            let listing = workspace_listing(&paginated);
+            assert_eq!(listing["to_dir"], Some(StagedEntryStatus::Added));
+            assert_eq!(listing["to_file"], Some(StagedEntryStatus::Added));
+
+            Ok(())
+        })
+        .await
+    }
 }
