@@ -108,10 +108,16 @@ jobs:
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
+      # Thin LTO, stated rather than inherited. Fat LTO is a serial link-time pass that reruns
+      # whenever this repository's own crates change, and on this image it costs about 7m35s of
+      # build time to produce an `oxen-server` binary roughly 20% smaller. `release_windows.yml`
+      # already selects thin for the CLI it ships, and `build_branch.yml` for the image it
+      # publishes, so every server image this repository produces is now built the same way.
       - name: Build Docker Image
         run: |
           cd ${{ github.workspace }}
           docker build \
+            --build-arg CARGO_PROFILE_RELEASE_LTO=thin \
             --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
             --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
             --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \

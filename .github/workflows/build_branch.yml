@@ -134,9 +134,9 @@ jobs:
 
       # Thin LTO in place of the release profile's fat LTO, a serial link-time pass
       # that reruns whenever this repository's own crates change, so no layer cache
-      # can avoid it. `release_docker.yml` passes no override, so released binaries
-      # keep fat LTO. `codegen-units` stays at 1 — raising it trades binary size for
-      # less time than this saves.
+      # can avoid it. `release_docker.yml` selects it too, so both server images this
+      # repository publishes are built the same way. `codegen-units` stays at 1,
+      # since raising it trades binary size for less time than this saves.
       - name: Build oxen-server Docker Image (${{ inputs.ARCHITECTURE }})
         env:
           # Per architecture: a shared ref would have each build overwrite the other.
