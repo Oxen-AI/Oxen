@@ -61,18 +61,28 @@ impl TracingGuard {
             if tracer_provider.is_none() && logger_provider.is_none() {
                 return;
             }
-            // A provider's shutdown blocks until its batch processor has drained, so it goes to
-            // the blocking pool; awaiting the handle leaves the runtime free to carry the batches.
-            let flush = tokio::task::spawn_blocking(move || {
+            // A provider's shutdown blocks until its batch processor has drained, so each goes to
+            // the blocking pool; awaiting the handles leaves the runtime free to carry the
+            // batches.
+            //
+            // Concurrently rather than one after the other: each provider's shutdown carries its
+            // own five-second export timeout, and draining them in sequence adds those timeouts
+            // together against whatever grace period the process gets before it is killed.
+            let tracer = tokio::task::spawn_blocking(move || {
                 if let Some(provider) = tracer_provider {
                     report_shutdown("tracer", provider.shutdown());
                 }
+            });
+            let logger = tokio::task::spawn_blocking(move || {
                 if let Some(provider) = logger_provider {
                     report_shutdown("logger", provider.shutdown());
                 }
             });
-            if let Err(e) = flush.await {
-                eprintln!("warning: OTel provider shutdown task failed: {e}");
+            let (tracer_flush, logger_flush) = tokio::join!(tracer, logger);
+            for flush in [tracer_flush, logger_flush] {
+                if let Err(e) = flush {
+                    eprintln!("warning: OTel provider shutdown task failed: {e}");
+                }
             }
         }
     }
