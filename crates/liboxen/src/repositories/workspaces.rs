@@ -1,5 +1,5 @@
 use crate::config::RepositoryConfig;
-use crate::constants::{OXEN_HIDDEN_DIR, REPO_CONFIG_FILENAME};
+use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core;
 use crate::core::db::data_frames::df_db;
 use crate::core::staged::staged_db_manager::get_staged_db_manager;
@@ -65,8 +65,23 @@ pub fn get_by_dir(
     repo: &LocalRepository,
     workspace_dir: impl AsRef<Path>,
 ) -> Result<Option<Workspace>, OxenError> {
-    let workspace_dir = workspace_dir.as_ref();
-    let workspace_id = workspace_dir.file_name().unwrap().to_str().unwrap();
+    let repo_config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
+    load_from_dir(repo, workspace_dir.as_ref(), &repo_config)
+}
+
+/// The workspace in `workspace_dir`, or `None` when that directory holds no workspace config.
+///
+/// Takes `repo_config` rather than reading it, so loading many workspaces reads it once.
+fn load_from_dir(
+    repo: &LocalRepository,
+    workspace_dir: &Path,
+    repo_config: &RepositoryConfig,
+) -> Result<Option<Workspace>, OxenError> {
+    let Some(workspace_id) = workspace_dir.file_name().and_then(|name| name.to_str()) else {
+        return Err(OxenError::internal_error(format!(
+            "Workspace directory name is not valid UTF-8: {workspace_dir:?}"
+        )));
+    };
 
     let Some(config) = read_config(workspace_dir)? else {
         log::debug!("workspace::get workspace not found: {workspace_dir:?}");
@@ -80,17 +95,13 @@ pub fn get_by_dir(
         )));
     };
 
-    // Read repo config file for the storage config
-    let config_file = repo.path.join(OXEN_HIDDEN_DIR).join(REPO_CONFIG_FILENAME);
-    let repo_config = RepositoryConfig::from_file(&config_file)?;
-
     Ok(Some(Workspace {
         id: config.workspace_id.unwrap_or(workspace_id.to_owned()),
         name: config.workspace_name,
         base_repo: repo.clone(),
         workspace_repo: LocalRepository::new_with_server_opts(
             workspace_dir,
-            repo_config,
+            repo_config.clone(),
             repo.server_s3_opts(),
         )?,
         commit,
@@ -139,15 +150,10 @@ pub fn get_by_name(
         return Ok(None);
     }
 
-    // Slow path: iterate all workspaces (O(n)), used when index hasn't been created yet
-    for workspace in iter_workspaces(repo)? {
-        if let Some(workspace) = workspace?
-            && workspace.name.as_deref() == Some(workspace_name)
-        {
-            return Ok(Some(workspace));
-        }
-    }
-    Ok(None)
+    // Slow path: iterate all workspaces (O(n)), used when index hasn't been created yet. A
+    // workspace whose config cannot be read reads as absent here rather than as an error, since
+    // matching on a name means having read the name.
+    Ok(iter_workspaces(repo)?.find(|workspace| workspace.name.as_deref() == Some(workspace_name)))
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -469,11 +475,14 @@ pub(crate) fn list_dirs(repo: &LocalRepository) -> Result<Vec<PathBuf>, OxenErro
         .map_err(|e| OxenError::basic_str(format!("Error listing workspace directories: {e}")))
 }
 
-/// Returns a lazy iterator over all workspaces in the repository.
-/// Each workspace is loaded from the filesystem on demand.
+/// Every workspace in the repository, loaded from the filesystem on demand.
+///
+/// A directory that cannot be loaded is logged and skipped, so one damaged workspace costs its own
+/// entry rather than every entry. Repository-level failures still propagate, since they say nothing
+/// about any individual workspace.
 fn iter_workspaces(
     repo: &LocalRepository,
-) -> Result<impl Iterator<Item = Result<Option<Workspace>, OxenError>> + '_, OxenError> {
+) -> Result<impl Iterator<Item = Workspace> + '_, OxenError> {
     let workspace_dirs = list_dirs(repo)?;
 
     log::debug!(
@@ -481,19 +490,22 @@ fn iter_workspaces(
         workspace_dirs.len()
     );
 
-    Ok(workspace_dirs
-        .into_iter()
-        .map(move |workspace_dir| get_by_dir(repo, &workspace_dir)))
+    // Read once for the whole walk: this is repository state, so a failure to read it is not
+    // attributable to any one workspace and must not be skipped like one.
+    let repo_config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
+
+    Ok(workspace_dirs.into_iter().filter_map(move |workspace_dir| {
+        load_from_dir(repo, &workspace_dir, &repo_config)
+            .inspect_err(|e| {
+                log::warn!("[Skip workspace] could not load {workspace_dir:?}: {e}");
+            })
+            .ok()
+            .flatten()
+    }))
 }
 
 pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
-    let mut workspaces = Vec::new();
-    for workspace in iter_workspaces(repo)? {
-        if let Some(workspace) = workspace? {
-            workspaces.push(workspace);
-        }
-    }
-    Ok(workspaces)
+    Ok(iter_workspaces(repo)?.collect())
 }
 
 pub fn get_non_editable_by_commit_id(
@@ -1536,6 +1548,96 @@ mod tests {
             drop(reader);
             repositories::workspaces::delete(&workspace)?;
             assert!(!workspace.dir().exists());
+
+            Ok(())
+        })
+        .await
+    }
+    /// One workspace whose config cannot be parsed costs its own entry in the listing, not every
+    /// other workspace in the repository.
+    #[tokio::test]
+    async fn test_list_skips_a_workspace_with_an_unparseable_config() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
+            let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
+            AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
+
+            let listed = repositories::workspaces::list(&repo)?;
+            let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
+            assert_eq!(ids, vec!["ws-good"]);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A workspace pinned to a commit the repository no longer has is skipped by the listing too:
+    /// `get_by_dir` reports that as an error rather than as an absent workspace.
+    #[tokio::test]
+    async fn test_list_skips_a_workspace_pinned_to_a_missing_commit() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
+            let dangling = repositories::workspaces::create(&repo, &commit, "ws-dangling", true)?;
+
+            let mut config = read_config(&dangling.dir())?.expect("workspace should have a config");
+            config.workspace_commit_id = "0123456789abcdef0123456789abcdef".to_string();
+            write_config(&dangling.dir(), &config)?;
+
+            let listed = repositories::workspaces::list(&repo)?;
+            let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
+            assert_eq!(ids, vec!["ws-good"]);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Looking a workspace up by name walks the same directories, so a damaged sibling must not
+    /// hide the one being asked for. Exercises the slow path taken before the name index exists.
+    #[tokio::test]
+    async fn test_get_by_name_skips_a_damaged_sibling() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            create_with_name(
+                &repo,
+                &commit,
+                "ws-wanted-id",
+                Some("ws-wanted".to_string()),
+                true,
+            )
+            .await?;
+            let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
+            AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
+
+            // Drop the name index so the lookup falls back to scanning every directory.
+            invalidate_name_index(&repo);
+            assert!(!workspace_name_index::index_exists(&repo));
+
+            let found = repositories::workspaces::get_by_name(&repo, "ws-wanted")?
+                .expect("a damaged sibling should not hide the workspace being looked up");
+            assert_eq!(found.id, "ws-wanted-id");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A repository whose own config is unreadable fails the listing rather than reporting that it
+    /// holds no workspaces: the fault is the repository's, not any one workspace's.
+    #[tokio::test]
+    async fn test_list_propagates_an_unreadable_repository_config() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
+
+            AtomicFile::new(util::fs::config_filepath(&repo.path)).write(b"not valid toml {{{")?;
+
+            assert!(
+                repositories::workspaces::list(&repo).is_err(),
+                "a broken repository config must not read as an empty workspace list"
+            );
 
             Ok(())
         })
