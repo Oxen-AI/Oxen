@@ -629,7 +629,9 @@ fn init_workspace_repo(
 /// Entries the commit tree already supplied are annotated with their staged status. Files staged
 /// for addition directly under `directory` are appended, named by basename to match the committed
 /// entries. An addition nested deeper contributes its next path component as a single directory
-/// entry, unless the commit tree already supplied that directory.
+/// entry, unless the commit tree already supplied that directory. Where a staged entry replaces a
+/// committed one of the other kind at the same path, the staged entry is listed and the committed
+/// one is not, matching what committing the workspace produces.
 pub fn populate_entries_with_workspace_data(
     repo: &LocalRepository,
     directory: &Path,
@@ -664,19 +666,35 @@ pub fn populate_entries_with_workspace_data(
         }
     }
 
+    let added_paths: HashSet<&Path> = added_paths.into_iter().collect();
+
     let mut dir_entries: Vec<EMetadataEntry> = Vec::with_capacity(entries.len());
     for entry in entries {
         let path = match &entry.resource {
             Some(resource) => resource.path.clone(),
             None => directory.join(&entry.filename),
         };
+
+        // A staged entry can replace a committed one of the other kind at the same path. Committing
+        // the workspace resolves that in favor of what is staged: a file `x` with `x/child` staged
+        // beneath it becomes the directory `x`, and a directory `x` with `x` itself staged becomes
+        // the file. List what the commit will produce, not the entry it supersedes.
+        if entry.is_dir {
+            if added_paths.contains(path.as_path()) {
+                continue;
+            }
+            // The commit tree supplies this directory, so the overlay need not synthesize one.
+            staged_only_dirs.remove(&path);
+        } else if staged_only_dirs.contains(&path) {
+            continue;
+        }
+
         let mut ws_entry = WorkspaceMetadataEntry::from_metadata_entry(entry.clone());
         if let Some(status) = changed_paths.get(path.as_path()) {
             ws_entry.changes = Some(WorkspaceChanges {
                 status: status.clone(),
             });
         }
-        staged_only_dirs.remove(&path);
         dir_entries.push(EMetadataEntry::WorkspaceMetadataEntry(ws_entry));
     }
 
