@@ -452,8 +452,22 @@ const OTEL_LOGS_EXPORTER_ENV: &str = "OTEL_LOGS_EXPORTER";
 /// backend any client-side detail from a push or a pull. `RUST_LOG` still puts all of it on
 /// stderr, which is where that detail is useful, and export at `debug` could not deliver it
 /// through the noise anyway.
+///
+/// Kept as targets rather than a directive string: a stray character inside a hand-written
+/// directive list is dropped by the filter parser with nothing but a line on stderr, and the
+/// target it named is exported after all.
 #[cfg(feature = "otel")]
-const OTEL_LOG_EXCLUDED_TARGETS: &str = "opentelemetry=off,opentelemetry_sdk=off,     opentelemetry_otlp=off,reqwest=off,hyper=off,hyper_util=off,h2=off,tonic=off,tower=off";
+const OTEL_LOG_EXCLUDED_TARGETS: &[&str] = &[
+    "opentelemetry",
+    "opentelemetry_sdk",
+    "opentelemetry_otlp",
+    "reqwest",
+    "hyper",
+    "hyper_util",
+    "h2",
+    "tonic",
+    "tower",
+];
 
 /// Whether `OTEL_LOGS_EXPORTER` asks for OTLP log records.
 #[cfg(feature = "otel")]
@@ -487,7 +501,14 @@ fn logs_exporter_selects_otlp(configured: Option<&str>) -> bool {
 /// target win, so the exclusion holds whatever `OXEN_OTEL_FILTER` says about those targets.
 #[cfg(feature = "otel")]
 fn otel_log_filter_directives() -> String {
-    format!("{},{OTEL_LOG_EXCLUDED_TARGETS}", otel_filter_directives())
+    std::iter::once(otel_filter_directives())
+        .chain(
+            OTEL_LOG_EXCLUDED_TARGETS
+                .iter()
+                .map(|target| format!("{target}=off")),
+        )
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Whether the environment already names a service, in which case the app's own name is not used.
@@ -999,6 +1020,7 @@ mod tests {
             otel_log_filter_directives, parse_otel_protocol,
         };
         use opentelemetry::trace::{SpanId, TraceId};
+        use tracing_subscriber::EnvFilter;
 
         /// Nothing configured is HTTP, the transport `OTEL_EXPORTER_OTLP_PROTOCOL` carries by
         /// default across the OTLP ecosystem.
@@ -1129,7 +1151,7 @@ mod tests {
         }
 
         /// The log filter carries span export's directives, so one variable decides what leaves
-        /// the process over OTLP.
+        /// the process over OTLP, and silences every excluded target on top of them.
         #[test]
         fn the_log_filter_extends_the_span_filter() {
             let directives = otel_log_filter_directives();
@@ -1137,10 +1159,54 @@ mod tests {
                 directives.starts_with(&otel_filter_directives()),
                 "{directives} should begin with the span filter's directives"
             );
+            for target in OTEL_LOG_EXCLUDED_TARGETS {
+                assert!(
+                    directives.contains(&format!("{target}=off")),
+                    "{directives} should silence {target}"
+                );
+            }
+        }
+
+        /// Every excluded target has to survive the filter parser. `parse_lossy` drops a directive
+        /// it cannot read with nothing but a line on stderr, and the target it named is then
+        /// exported after all, which is how a stray space inside the list stays invisible.
+        #[test]
+        fn every_excluded_target_is_a_usable_directive() {
+            let directives = otel_log_filter_directives();
             assert!(
-                directives.ends_with(OTEL_LOG_EXCLUDED_TARGETS),
-                "{directives} should end with the excluded targets"
+                EnvFilter::builder().parse(&directives).is_ok(),
+                "{directives} should parse with no directive dropped"
             );
+        }
+
+        /// The exclusion half of the log filter, built without reading the environment so a
+        /// sibling test's `OXEN_OTEL_FILTER` cannot change what this asserts.
+        fn excluded_directives() -> String {
+            OTEL_LOG_EXCLUDED_TARGETS
+                .iter()
+                .map(|target| format!("{target}=off"))
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        /// The targets the exclusion test below emits an event on.
+        const EMITTED_EXCLUDED_TARGETS: &[&str] = &[
+            "opentelemetry",
+            "opentelemetry_sdk",
+            "opentelemetry_otlp",
+            "reqwest",
+            "hyper",
+            "hyper_util",
+            "h2",
+            "tonic",
+            "tower",
+        ];
+
+        /// A target added to the exclusion list without an event to match leaves the exclusion
+        /// unproven for it, and the test below still passes.
+        #[test]
+        fn every_excluded_target_is_covered_by_an_event() {
+            assert_eq!(EMITTED_EXCLUDED_TARGETS, OTEL_LOG_EXCLUDED_TARGETS);
         }
 
         /// A log record picks up the trace and span id of the tracing span it was recorded in,
@@ -1167,10 +1233,14 @@ mod tests {
                 .build();
             let tracer_provider = SdkTracerProvider::builder().build();
 
-            // Directives asking for excluded targets, to prove the exclusion outranks them. `h2`
-            // stands in for the transport crates, whose frame logging is the loudest of them.
-            let directives =
-                format!("info,opentelemetry_sdk=trace,h2=trace,{OTEL_LOG_EXCLUDED_TARGETS}");
+            // Directives asking for every excluded target at its loudest, to prove the exclusion
+            // outranks them.
+            let asked_for = OTEL_LOG_EXCLUDED_TARGETS
+                .iter()
+                .map(|target| format!("{target}=trace"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let directives = format!("info,{asked_for},{}", excluded_directives());
             let subscriber = tracing_subscriber::registry()
                 .with(tracing_opentelemetry::layer().with_tracer(tracer_provider.tracer("oxen")))
                 .with(
@@ -1182,9 +1252,18 @@ mod tests {
                 let span = tracing::info_span!("request");
                 let _entered = span.enter();
                 tracing::info!("handled the request");
+                // One event per excluded target, spelled out because `target:` takes a literal.
+                // `every_excluded_target_is_covered_by_an_event` keeps these in step with the
+                // constant.
+                tracing::error!(target: "opentelemetry", "export failed");
                 tracing::error!(target: "opentelemetry_sdk", "export failed");
-                tracing::debug!(target: "h2", "send");
+                tracing::error!(target: "opentelemetry_otlp", "export failed");
+                tracing::debug!(target: "reqwest", "starting new connection");
+                tracing::debug!(target: "hyper", "flushed frame");
                 tracing::debug!(target: "hyper_util", "pooling idle connection");
+                tracing::debug!(target: "h2", "send");
+                tracing::debug!(target: "tonic", "sending request");
+                tracing::debug!(target: "tower", "service ready");
                 span.context().span().span_context().trace_id()
             });
 
