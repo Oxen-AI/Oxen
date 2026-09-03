@@ -108,10 +108,14 @@ jobs:
           echo "COMMIT=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
           echo "BUILD_DATE_UTC=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
 
+      # Thin LTO, matching `build_branch.yml` and `release_windows.yml`. Every server image this
+      # repository publishes is then built the same way, so a release can reuse an image already
+      # built from main instead of rebuilding it.
       - name: Build Docker Image
         run: |
           cd ${{ github.workspace }}
           docker build \
+            --build-arg CARGO_PROFILE_RELEASE_LTO=thin \
             --label "org.opencontainers.image.revision=${{ steps.metadata.outputs.COMMIT }}" \
             --label "org.opencontainers.image.version=${{ steps.metadata.outputs.VERSION }}" \
             --label "org.opencontainers.image.created=${{ steps.metadata.outputs.BUILD_DATE_UTC }}" \
