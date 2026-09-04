@@ -2,6 +2,7 @@ use polars::frame::DataFrame;
 
 use serde_json::Value;
 
+use crate::core::db::data_frames::DataFrameError;
 use crate::core::db::data_frames::df_db::with_df_db_manager;
 use crate::core::db::data_frames::rows;
 use crate::core::df::tabular;
@@ -63,14 +64,16 @@ pub fn update(
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
 
     let mut df = tabular::parse_json_to_df(data)?;
-    let row = repositories::workspaces::data_frames::rows::get_by_id(workspace, path, row_id)?;
-    if row.height() == 0 {
-        return Err(OxenError::resource_not_found("row not found"));
-    }
-
     let result = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| rows::modify_row(conn, &mut df, row_id))
-    })?;
+    });
+    let result = match result {
+        // The update matched no row.
+        Err(DataFrameError::MissingDataFrame(_)) => {
+            return Err(OxenError::resource_not_found("row not found"));
+        }
+        result => result?,
+    };
 
     workspaces::files::track_modified_data_frame(workspace, path)?;
 
