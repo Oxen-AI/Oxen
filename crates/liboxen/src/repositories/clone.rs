@@ -103,6 +103,39 @@ mod tests {
 
     use super::*;
 
+    /// A clone is the main path that first attaches a repository to a server, so the UUID the
+    /// server reports has to survive into the cloned repo's own config rather than only living on
+    /// the in-memory remote.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
+    #[tokio::test]
+    async fn test_clone_records_the_remotes_repo_uuid() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|local_repo| async move {
+            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let expected = remote_repo
+                .remote
+                .repo_uuid
+                .expect("the server reports a UUID for a repo it created");
+
+            test::run_empty_dir_test_async(|dir| async move {
+                let opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
+                let cloned = clone_remote(&opts).await?;
+
+                // Read it back off disk rather than from the returned struct, since persisting it
+                // is the whole point.
+                let reopened = LocalRepository::from_dir(&cloned.path)?;
+                let remote = reopened
+                    .get_remote(DEFAULT_REMOTE_NAME)
+                    .expect("a clone records a remote under the default name");
+                assert_eq!(remote.repo_uuid, Some(expected));
+
+                api::client::repositories::delete(&remote_repo).await?;
+                Ok(())
+            })
+            .await
+        })
+        .await
+    }
+
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_clone_remote() -> Result<(), OxenError> {
