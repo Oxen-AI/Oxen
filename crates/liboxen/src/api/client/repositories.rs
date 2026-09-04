@@ -65,10 +65,7 @@ pub async fn get_by_name_host_and_remote(
     let scheme = scheme.as_ref();
     let url = api::endpoint::remote_url_from_name_and_scheme(host.as_ref(), name, scheme);
     log::debug!("get_by_name_host_and_remote({name}) remote url: {url}");
-    let remote = Remote {
-        name: String::from(remote.as_ref()),
-        url,
-    };
+    let remote = Remote::new(remote.as_ref(), &url);
     get_by_remote(&remote).await
 }
 
@@ -81,10 +78,7 @@ pub async fn exists(repo: &RemoteRepository) -> Result<bool, OxenError> {
 }
 
 pub async fn get_by_url(url: &str) -> Result<RemoteRepository, OxenError> {
-    let remote = Remote {
-        name: String::from(DEFAULT_REMOTE_NAME),
-        url: url.to_string(),
-    };
+    let remote = Remote::new(DEFAULT_REMOTE_NAME, url);
     get_by_remote(&remote).await
 }
 
@@ -141,12 +135,12 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
             let response: RepositoryCreationResponse = serde_json::from_str(&body)?;
             Ok(RemoteRepository::from_creation_view(
                 &response.repository,
-                &Remote {
-                    url: api::endpoint::remote_url_from_namespace_name_scheme(
+                &Remote::new(
+                    DEFAULT_REMOTE_NAME,
+                    &api::endpoint::remote_url_from_namespace_name_scheme(
                         &host, namespace, repo_name, &scheme,
                     ),
-                    name: String::from(DEFAULT_REMOTE_NAME),
-                },
+                ),
             ))
         }
         Err(err) => {
@@ -178,15 +172,15 @@ pub async fn create(repo_new: RepoNew) -> Result<RemoteRepository, OxenError> {
         match response {
             Ok(response) => Ok(RemoteRepository::from_creation_view(
                 &response.repository,
-                &Remote {
-                    url: api::endpoint::remote_url_from_namespace_name_scheme(
+                &Remote::new(
+                    DEFAULT_REMOTE_NAME,
+                    &api::endpoint::remote_url_from_namespace_name_scheme(
                         &host,
                         &repo_new.namespace,
                         &repo_new.name,
                         &repo_new.scheme(),
                     ),
-                    name: String::from(DEFAULT_REMOTE_NAME),
-                },
+                ),
             )),
             Err(err) => {
                 let err = format!(
@@ -230,14 +224,14 @@ pub async fn create_from_local(
     match response {
         Ok(response) => Ok(RemoteRepository::from_creation_view(
             &response.repository,
-            &Remote {
-                url: api::endpoint::remote_url_from_namespace_name(
+            &Remote::new(
+                DEFAULT_REMOTE_NAME,
+                &api::endpoint::remote_url_from_namespace_name(
                     &host,
                     &repo_new.namespace,
                     &repo_new.name,
                 ),
-                name: String::from(DEFAULT_REMOTE_NAME),
-            },
+            ),
         )),
         Err(err) => Err(OxenError::FailCreateOrFindRemoteRepo {
             repo_id: repo_new.repo_id(),
@@ -314,10 +308,7 @@ pub async fn transfer_namespace(
                     &repository.name,
                     &scheme,
                 );
-                let new_remote = Remote {
-                    url: new_remote_url,
-                    name: repository.remote.name.clone(),
-                };
+                let new_remote = Remote::new(&repository.remote.name, &new_remote_url);
 
                 Ok(RemoteRepository::from_view(
                     &response.repository,

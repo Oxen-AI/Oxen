@@ -367,11 +367,7 @@ impl LocalRepository {
     pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {
         self.remote_name = Some(name.as_ref().to_owned());
         let name = name.as_ref();
-        let url = url.as_ref();
-        let remote = Remote {
-            name: name.to_owned(),
-            url: url.to_owned(),
-        };
+        let remote = Remote::new(name, url.as_ref());
         if self.has_remote(name) {
             // find remote by name and set
             for i in 0..self.remotes.len() {
@@ -976,10 +972,7 @@ mod tests {
         RemoteRepository {
             namespace: String::from("ns"),
             name: String::from("repo"),
-            remote: Remote {
-                name: String::from("origin"),
-                url: String::from("http://localhost:3000/ns/repo"),
-            },
+            remote: Remote::new("origin", "http://localhost:3000/ns/repo"),
             min_version: None,
             is_empty: true,
             storage_kind: StorageKind::Local,

@@ -27,7 +27,9 @@ impl RemoteRepository {
         RemoteRepository {
             namespace: repository.namespace.clone(),
             name: repository.name.clone(),
-            remote: remote.clone(),
+            remote: remote
+                .clone()
+                .with_repo_uuid_if_absent(repository.repo_uuid),
             min_version: repository.min_version.clone(),
             is_empty: repository.is_empty,
             storage_kind: repository.storage_kind,
@@ -42,7 +44,9 @@ impl RemoteRepository {
         RemoteRepository {
             namespace: repository.namespace.clone(),
             name: repository.name.clone(),
-            remote: remote.clone(),
+            remote: remote
+                .clone()
+                .with_repo_uuid_if_absent(repository.repo_uuid),
             min_version: repository.min_version.clone(),
             is_empty: true,
             storage_kind: repository.storage_kind,
