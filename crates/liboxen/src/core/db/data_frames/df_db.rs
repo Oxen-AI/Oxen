@@ -714,7 +714,10 @@ fn sql_shape(sql: &str) -> Result<SqlShape, DataFrameError> {
                 [table] if table.joins.is_empty() => matches!(
                     &table.relation,
                     ast::TableFactor::Table { name, .. }
-                        if matches!(name.0.as_slice(), [ident] if ident.value == TABLE_NAME)
+                        if matches!(
+                            name.0.as_slice(),
+                            [ast::ObjectNamePart::Identifier(ident)] if ident.value == TABLE_NAME
+                        )
                 ),
                 _ => false,
             };
@@ -743,10 +746,7 @@ fn sql_shape(sql: &str) -> Result<SqlShape, DataFrameError> {
 
     Ok(SqlShape {
         orders_itself: query.order_by.is_some(),
-        bounds_itself: query.limit.is_some()
-            || query.offset.is_some()
-            || query.fetch.is_some()
-            || !query.limit_by.is_empty(),
+        bounds_itself: query.limit_clause.is_some() || query.fetch.is_some(),
         resolves_row_id,
     })
 }
@@ -765,12 +765,20 @@ fn add_special_columns(conn: &duckdb::Connection, sql: &str) -> Result<String, D
             // row and drop any ORDER BY — a sort would scan the whole table
             // just to answer a schema question.
             query.order_by = None;
-            let one = SqlExpr::Value(SqlValue::Number("1".into(), false));
+            let one = SqlExpr::Value(SqlValue::Number("1".into(), false).with_empty_span());
             // DuckDB takes LIMIT or FETCH, never both: the cap goes on
             // whichever clause the statement already carries.
-            match &mut query.fetch {
-                Some(fetch) => fetch.quantity = Some(one),
-                None => query.limit = Some(one),
+            match (&mut query.fetch, &mut query.limit_clause) {
+                (Some(fetch), _) => fetch.quantity = Some(one),
+                (None, Some(ast::LimitClause::LimitOffset { limit, .. })) => *limit = Some(one),
+                (None, Some(ast::LimitClause::OffsetCommaLimit { limit, .. })) => *limit = one,
+                (None, None) => {
+                    query.limit_clause = Some(ast::LimitClause::LimitOffset {
+                        limit: Some(one),
+                        offset: None,
+                        limit_by: Vec::new(),
+                    })
+                }
             }
         }
         ast
@@ -2179,5 +2187,126 @@ mod tests {
             assert_eq!(ids, vec![1, 2, 3], "the sequence must reset on re-index");
             Ok(())
         })
+    }
+
+    #[test]
+    fn test_self_bounded_select_keeps_its_own_limit() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|data_dir| {
+            let db_file = data_dir.join("data.db");
+            let conn = get_connection(&db_file)?;
+
+            conn.execute(
+                &format!(
+                    "CREATE TABLE {TABLE_NAME} (
+                        color VARCHAR,
+                        {OXEN_ID_COL} VARCHAR DEFAULT (uuid()::VARCHAR)
+                    )"
+                ),
+                [],
+            )?;
+            conn.execute(
+                &format!(
+                    "INSERT INTO {TABLE_NAME} (color) VALUES ('red'), ('green'), ('blue'), ('grey')"
+                ),
+                [],
+            )?;
+
+            // The schema probe caps the statement at one row, so a statement that
+            // carries its own LIMIT still reports every column it projects.
+            let sql = format!("SELECT color FROM {TABLE_NAME} LIMIT 2");
+            let df = select_str(&conn, &sql, None)?;
+            assert_eq!(df.height(), 2, "the caller's LIMIT must survive: {df:?}");
+            assert!(
+                df.get_column_names().iter().any(|c| *c == OXEN_ID_COL),
+                "{OXEN_ID_COL} must be injected: {df:?}"
+            );
+
+            // A page over a self-bounded statement reads out of it rather than
+            // replacing its bound, so page two of the two rows it selects is empty.
+            let opts = DFOpts {
+                page: Some(2),
+                page_size: Some(2),
+                ..DFOpts::empty()
+            };
+            let paged = select_str(&conn, &sql, Some(&opts))?;
+            assert_eq!(paged.height(), 0, "the page nests inside: {paged:?}");
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_sql_shape_reads_own_order_and_bounds() -> Result<(), OxenError> {
+        // (statement, orders_itself, bounds_itself)
+        let cases = [
+            ("SELECT * FROM df", false, false),
+            ("SELECT * FROM df LIMIT 10", false, true),
+            ("SELECT * FROM df LIMIT 0", false, true),
+            // `LIMIT ALL` names no bound, so a page composes onto it directly.
+            ("SELECT * FROM df LIMIT ALL", false, false),
+            ("SELECT * FROM df OFFSET 5", false, true),
+            ("SELECT * FROM df OFFSET 5 ROWS", false, true),
+            ("SELECT * FROM df LIMIT 10 OFFSET 5", false, true),
+            ("SELECT * FROM df OFFSET 5 LIMIT 10", false, true),
+            ("SELECT * FROM df LIMIT ALL OFFSET 5", false, true),
+            ("SELECT * FROM df FETCH FIRST 10 ROWS ONLY", false, true),
+            (
+                "SELECT * FROM df OFFSET 5 ROWS FETCH NEXT 10 ROWS ONLY",
+                false,
+                true,
+            ),
+            ("SELECT * FROM df ORDER BY a", true, false),
+            ("SELECT * FROM df ORDER BY a LIMIT 10", true, true),
+            ("SELECT * FROM df ORDER BY a DESC OFFSET 3", true, true),
+        ];
+
+        for (sql, orders_itself, bounds_itself) in cases {
+            let shape = sql_shape(sql)?;
+            assert_eq!(shape.orders_itself, orders_itself, "orders_itself: {sql}");
+            assert_eq!(shape.bounds_itself, bounds_itself, "bounds_itself: {sql}");
+        }
+
+        // `LIMIT ... BY` and `LIMIT <offset>, <limit>` belong to other dialects
+        // and never reach the shape check.
+        for sql in [
+            "SELECT * FROM df LIMIT 10 BY a",
+            "SELECT * FROM df LIMIT 5, 10",
+        ] {
+            assert!(sql_shape(sql).is_err(), "expected a parse error: {sql}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_sql_shape_resolves_row_id_for_direct_reads_only() -> Result<(), OxenError> {
+        let cases = [
+            ("SELECT * FROM df", true),
+            ("SELECT a, b FROM df", true),
+            ("SELECT a AS x FROM df", true),
+            // An unbounded statement still resolves the column a page orders by.
+            ("SELECT * FROM df LIMIT ALL", true),
+            // A quoted name reads as the same table.
+            (r#"SELECT "df".a FROM "df""#, true),
+            ("SELECT DISTINCT a FROM df", false),
+            ("SELECT count(*) FROM df", false),
+            ("SELECT a, count(*) FROM df GROUP BY a", false),
+            ("SELECT a FROM df GROUP BY a HAVING count(*) > 1", false),
+            ("SELECT a + 1 FROM df", false),
+            ("SELECT a FROM other", false),
+            ("SELECT a FROM df JOIN other ON df.a = other.a", false),
+            ("SELECT * FROM df, other", false),
+            ("SELECT * FROM (SELECT * FROM df) AS t", false),
+            ("SELECT * FROM df UNION SELECT * FROM df", false),
+            ("WITH t AS (SELECT * FROM df) SELECT * FROM t", false),
+            ("UPDATE df SET a = 1", false),
+        ];
+
+        for (sql, resolves_row_id) in cases {
+            let shape = sql_shape(sql)?;
+            assert_eq!(shape.resolves_row_id, resolves_row_id, "resolves: {sql}");
+        }
+
+        Ok(())
     }
 }
