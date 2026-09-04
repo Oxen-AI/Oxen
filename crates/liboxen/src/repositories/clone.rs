@@ -6,10 +6,9 @@
 use std::path::Path;
 
 use crate::api;
-use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::error::OxenError;
-use crate::model::{LocalRepository, Remote, RemoteRepository};
+use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::CloneOpts;
 use crate::opts::FetchOpts;
 
@@ -61,11 +60,7 @@ async fn clone_remote(opts: &CloneOpts) -> Result<LocalRepository, OxenError> {
         opts.is_remote,
     );
 
-    let remote = Remote {
-        name: String::from(DEFAULT_REMOTE_NAME),
-        url: opts.url.to_owned(),
-    };
-    let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
+    let remote_repo = api::client::repositories::get_by_url(&opts.url).await?;
 
     if opts.is_remote {
         clone_repo_remote_mode(remote_repo, opts).await
