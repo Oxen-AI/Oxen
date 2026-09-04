@@ -21,6 +21,7 @@ pub mod stats;
 pub mod tabular;
 pub mod transfer;
 pub mod tree;
+pub mod verify;
 pub mod versions;
 pub mod workspaces;
 
@@ -47,5 +48,6 @@ pub use stats::stats;
 pub use tabular::tabular;
 pub use transfer::transfer;
 pub use tree::tree;
+pub use verify::verify;
 pub use versions::versions;
 pub use workspaces::workspace;

@@ -21,5 +21,6 @@ pub mod repositories;
 pub mod revisions;
 pub mod schemas;
 pub mod tree;
+pub mod verify;
 pub mod versions;
 pub mod workspaces;
