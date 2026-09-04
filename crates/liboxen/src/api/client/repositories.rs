@@ -145,7 +145,7 @@ pub async fn create_empty(repo: RepoNew) -> Result<RemoteRepository, OxenError> 
                     url: api::endpoint::remote_url_from_namespace_name_scheme(
                         &host, namespace, repo_name, &scheme,
                     ),
-                    name: String::from("origin"),
+                    name: String::from(DEFAULT_REMOTE_NAME),
                 },
             ))
         }
