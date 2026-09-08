@@ -47,7 +47,7 @@
 //! // Set remote
 //! let remote_url = "http://0.0.0.0:3000/ox/test_repo";
 //! let remote_name = "origin";
-//! command::config::set_remote(&mut repo, remote_name, remote_url)?;
+//! command::config::set_remote_by_url(&mut repo, remote_name, remote_url).await?;
 //! // Push to remote
 //! repositories::push(&repo).await?;
 //! # Ok(())

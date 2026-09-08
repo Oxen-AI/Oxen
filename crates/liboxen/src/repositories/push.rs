@@ -28,7 +28,8 @@
 /// repositories::commit(&repo, "My commit message")?;
 ///
 /// // Set the remote server
-/// command::config::set_remote(&mut repo, "origin", "http://localhost:3000/repositories/hello")?;
+/// let remote_url = "http://localhost:3000/repositories/hello";
+/// command::config::set_remote_by_url(&mut repo, "origin", remote_url).await?;
 ///
 /// // Push the file
 /// repositories::push(&repo).await?;

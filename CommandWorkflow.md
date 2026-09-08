@@ -127,9 +127,14 @@ Revert back
 
 ## Collaboration
 
-Push the changes
+Create the remote repository, then point the local one at it. Setting a remote reads the
+repository from the server, so it has to exist first.
+
+`oxen create-remote --name repositories/SmallCatDog --host 0.0.0.0:3000 --scheme http`
 
 `oxen config --set-remote origin http://0.0.0.0:3000/repositories/SmallCatDog`
+
+Push the changes
 
 `oxen push`
 

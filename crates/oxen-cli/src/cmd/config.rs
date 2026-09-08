@@ -104,7 +104,7 @@ impl RunCmd for ConfigCmd {
             let mut repo = LocalRepository::from_current_dir()?;
             let values: Vec<_> = remote.collect();
             // clap enforces number_of_values(2), so this is guaranteed
-            self.set_remote(&mut repo, values[0], values[1])?;
+            self.set_remote(&mut repo, values[0], values[1]).await?;
         }
 
         if let Some(name) = args.get_one::<String>("delete-remote") {
@@ -128,13 +128,13 @@ impl ConfigCmd {
         }
     }
 
-    pub fn set_remote(
+    async fn set_remote(
         &self,
         repo: &mut LocalRepository,
         name: &str,
         url: &str,
     ) -> Result<(), OxenError> {
-        command::config::set_remote(repo, name, url)?;
+        command::config::set_remote_by_url(repo, name, url).await?;
 
         Ok(())
     }
