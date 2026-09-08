@@ -404,80 +404,89 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
     }
 
     let recovered = tokio::task::spawn_blocking(move || -> Result<bool, OxenError> {
+        // The export and the rebuild that consumes it must be one step: a row written after the
+        // export but before the drop below is not in the export, so the rebuilt table would not
+        // contain it.
         let outcome = with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| -> Result<bool, DataFrameError> {
-                let schema = df_db::get_schema(conn, TABLE_NAME)?;
-                let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
-                let has_user_col = schema
-                    .fields
-                    .iter()
-                    .any(|f| !LEGACY_AND_CURRENT_INTERNAL_COLS.contains(&f.name.as_str()));
-                if !has_user_col {
-                    // Nothing but internal columns — no user data to preserve.
-                    return Ok(false);
-                }
+            manager.with_conn(|conn| {
+                let outcome = (|| -> Result<bool, DataFrameError> {
+                    let schema = df_db::get_schema(conn, TABLE_NAME)?;
+                    let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
+                    let has_user_col = schema
+                        .fields
+                        .iter()
+                        .any(|f| !LEGACY_AND_CURRENT_INTERNAL_COLS.contains(&f.name.as_str()));
+                    if !has_user_col {
+                        // Nothing but internal columns — no user data to preserve.
+                        return Ok(false);
+                    }
 
-                let projection = build_export_projection_excluding(
-                    conn,
-                    TABLE_NAME,
-                    &LEGACY_AND_CURRENT_INTERNAL_COLS,
-                )?;
+                    let projection = build_export_projection_excluding(
+                        conn,
+                        TABLE_NAME,
+                        &LEGACY_AND_CURRENT_INTERNAL_COLS,
+                    )?;
 
-                // Keep row order: prefer the persisted ordering column, falling
-                // back to DuckDB's physical rowid (insertion order) for older
-                // tables that predate it.
-                let order_by = if has_col(OXEN_ROW_ID_COL) {
-                    format!("ORDER BY {OXEN_ROW_ID_COL}")
-                } else {
-                    "ORDER BY rowid".to_string()
-                };
+                    // Keep row order: prefer the persisted ordering column, falling
+                    // back to DuckDB's physical rowid (insertion order) for older
+                    // tables that predate it.
+                    let order_by = if has_col(OXEN_ROW_ID_COL) {
+                        format!("ORDER BY {OXEN_ROW_ID_COL}")
+                    } else {
+                        "ORDER BY rowid".to_string()
+                    };
 
-                // Honor the old soft-delete semantics: a row tombstoned as
-                // 'removed' is a pending deletion and must not be resurrected.
-                let where_clause = if has_col(LEGACY_DIFF_STATUS_COL) {
-                    format!("WHERE \"{LEGACY_DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
-                } else {
-                    String::new()
-                };
+                    // Honor the old soft-delete semantics: a row tombstoned as
+                    // 'removed' is a pending deletion and must not be resurrected.
+                    let where_clause = if has_col(LEGACY_DIFF_STATUS_COL) {
+                        format!("WHERE \"{LEGACY_DIFF_STATUS_COL}\" IS DISTINCT FROM 'removed'")
+                    } else {
+                        String::new()
+                    };
 
-                // Quote the table name as an identifier so it binds as a table
-                // reference rather than relying on DuckDB's string-literal
-                // replacement-scan fallback.
-                let select = format!(
-                    "SELECT {projection} FROM {} {where_clause} {order_by}",
-                    df_db::quote_ident(TABLE_NAME)
-                );
-                let copy = wrap_sql_for_export(&select, &recover_path);
-                conn.execute(&copy, [])?;
+                    // Quote the table name as an identifier so it binds as a table
+                    // reference rather than relying on DuckDB's string-literal
+                    // replacement-scan fallback.
+                    let select = format!(
+                        "SELECT {projection} FROM {} {where_clause} {order_by}",
+                        df_db::quote_ident(TABLE_NAME)
+                    );
+                    let copy = wrap_sql_for_export(&select, &recover_path);
+                    conn.execute(&copy, [])?;
 
-                // Rebuild inside a transaction: drop the stale table, then index
-                // the exported rows in the current format. On failure roll back
-                // so the original stale table is left intact.
-                conn.execute_batch("BEGIN TRANSACTION")?;
-                let build = (|| -> Result<(), DataFrameError> {
-                    df_db::drop_table(conn, TABLE_NAME)?;
-                    df_db::index_file_with_id(&recover_path, conn, &extension)?;
-                    Ok(())
-                })();
-                match build {
-                    Ok(()) => {
-                        conn.execute_batch("COMMIT")?;
-                        if let Err(e) = conn.execute_batch("CHECKPOINT") {
-                            log::warn!(
-                                "reindex_preserving_rows: CHECKPOINT failed for {db_path:?}: {e}"
-                            );
+                    // Rebuild inside a transaction: drop the stale table, then index
+                    // the exported rows in the current format. On failure roll back
+                    // so the original stale table is left intact.
+                    conn.execute_batch("BEGIN TRANSACTION")?;
+                    let build = (|| -> Result<(), DataFrameError> {
+                        df_db::drop_table(conn, TABLE_NAME)?;
+                        df_db::index_file_with_id(&recover_path, conn, &extension)?;
+                        Ok(())
+                    })();
+                    match build {
+                        Ok(()) => {
+                            conn.execute_batch("COMMIT")?;
+                            if let Err(e) = conn.execute_batch("CHECKPOINT") {
+                                log::warn!(
+                                    "reindex: CHECKPOINT after rebuild failed for {db_path:?}: {e}"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            let _ = conn.execute_batch("ROLLBACK");
+                            return Err(e);
                         }
                     }
-                    Err(e) => {
-                        let _ = conn.execute_batch("ROLLBACK");
-                        return Err(e);
-                    }
-                }
-                Ok(true)
+                    Ok(true)
+                })();
+                // Clean up the intermediate export regardless of the rebuild's result, and before
+                // releasing the connection: every recovery of this data frame in this process
+                // exports to the same path, so removing it after the connection is released can
+                // delete an export that a second recovery has just written and is about to read.
+                let _ = std::fs::remove_file(&recover_path);
+                outcome
             })
         });
-        // Clean up the intermediate export regardless of the rebuild's result.
-        let _ = std::fs::remove_file(&recover_path);
         Ok(outcome?)
     })
     .await??;
@@ -506,22 +515,60 @@ pub async fn rename(
 
     // Handle duckdb file operations first
     let og_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let og_db_path_parent = og_db_path.parent().unwrap();
     let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
-    let new_db_path_parent = new_db_path.parent().unwrap();
 
-    // The source database is closed and held while its files are copied and removed, so nothing
-    // can write into a database that is about to be deleted. Closing checkpoints the WAL into the
-    // database file first, so the copy carries a whole database and no WAL file that would be
-    // replayed against the copy.
-    with_db_closed(&og_db_path, || -> Result<(), OxenError> {
-        if !new_db_path_parent.exists() {
-            util::fs::create_dir_all(new_db_path_parent)?;
-        }
-        util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
-        util::fs::remove_dir_all(og_db_path_parent)?;
-        Ok(())
-    })?;
+    // A rename onto the data frame's own path changes nothing, and carrying on would destroy it:
+    // the move removes the destination directory, which is the data frame's own, and the staged
+    // entry is upserted at the new path only to be deleted at the old one, which is the same entry.
+    // Compared by DuckDB path, the data frame's identity, so two spellings of one path count as
+    // the same data frame.
+    if og_db_path == new_db_path {
+        return util::fs::path_relative_to_dir(new_path, &workspace_repo.path);
+    }
+
+    let Some(og_db_path_parent) = og_db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {og_db_path:?}"
+        )));
+    };
+    let Some(new_db_path_parent) = new_db_path.parent().map(Path::to_path_buf) else {
+        return Err(OxenError::basic_str(format!(
+            "Failed to get parent directory for {new_db_path:?}"
+        )));
+    };
+
+    // Both databases closed and held for the move. The source's directory is moved away, so a
+    // connection left open on it would write into files that are gone; renaming onto an existing
+    // data frame replaces the destination's directory, so a connection left open on it would go
+    // on serving a catalog and pages for files that no longer exist. Closing checkpoints each WAL
+    // into its own database file first, so the moved directory carries a whole database. Taken in
+    // sorted path order, which is what keeps two renames between the same pair from deadlocking by
+    // taking them in opposite orders. The two are always distinct here, since a rename onto the
+    // same data frame returned above, so taking both never asks a non-reentrant hold for a second
+    // entry.
+    //
+    // All of it on the blocking pool: waiting for the holds, and then the filesystem work they
+    // guard. Only the staged-entry work below still runs on the async worker.
+    tokio::task::spawn_blocking(move || {
+        let move_db = || -> Result<(), OxenError> {
+            // Replace the destination's directory rather than merge into it. A file left over
+            // from the destination's own database, its WAL above all, would otherwise sit beside
+            // the moved database and be replayed against it on the next open.
+            if new_db_path_parent.exists() {
+                util::fs::remove_dir_all(&new_db_path_parent)?;
+            }
+            util::fs::rename(&og_db_path_parent, &new_db_path_parent)?;
+            Ok(())
+        };
+
+        let (first, second) = if og_db_path < new_db_path {
+            (&og_db_path, &new_db_path)
+        } else {
+            (&new_db_path, &og_db_path)
+        };
+        with_db_closed(first, || with_db_closed(second, move_db))
+    })
+    .await??;
 
     // Use staged_db_manager
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
