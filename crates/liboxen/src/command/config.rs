@@ -74,6 +74,7 @@ mod tests {
 
     /// Attaching from a URL asks the server who the repository is, so the UUID lands in the config
     /// even though the caller only had a URL to go on.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_set_remote_by_url_records_the_servers_uuid() -> Result<(), OxenError> {
         test::run_empty_remote_repo_test(|mut repo, remote_repo| async move {
