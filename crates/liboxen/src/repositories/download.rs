@@ -67,9 +67,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::command;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
-    use crate::constants::DEFAULT_REMOTE_NAME;
+
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -91,12 +91,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -140,12 +136,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files and large file")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -187,12 +179,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -231,7 +219,7 @@ mod tests {
             repositories::add(&local_repo, local_path).await?;
             repositories::commit(&local_repo, "Added hello.txt")?;
 
-            command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, cloned_remote.url())?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
             repositories::push(&local_repo).await?;
 
             test::run_empty_dir_test_async(|repo_dir| async move {

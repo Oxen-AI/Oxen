@@ -62,7 +62,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::api;
-    use crate::command;
+
     use crate::constants;
     use crate::error::OxenError;
     use crate::model::EntryDataType;
@@ -95,12 +95,8 @@ mod tests {
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -117,9 +113,6 @@ mod tests {
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding a second cat")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: branch_name.to_string(),
@@ -176,12 +169,8 @@ mod tests {
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -198,10 +187,6 @@ mod tests {
 
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Modifying the cat")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -265,12 +250,8 @@ mod tests {
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -286,9 +267,6 @@ mod tests {
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -386,12 +364,8 @@ mod tests {
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -414,10 +388,6 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
 
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -526,12 +496,8 @@ define the word,what does the word 'the' mean?,it is a stopword.,language
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -555,10 +521,6 @@ who won the game?,The packers beat up on the bears,packers
 
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Modifying the csv")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -666,12 +628,8 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &images_dir).await?;
             let og_commit = repositories::commit(&repo, "Adding initial cat image")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -689,10 +647,6 @@ who won the game?,The packers beat up on the bears,packers
 
             repositories::add(&repo, &images_dir).await?;
             let new_commit = repositories::commit(&repo, "Modifying the cat")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -765,12 +719,8 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &repo_filepath).await?;
             repositories::commit(&repo, "Adding train csv with two columns and 50k rows")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -874,12 +824,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -897,10 +843,6 @@ who won the game?,The packers beat up on the bears,packers
 
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
-
-            // Set the proper remote
-            // let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -968,12 +910,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1013,10 +951,6 @@ who won the game?,The packers beat up on the bears,packers
             let rm_opts = RmOpts::from_path(Path::new("images").join("cats").join("cat_2.jpg"));
             repositories::rm(&repo, &rm_opts).await?;
             repositories::commit(&repo, "Remove and modify some cats")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1125,12 +1059,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1153,9 +1083,6 @@ who won the game?,The packers beat up on the bears,packers
             repositories::rm(&repo, &rm_opts).await?;
             repositories::commit(&repo, "Removing cat images")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push new branch real good
             repositories::push::push_remote_branch(
@@ -1242,12 +1169,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1270,10 +1193,6 @@ who won the game?,The packers beat up on the bears,packers
             };
             repositories::rm(&repo, &rm_opts).await?;
             repositories::commit(&repo, "Removing cat images")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1360,12 +1279,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1385,10 +1300,6 @@ who won the game?,The packers beat up on the bears,packers
 
             repositories::add(&repo, dogs_dir).await?;
             repositories::commit(&repo, "Adding dog images 🐕")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1493,12 +1404,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1526,10 +1433,6 @@ who won the game?,The packers beat up on the bears,packers
 
             repositories::add(&repo, cats_dir).await?;
             repositories::commit(&repo, "Adding dwight/vince image to cats")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1635,12 +1538,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1662,9 +1561,6 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &images_dir)?;
             repositories::commit(&repo, "Modify cat images")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             // Push new branch real good
             repositories::push::push_remote_branch(
@@ -1750,12 +1646,8 @@ who won the game?,The packers beat up on the bears,packers
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -1777,10 +1669,6 @@ who won the game?,The packers beat up on the bears,packers
             };
             repositories::rm(&repo, &rm_opts).await?;
             repositories::commit(&repo, "Removing cat images")?;
-
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
 
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
@@ -1854,12 +1742,8 @@ who won the game?,The packers beat up on the bears,packers
             repositories::add(&repo, &images_dir).await?;
             repositories::commit(&repo, "Adding initial dog images")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;

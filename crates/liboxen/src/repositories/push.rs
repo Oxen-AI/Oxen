@@ -44,7 +44,7 @@ pub use crate::core::v_latest::push::push_remote_branch;
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
+
     use crate::constants;
     use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
     use crate::core::progress::push_progress::PushProgress;
@@ -89,8 +89,7 @@ mod tests {
 
             // Create the remote
             let remote_repo = test::create_remote_repo(&repo).await?;
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -138,8 +137,7 @@ mod tests {
 
             // Set up remote and push the first commit
             let remote_repo = test::create_remote_repo(&repo).await?;
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
             repositories::push(&repo).await?;
 
             // Add a second inline directory, commit, push between commits
@@ -213,8 +211,7 @@ mod tests {
 
             // Set up remote and push (only at the end — both commits in one push)
             let remote_repo = test::create_remote_repo(&repo).await?;
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
             repositories::push(&repo).await?;
 
             let page_num = 1;
@@ -293,9 +290,7 @@ mod tests {
             // Create the remote repo
             let remote_repo = test::create_remote_repo(&repo).await?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
 
             // Push the files
             repositories::push(&repo).await?;
@@ -380,8 +375,7 @@ mod tests {
 
             // Set up remote and push
             let remote_repo = test::create_remote_repo(&repo).await?;
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
             repositories::push(&repo).await?;
 
             let page_num = 1;
@@ -513,9 +507,7 @@ mod tests {
                 repositories::add(&repo_1, &new_file_path).await?;
                 repositories::commit(&repo_1, "Adding first file path.")?;
                 // Set/create the proper remote
-                let remote = test::repo_remote_url_from(&repo_1.dirname());
-                command::config::set_remote(&mut repo_1, constants::DEFAULT_REMOTE_NAME, &remote)?;
-                test::create_remote_repo(&repo_1).await?;
+                let remote_repo = test::connect_remote_repo(&mut repo_1).await?;
                 repositories::push(&repo_1).await?;
 
                 // Adding two commits to have a longer history that also should fail
@@ -532,7 +524,7 @@ mod tests {
                 repositories::commit(&repo_2, "Adding third file path.")?;
 
                 // Set remote to the same as the first repo
-                command::config::set_remote(&mut repo_2, constants::DEFAULT_REMOTE_NAME, &remote)?;
+                test::attach_remote_repo(&mut repo_2, &remote_repo)?;
 
                 // Push should FAIL
                 let result = repositories::push(&repo_2).await;
@@ -731,12 +723,7 @@ mod tests {
                         repositories::push(&first_cloned_repo).await?;
 
                         // Reset the remote on the second repo to the first repo
-                        let first_remote = test::repo_remote_url_from(&first_cloned_repo.dirname());
-                        command::config::set_remote(
-                            &mut second_cloned_repo,
-                            constants::DEFAULT_REMOTE_NAME,
-                            &first_remote,
-                        )?;
+                        test::attach_remote_repo(&mut second_cloned_repo, &remote_repo_1)?;
 
                         // Adding two commits to have a longer history that also should fail
                         let new_file = "new_file_2.txt";
@@ -1585,11 +1572,7 @@ A: Checkout Oxen.ai
 
             let remote_repo = test::create_remote_repo(&local_repo).await?;
             let mut local_repo_mut = local_repo.clone();
-            command::config::set_remote(
-                &mut local_repo_mut,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo_mut, &remote_repo)?;
             repositories::push(&local_repo_mut).await?;
 
             let remote_commit_opt =
@@ -1658,11 +1641,7 @@ A: Checkout Oxen.ai
             // Set up remote and push
             let remote_repo = test::create_remote_repo(&local_repo).await?;
             let mut local_repo_mut = local_repo.clone();
-            command::config::set_remote(
-                &mut local_repo_mut,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo_mut, &remote_repo)?;
             repositories::push(&local_repo_mut).await?;
 
             // Verify push succeeded
@@ -1727,9 +1706,8 @@ A: Checkout Oxen.ai
             repositories::add(&repo, &path).await?;
             let commit = repositories::commit(&repo, "add a.txt")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             // The server loses a.txt's blob — absent, not corrupt.
@@ -1789,9 +1767,8 @@ A: Checkout Oxen.ai
             repositories::add(&repo, &b_path).await?;
             let commit = repositories::commit(&repo, "add a.txt and b.txt")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let a_hash = repositories::tree::get_node_by_path(&repo, &commit, "a.txt")?

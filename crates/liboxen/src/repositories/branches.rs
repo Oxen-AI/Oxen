@@ -596,13 +596,8 @@ mod tests {
             repositories::add(&repo, &a_path).await?;
             let commit1 = repositories::commit(&repo, "add a.txt")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            crate::command::config::set_remote(
-                &mut repo,
-                crate::constants::DEFAULT_REMOTE_NAME,
-                &remote,
-            )?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let b_path = repo.path.join("b.txt");
@@ -696,13 +691,8 @@ mod tests {
             repositories::add(&repo, &a_path).await?;
             let commit1 = repositories::commit(&repo, "add a.txt")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            crate::command::config::set_remote(
-                &mut repo,
-                crate::constants::DEFAULT_REMOTE_NAME,
-                &remote,
-            )?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             // commit2 is pushed complete: every node and blob it adds is on the server.
@@ -757,13 +747,8 @@ mod tests {
             repositories::add(&repo, &a_path).await?;
             let commit1 = repositories::commit(&repo, "add a.txt")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            crate::command::config::set_remote(
-                &mut repo,
-                crate::constants::DEFAULT_REMOTE_NAME,
-                &remote,
-            )?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let b_path = repo.path.join("b.txt");

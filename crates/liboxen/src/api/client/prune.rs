@@ -81,8 +81,7 @@ pub async fn prune(remote_repo: &RemoteRepository, dry_run: bool) -> Result<Prun
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
-    use crate::constants::DEFAULT_REMOTE_NAME;
+
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
@@ -101,12 +100,8 @@ mod tests {
             repositories::add(&local_repo, &file1).await?;
             repositories::commit(&local_repo, "add file1.txt")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;
@@ -137,12 +132,8 @@ mod tests {
             repositories::add(&local_repo, &file1).await?;
             let initial_commit = repositories::commit(&local_repo, "add file1.txt")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;

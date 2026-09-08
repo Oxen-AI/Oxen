@@ -1,12 +1,12 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use liboxen::api;
 use liboxen::api::requests::RepoNew;
-use liboxen::constants::{DEFAULT_NAMESPACE, DEFAULT_REMOTE_NAME};
+use liboxen::constants::DEFAULT_NAMESPACE;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
-use liboxen::test::test_host;
+use liboxen::test::{attach_remote_repo, test_host};
 use liboxen::util;
-use liboxen::{api, command};
 use rand::distr::Alphanumeric;
 use rand::{Rng, RngExt};
 use std::fs;
@@ -206,11 +206,7 @@ pub fn push_benchmark(c: &mut Criterion) {
                             .unwrap()
                         });
                         std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = command::config::set_remote(
-                            &mut repo,
-                            DEFAULT_REMOTE_NAME,
-                            &remote_repo.remote.url,
-                        );
+                        let _ = attach_remote_repo(&mut repo, &remote_repo);
 
                         (repo.clone(), remote_repo)
                     },

@@ -74,7 +74,7 @@ mod tests {
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::test;
-    use crate::{api, command, constants, repositories};
+    use crate::{api, constants, repositories};
 
     use std::path::Path;
 
@@ -84,8 +84,7 @@ mod tests {
         test::run_readme_remote_repo_test(|mut local_repo, remote_repo| async move {
             let branch_name = "add-images";
             repositories::branches::create_checkout(&local_repo, branch_name)?;
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
             repositories::push(&local_repo).await?;
 
             // client can decide what to use for id

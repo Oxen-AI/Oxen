@@ -48,9 +48,9 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::api;
-    use crate::command;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
-    use crate::constants::DEFAULT_REMOTE_NAME;
+
     use crate::constants::OXEN_HIDDEN_DIR;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
@@ -193,9 +193,7 @@ mod tests {
             // Create a remote repo
             let remote_repo = test::create_remote_repo(&repo).await?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut repo, &remote_repo)?;
 
             // Push it to the remote
             repositories::push(&repo).await?;

@@ -22,14 +22,12 @@ mod tests {
     use std::path::Path;
 
     use super::*;
-    use crate::command;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::model::EntryDataType;
     use crate::repositories;
     use crate::test;
     use crate::util;
-
-    use crate::constants;
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
@@ -46,12 +44,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -106,12 +100,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -169,12 +159,8 @@ mod tests {
             repositories::add(&repo, &dir).await?;
             repositories::commit(&repo, "adding text files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;

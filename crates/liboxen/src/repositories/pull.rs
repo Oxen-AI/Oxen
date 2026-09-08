@@ -41,7 +41,7 @@ pub use crate::core::v_latest::pull::pull_remote_branch;
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
+
     use crate::config::RepositoryConfig;
     use crate::constants;
     use crate::constants::OXEN_HIDDEN_DIR;
@@ -77,12 +77,8 @@ mod tests {
             repositories::add(&repo, &train_dir).await?;
             repositories::commit(&repo, "Adding training data")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create the remote repo
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -212,12 +208,8 @@ mod tests {
             repositories::add(&repo, &filepath).await?;
             repositories::commit(&repo, "Adding labels file")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it real good
             repositories::push(&repo).await?;
@@ -281,12 +273,8 @@ mod tests {
             repositories::add(&repo, &larger_dir).await?;
             repositories::commit(&repo, "Adding larger files")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -401,12 +389,8 @@ mod tests {
 
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -477,12 +461,8 @@ mod tests {
 
             assert!(commit.is_ok());
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -548,12 +528,8 @@ mod tests {
             // Commit the files
             repositories::commit(&repo, "Adding initial data")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -629,12 +605,8 @@ mod tests {
             // Commit the files
             repositories::commit(&repo, "Adding initial data")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -1266,10 +1238,8 @@ mod tests {
             repositories::add(&repo, &test_path).await?;
             repositories::commit(&repo, "Adding test dir")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let expected_files = util::fs::rcount_files_in_dir(&repo.path);
@@ -1302,9 +1272,8 @@ mod tests {
             repositories::add(&repo, &labels).await?;
             let first_commit = repositories::commit(&repo, "First commit")?;
 
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let second_path = repo.path.join("second.txt");
@@ -1390,12 +1359,8 @@ mod tests {
             repositories::add(&repo, &file_path).await?;
             repositories::commit(&repo, "Adding bounding box file")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -1449,12 +1414,8 @@ mod tests {
             let schemas = repositories::data_frames::schemas::list(&repo, &commit)?;
             let num_schemas = schemas.len();
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -1539,12 +1500,8 @@ mod tests {
             // Get local history
             let local_history = repositories::commits::list(&repo)?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -1579,12 +1536,9 @@ mod tests {
             let og_commits = repositories::commits::list_all(&repo)?;
 
             // Set the proper remote
-            let name = repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create remote repo
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            let _name = repo.dirname();
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -2065,8 +2019,7 @@ mod tests {
                 repositories::commit(&local_repo, "Hello!")?;
 
                 // Set the remote
-                let url = remote_repo_clone.url();
-                command::config::set_remote(&mut local_repo, "origin", url)?;
+                test::attach_remote_repo(&mut local_repo, &remote_repo_clone)?;
 
                 // Pull the remote
                 repositories::pull(&local_repo).await?;

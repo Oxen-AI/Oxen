@@ -118,8 +118,7 @@ pub async fn fetch_remote_branch(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
-    use crate::constants;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::opts::fetch_opts::FetchOpts;
@@ -130,12 +129,8 @@ mod tests {
     #[tokio::test]
     async fn test_fetch_branches() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|mut repo| async move {
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push the main branch
             repositories::push(&repo).await?;

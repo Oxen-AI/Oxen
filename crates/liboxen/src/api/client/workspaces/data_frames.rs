@@ -234,13 +234,13 @@ mod tests {
     use std::path::Path;
 
     use crate::config::UserConfig;
-    use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME};
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
     use crate::opts::DFOpts;
+    use crate::test;
     use crate::{api, repositories, util};
-    use crate::{command, test};
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
@@ -898,11 +898,7 @@ mod tests {
 
             repositories::add(&local_repo, &dst_path).await?;
             repositories::commit(&local_repo, "add binary column parquet file")?;
-            command::config::set_remote(
-                &mut local_repo,
-                DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
             repositories::push(&local_repo).await?;
 
             let workspace_id = "some_workspace";

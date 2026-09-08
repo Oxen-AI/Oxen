@@ -3,7 +3,6 @@
 
 use crate::api;
 use crate::api::requests::RepoNew;
-use crate::command;
 use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
@@ -149,6 +148,26 @@ pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteReposito
         None,
     );
     api::client::repositories::create_from_local(repo, repo_new).await
+}
+
+/// Point `repo` at `remote_repo` under the default remote name and persist it.
+///
+/// The recorded remote carries the UUID `remote_repo` reports.
+pub fn attach_remote_repo(
+    repo: &mut LocalRepository,
+    remote_repo: &RemoteRepository,
+) -> Result<(), OxenError> {
+    repo.set_remote_repo(DEFAULT_REMOTE_NAME, remote_repo);
+    repo.save()
+}
+
+/// Create the remote repository for `repo` and point `repo` at it under the default remote name.
+pub async fn connect_remote_repo(
+    repo: &mut LocalRepository,
+) -> Result<RemoteRepository, OxenError> {
+    let remote_repo = create_remote_repo(repo).await?;
+    attach_remote_repo(repo, &remote_repo)?;
+    Ok(remote_repo)
 }
 
 // Create new remote repo, deleting it if it already exists
@@ -535,14 +554,7 @@ where
     repositories::add(&local_repo, &file_path).await?;
     repositories::commit(&local_repo, "Init commit")?;
 
-    let remote_repo = create_remote_repo(&local_repo).await?;
-
-    // Set remote
-    command::config::set_remote(
-        &mut local_repo,
-        DEFAULT_REMOTE_NAME,
-        &remote_repo.remote.url,
-    )?;
+    let remote_repo = connect_remote_repo(&mut local_repo).await?;
 
     // Push
     repositories::push(&local_repo).await?;
@@ -576,14 +588,7 @@ where
     let repo_dir = create_repo_dir(test_run_dir())?;
 
     let mut local_repo = repositories::init(&repo_dir)?;
-    let remote_repo = create_remote_repo(&local_repo).await?;
-
-    // Set remote
-    command::config::set_remote(
-        &mut local_repo,
-        DEFAULT_REMOTE_NAME,
-        &remote_repo.remote.url,
-    )?;
+    let remote_repo = connect_remote_repo(&mut local_repo).await?;
 
     let local_repo_dir = local_repo.path.clone();
 
@@ -694,9 +699,7 @@ where
     // Create remote
     let remote_repo = create_remote_repo(&local_repo).await?;
 
-    // Add remote
-    let remote_url = repo_remote_url_from(&local_repo.dirname());
-    command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote_url)?;
+    attach_remote_repo(&mut local_repo, &remote_repo)?;
 
     // Push data
     repositories::push(&local_repo).await?;
@@ -739,9 +742,7 @@ where
     // Create remote
     let remote_repo = create_remote_repo(&local_repo).await?;
 
-    // Add remote
-    let remote_url = repo_remote_url_from(&local_repo.dirname());
-    command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote_url)?;
+    attach_remote_repo(&mut local_repo, &remote_repo)?;
     // Push data
     repositories::push(&local_repo).await?;
 
@@ -842,12 +843,7 @@ where
     let mut local_repo = repositories::init(&path)?;
 
     // Set the proper remote
-    let remote_repo = create_remote_repo(&local_repo).await?;
-    command::config::set_remote(
-        &mut local_repo,
-        constants::DEFAULT_REMOTE_NAME,
-        remote_repo.url(),
-    )?;
+    let remote_repo = connect_remote_repo(&mut local_repo).await?;
 
     println!("REMOTE REPO: {remote_repo:?}");
 
@@ -892,12 +888,7 @@ where
     repositories::commit(&local_repo, "Adding README")?;
 
     // Set the proper remote
-    let remote_repo = create_remote_repo(&local_repo).await?;
-    command::config::set_remote(
-        &mut local_repo,
-        constants::DEFAULT_REMOTE_NAME,
-        remote_repo.url(),
-    )?;
+    let remote_repo = connect_remote_repo(&mut local_repo).await?;
 
     // Push
     repositories::push(&local_repo).await?;
@@ -987,12 +978,8 @@ where
     add_all_data_to_repo(&local_repo).await?;
     repositories::commit(&local_repo, "Adding all data")?;
 
-    // Set the proper remote
-    let remote = repo_remote_url_from(&local_repo.dirname());
-    command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-    // Create remote repo
-    let repo = create_remote_repo(&local_repo).await?;
+    // Create the remote repo and point the local one at it
+    let repo = connect_remote_repo(&mut local_repo).await?;
 
     repositories::push(&local_repo).await?;
 
@@ -1040,12 +1027,8 @@ where
     repositories::commit(&local_repo, "Adding bounding box csv")?;
     log::debug!("successfully committed bounding box csv");
 
-    // Set the proper remote
-    let remote = repo_remote_url_from(&local_repo.dirname());
-    command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-    // Create remote repo
-    let repo = create_remote_repo(&local_repo).await?;
+    // Create the remote repo and point the local one at it
+    let repo = connect_remote_repo(&mut local_repo).await?;
 
     repositories::push(&local_repo).await?;
 
@@ -1091,12 +1074,8 @@ where
     repositories::commit(&local_repo, "Adding embeddings jsonl")?;
     log::debug!("successfully committed embeddings jsonl");
 
-    // Set the proper remote
-    let remote = repo_remote_url_from(&local_repo.dirname());
-    command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-    // Create remote repo
-    let repo = create_remote_repo(&local_repo).await?;
+    // Create the remote repo and point the local one at it
+    let repo = connect_remote_repo(&mut local_repo).await?;
 
     repositories::push(&local_repo).await?;
 

@@ -668,8 +668,10 @@ mod tests {
 
     use filetime::FileTime;
 
+    use crate::api;
     use crate::api::requests::RepoNew;
     use crate::config::RepositoryConfig;
+    use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
     use crate::error::OxenError;
     use crate::model::{LocalRepository, Remote, RemoteRepository, RepoIdentity};
@@ -1008,6 +1010,27 @@ mod tests {
             assert_eq!(plain.repo_uuid, None);
             Ok(())
         })
+    }
+
+    /// The remote fixtures record the UUID the server reports, so a test repository is addressable
+    /// by UUID the same way one a client connected to is.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
+    #[tokio::test]
+    async fn test_connect_remote_repo_records_the_servers_uuid() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
+
+            assert!(remote_repo.remote.repo_uuid.is_some());
+            assert_eq!(
+                repo.get_remote(DEFAULT_REMOTE_NAME)
+                    .and_then(|remote| remote.repo_uuid),
+                remote_repo.remote.repo_uuid
+            );
+
+            api::client::repositories::delete(&remote_repo).await?;
+            Ok(())
+        })
+        .await
     }
 
     fn remote_repo_reporting(backend: Option<MerkleNodeBackend>) -> RemoteRepository {
