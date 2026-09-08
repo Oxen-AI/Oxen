@@ -206,7 +206,8 @@ pub fn push_benchmark(c: &mut Criterion) {
                             .unwrap()
                         });
                         std::thread::sleep(std::time::Duration::from_millis(500));
-                        let _ = attach_remote_repo(&mut repo, &remote_repo);
+                        attach_remote_repo(&mut repo, &remote_repo)
+                            .expect("failed to attach the benchmark repo to its remote");
 
                         (repo.clone(), remote_repo)
                     },
