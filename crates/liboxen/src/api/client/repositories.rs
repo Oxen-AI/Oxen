@@ -308,7 +308,11 @@ pub async fn transfer_namespace(
                     &repository.name,
                     &scheme,
                 );
-                let new_remote = Remote::new(&repository.remote.name, &new_remote_url);
+                // A move changes where the remote points, not the repository's identity.
+                let new_remote = Remote {
+                    url: new_remote_url,
+                    ..repository.remote.clone()
+                };
 
                 Ok(RemoteRepository::from_view(
                     &response.repository,
