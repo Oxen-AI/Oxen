@@ -1021,8 +1021,12 @@ mod tests {
             let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             assert!(remote_repo.remote.repo_uuid.is_some());
+
+            // Read it back off disk, since persisting the remote is half of what attaching does.
+            let reloaded = LocalRepository::from_dir(&repo.path)?;
             assert_eq!(
-                repo.get_remote(DEFAULT_REMOTE_NAME)
+                reloaded
+                    .get_remote(DEFAULT_REMOTE_NAME)
                     .and_then(|remote| remote.repo_uuid),
                 remote_repo.remote.repo_uuid
             );
