@@ -1,4 +1,6 @@
 import os
+import pytest
+import uuid
 from pathlib import PurePath
 from typing import Tuple
 from oxen import Repo, RemoteRepo
@@ -126,3 +128,19 @@ def test_remote_repo_dir_download_with_large_files(
     ) as f:
         downloaded_file = f.read()
     assert len(original_file) == len(downloaded_file)
+
+
+def test_remote_repo_reports_the_servers_uuid(empty_remote_repo):
+    repo_uuid = empty_remote_repo.repo_uuid
+    assert str(uuid.UUID(repo_uuid)) == repo_uuid
+
+
+def test_remote_repo_reports_the_storage_backend(empty_remote_repo):
+    assert empty_remote_repo.storage_backend == "local"
+
+
+def test_remote_repo_identity_needs_the_repo_to_exist(uncreated_remote_repo):
+    with pytest.raises(ValueError, match=r"does not exist"):
+        uncreated_remote_repo.repo_uuid
+    with pytest.raises(ValueError, match=r"does not exist"):
+        uncreated_remote_repo.storage_backend

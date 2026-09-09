@@ -681,3 +681,19 @@ class RemoteRepo:
         The branch or commit id for the repo
         """
         return self._repo.revision
+
+    @property
+    def repo_uuid(self) -> Optional[str]:
+        """
+        The identifier the server addresses this repo by, or None from a server
+        that reports no identity. Raises if the repo does not exist yet.
+        """
+        return self._repo.repo_uuid()
+
+    @property
+    def storage_backend(self) -> str:
+        """
+        Where the server keeps this repo's version files, "local" or "s3".
+        Raises if the repo does not exist yet.
+        """
+        return self._repo.storage_backend()
