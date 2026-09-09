@@ -3,12 +3,12 @@
 //! Configuration commands for Oxen
 //!
 
+use crate::api::client::repositories::get_by_url;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote};
 
-/// # Set the remote for a repository
-/// Tells the CLI where to push the changes to
-pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<Remote, OxenError> {
+/// Refuse a URL this repository cannot take a remote from.
+fn reject_unusable_remote(repo: &LocalRepository, url: &str) -> Result<(), OxenError> {
     if url::Url::parse(url).is_err() {
         return Err(OxenError::invalid_set_remote_url(url));
     }
@@ -19,7 +19,36 @@ pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<R
         ));
     }
 
+    Ok(())
+}
+
+/// Attach a remote from a name and URL alone, available only in test / `test-utils` builds.
+///
+/// Production code uses [`set_remote_by_url`], which records the UUID the repository is addressed
+/// by. Tests use this for fixture setup against a remote they created inline.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_remote(repo: &mut LocalRepository, name: &str, url: &str) -> Result<Remote, OxenError> {
+    reject_unusable_remote(repo, url)?;
+
     let remote = repo.set_remote(name, url);
+    repo.save()?;
+    Ok(remote)
+}
+
+/// # Set the remote for a repository from its URL
+///
+/// Reads the repository at `url` and records the UUID it reports, leaving the remote addressable
+/// by UUID rather than only by name. Records nothing when the repository cannot be read. A
+/// repository reporting no identity is recorded with its name and URL alone.
+pub async fn set_remote_by_url(
+    repo: &mut LocalRepository,
+    name: &str,
+    url: &str,
+) -> Result<Remote, OxenError> {
+    reject_unusable_remote(repo, url)?;
+
+    let remote_repo = get_by_url(url).await?;
+    let remote = repo.set_remote_repo(name, &remote_repo);
     repo.save()?;
     Ok(remote)
 }
@@ -36,4 +65,55 @@ pub fn delete_remote(repo: &mut LocalRepository, name: &str) -> Result<(), OxenE
     repo.delete_remote(name);
     repo.save()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test;
+
+    /// Attaching from a URL asks the server who the repository is, so the UUID lands in the config
+    /// even though the caller only had a URL to go on.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
+    #[tokio::test]
+    async fn test_set_remote_by_url_records_the_servers_uuid() -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut repo, remote_repo| async move {
+            let expected = remote_repo
+                .remote
+                .repo_uuid
+                .expect("the server reports a UUID for a repo it created");
+
+            let remote = set_remote_by_url(&mut repo, "origin", &remote_repo.remote.url).await?;
+
+            assert_eq!(remote.repo_uuid, Some(expected));
+            Ok(remote_repo)
+        })
+        .await
+    }
+
+    /// Attaching a remote is how a repository learns the UUID it is addressed by, so a server that
+    /// cannot be read leaves nothing attached rather than a remote reachable only by name.
+    #[tokio::test]
+    async fn test_set_remote_by_url_errors_when_the_server_cannot_be_read() -> Result<(), OxenError>
+    {
+        test::run_empty_local_repo_test_async(|mut repo| async move {
+            // Refused immediately rather than blackholed, so this does not wait out a connect
+            // timeout.
+            let url = "http://localhost:1/ox/cats";
+            let err = set_remote_by_url(&mut repo, "origin", url)
+                .await
+                .expect_err("nothing accepts connections on port 1");
+            assert!(
+                matches!(err, OxenError::HTTP(_)),
+                "expected a failed read rather than local URL validation: {err}"
+            );
+            assert!(
+                repo.remotes().is_empty(),
+                "a failed attach records nothing: {:?}",
+                repo.remotes()
+            );
+            Ok(())
+        })
+        .await
+    }
 }

@@ -364,19 +364,26 @@ impl LocalRepository {
         Ok(())
     }
 
-    pub fn set_remote(&mut self, name: impl AsRef<str>, url: impl AsRef<str>) -> Remote {
-        self.remote_name = Some(name.as_ref().to_owned());
-        let name = name.as_ref();
-        let remote = Remote::new(name, url.as_ref());
-        if self.has_remote(name) {
-            // find remote by name and set
-            for i in 0..self.remotes.len() {
-                if self.remotes[i].name == name {
-                    self.remotes[i] = remote.clone()
-                }
-            }
+    /// Record `name` as this repository's remote at `url`, with no UUID for the repository it
+    /// points at.
+    pub fn set_remote(&mut self, name: &str, url: &str) -> Remote {
+        self.upsert_remote(Remote::new(name, url))
+    }
+
+    /// Record the remote `remote_repo` was reached through, under `name`.
+    pub(crate) fn set_remote_repo(&mut self, name: &str, remote_repo: &RemoteRepository) -> Remote {
+        self.upsert_remote(Remote {
+            name: name.to_string(),
+            ..remote_repo.remote.clone()
+        })
+    }
+
+    /// Store `remote` under its own name, replacing any remote already recorded under it.
+    fn upsert_remote(&mut self, remote: Remote) -> Remote {
+        self.remote_name = Some(remote.name.clone());
+        if let Some(existing) = self.remotes.iter_mut().find(|r| r.name == remote.name) {
+            *existing = remote.clone();
         } else {
-            // we don't have the key, just push
             self.remotes.push(remote.clone());
         }
         remote
@@ -669,6 +676,7 @@ mod tests {
     use crate::storage::StorageKind;
     use crate::test;
     use tempfile::TempDir;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_mtime_matches_honors_tolerance() -> Result<(), OxenError> {
@@ -966,6 +974,40 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    /// Attaching from a repository the client has talked to records the UUID it reported, which is
+    /// what lets the repository be addressed by UUID instead of only by name. Attaching from a URL
+    /// alone has none to record, and re-attaching under one name replaces rather than appends.
+    #[test]
+    fn test_set_remote_repo_records_the_reported_uuid() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test(|mut repo| {
+            repo.set_remote("origin", "http://0.0.0.0:3000/ox/cats");
+            assert_eq!(
+                repo.get_remote("origin")
+                    .and_then(|remote| remote.repo_uuid),
+                None
+            );
+
+            let repo_uuid = Uuid::new_v4();
+            let mut remote_repo = remote_repo_reporting(None);
+            remote_repo.remote.repo_uuid = Some(repo_uuid);
+            let recorded = repo.set_remote_repo("origin", &remote_repo);
+
+            assert_eq!(recorded.repo_uuid, Some(repo_uuid));
+            assert_eq!(recorded.url, remote_repo.remote.url);
+            assert_eq!(repo.remotes().len(), 1, "remotes: {:?}", repo.remotes());
+            assert_eq!(
+                repo.get_remote("origin")
+                    .and_then(|remote| remote.repo_uuid),
+                Some(repo_uuid)
+            );
+
+            // A repository reporting no identity is still attachable.
+            let plain = repo.set_remote_repo("origin", &remote_repo_reporting(None));
+            assert_eq!(plain.repo_uuid, None);
+            Ok(())
+        })
     }
 
     fn remote_repo_reporting(backend: Option<MerkleNodeBackend>) -> RemoteRepository {

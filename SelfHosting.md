@@ -186,7 +186,9 @@ $ oxen create-remote --name MyNamespace/MyRepoName --host 0.0.0.0:3001 --scheme 
 
 Repositories that live on an Oxen Server have the idea of a `namespace` and a `name` to help you organize your repositories.
 
-Once you know your remote repository URL you can add it as a remote.
+Once you know your remote repository URL you can add it as a remote. Setting a remote reads the
+repository from the server and records the identifier it reports, so the server has to be reachable
+and the repository has to exist by this point.
 
 ```bash
 $ oxen config --set-remote origin http://<HOST>/MyNamespace/MyRepoName

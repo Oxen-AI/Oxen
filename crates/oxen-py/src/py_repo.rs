@@ -8,6 +8,7 @@ use liboxen::opts::{CleanOpts, CloneOpts, PushOpts, RmOpts};
 use pyo3::prelude::*;
 
 use liboxen::api;
+use liboxen::command::config;
 use liboxen::opts::FetchOpts;
 use liboxen::repositories;
 
@@ -212,7 +213,8 @@ impl PyRepo {
 
     pub fn set_remote(&self, name: &str, url: &str) -> Result<(), PyOxenError> {
         let mut repo = LocalRepository::from_dir(&self.path)?;
-        liboxen::command::config::set_remote(&mut repo, name, url)?;
+        pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { config::set_remote_by_url(&mut repo, name, url).await })?;
         Ok(())
     }
 
