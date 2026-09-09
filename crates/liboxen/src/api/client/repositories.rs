@@ -82,6 +82,8 @@ pub async fn get_by_url(url: &str) -> Result<RemoteRepository, OxenError> {
     get_by_remote(&remote).await
 }
 
+/// Resolve `remote` against its server, taking the UUID the repository reports where the remote has
+/// none recorded. Errors when the recorded and reported UUIDs disagree.
 #[tracing::instrument(skip_all)]
 pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenError> {
     let url = api::endpoint::url_from_remote(remote, "")?;
@@ -99,7 +101,10 @@ pub async fn get_by_remote(remote: &Remote) -> Result<RemoteRepository, OxenErro
 
     let response: Result<RepositoryResponse, serde_json::Error> = serde_json::from_str(&body);
     match response {
-        Ok(j_res) => Ok(RemoteRepository::from_view(&j_res.repository, remote)),
+        Ok(j_res) => {
+            remote.ensure_same_repo_uuid(j_res.repository.repo_uuid)?;
+            Ok(RemoteRepository::from_view(&j_res.repository, remote))
+        }
         Err(err) => {
             log::debug!("Err: {err}");
             Err(OxenError::basic_str(format!(
@@ -473,6 +478,7 @@ mod tests {
 
     use tokio::time::sleep;
 
+    use super::get_default_remote;
     use crate::api;
     use crate::api::requests::RepoNew;
     use crate::config::UserConfig;
@@ -484,6 +490,30 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::view::entries::EMetadataEntry;
+    use uuid::Uuid;
+
+    /// Every operation that reaches the server for an existing repository resolves through
+    /// `get_by_remote`, so a URL that has come to point at a different repository is refused there
+    /// rather than addressing the other repository's storage.
+    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
+    #[tokio::test]
+    async fn test_resolving_a_remote_pointing_at_a_different_repo_is_refused()
+    -> Result<(), OxenError> {
+        test::run_empty_remote_repo_test(|mut repo, remote_repo| async move {
+            let mut attached = remote_repo.clone();
+            attached.remote.repo_uuid = Some(Uuid::new_v4());
+            test::attach_remote_repo(&mut repo, &attached)?;
+
+            let result = get_default_remote(&repo).await;
+
+            assert!(
+                matches!(result, Err(OxenError::RemotePointsAtDifferentRepo { .. })),
+                "expected a refusal, got: {result:?}"
+            );
+            Ok(remote_repo)
+        })
+        .await
+    }
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
