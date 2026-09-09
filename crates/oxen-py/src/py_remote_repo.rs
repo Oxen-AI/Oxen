@@ -144,6 +144,14 @@ impl PyRemoteRepo {
         &self.name
     }
 
+    fn repo_uuid(&self) -> Result<Option<String>, PyOxenError> {
+        Ok(self.repo()?.remote.repo_uuid.map(|id| id.to_string()))
+    }
+
+    fn storage_backend(&self) -> Result<String, PyOxenError> {
+        Ok(self.repo()?.storage_kind.to_string())
+    }
+
     fn set_revision(&mut self, new_revision: String) {
         self.revision = Some(new_revision);
     }

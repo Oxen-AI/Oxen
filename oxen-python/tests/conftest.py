@@ -207,6 +207,12 @@ def empty_remote_repo():
 
 
 @pytest.fixture
+def uncreated_remote_repo():
+    repo_name = f"py-ox/test_repo_{str(uuid.uuid4())}"
+    yield RemoteRepo(repo_name, host=TEST_HOST, scheme=TEST_SCHEME)
+
+
+@pytest.fixture
 def celeba_local_repo_one_image_committed(celeba_local_repo_no_commits):
     repo = celeba_local_repo_no_commits
 
