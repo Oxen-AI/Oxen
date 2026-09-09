@@ -59,10 +59,10 @@ $ oxen-server start -i 0.0.0.0 -p 4321
 
 Oxen has two TOML config files that govern where repository data is stored:
 
-1. A **server-wide** config (optional, loaded via `--config <path>`) that decides which storage backends the server will host new repos on and supplies admin-only S3 settings.
-2. A **per-repo** `.oxen/config.toml` inside each server-hosted repository, written when the repo is created, that records which kind of storage *that* repo uses.
+1. A **server-wide** config (optional, loaded via `--config <path>`) that decides which storage backends the server will host new repos on and supplies admin-only S3 settings. This is the one an admin writes.
+2. A **per-repo** `.oxen/config.toml` inside each server-hosted repository, written by the server when it creates the repo. On a server this file is state the server owns rather than a place to configure anything.
 
-These are independent files. The server-wide config is read once at startup; the per-repo config is read every time the server opens a repo.
+These are independent files. The server-wide config is read once at startup, and the per-repo config is read every time the server opens a repo.
 
 ### Server-wide config (`--config <path>`)
 
@@ -131,7 +131,11 @@ S3 backends require valid AWS credentials in the server's environment, picked up
 
 ### Per-repo `.oxen/config.toml`
 
-When the server creates a repository, it writes a small `[storage]` section into `<repo>/.oxen/config.toml` so that the storage choice is persisted with the repo. The shape is:
+Every field the server keeps in `<repo>/.oxen/config.toml` is written by the server: `min_version`, `vnode_size`, `storage`, `merkle_node_backend`, and `identity`. Hand-editing them corrupts the repo. The exception is `vnode_size`, which no command exposes, so editing the file is the only way to change it. Moving a repository to another namespace goes through `PATCH /{namespace}/{repo_name}/transfer` rather than through this file.
+
+The same file format also carries remotes, subtree paths, clone depth, and workspaces. Those are the fields that make this file look user-facing, and they appear only in a *client* working tree's copy, never in a server-hosted repo.
+
+When the server creates a repository, it writes a small `[storage]` section recording which kind of storage that repo uses. The shape is:
 
 ```toml
 [storage]
@@ -154,6 +158,10 @@ type = "local"
 path = "/mnt/nfs/oxen-data"
 ```
 
+`oxen-server` continues to read the legacy form on every load — `type` is treated as `kind` and `[storage.settings] path` is promoted to `versions_path` — so an upgrade does not force a migration. No admin action is required.
+
+The file is opportunistically rewritten into the new shape the next time the server has another reason to save the repo's config. In practice that means after a namespace transfer; if that never happens, the legacy keys stay on disk indefinitely and the repo continues to work normally.
+
 #### The `[identity]` section
 
 Repositories the server creates also carry an `[identity]` section:
@@ -169,10 +177,6 @@ name = "my-repo"
 - **`namespace`** / **`name`** — the human-readable names, recorded so a repository directory can be identified without consulting anything else. They track renames and carry no authority: nothing is addressed by them.
 
 Repositories created before `oxen-server` recorded identity have no `[identity]` section and continue to work normally.
-
-`oxen-server` continues to read the legacy form on every load — `type` is treated as `kind` and `[storage.settings] path` is promoted to `versions_path` — so an upgrade does not force a migration. No admin action is required.
-
-The file is opportunistically rewritten into the new shape the next time the server has another reason to save the repo's config. In practice that means after a namespace transfer; if that never happens, the legacy keys stay on disk indefinitely and the repo continues to work normally.
 
 ## Pushing the Changes
 
