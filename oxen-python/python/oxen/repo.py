@@ -203,11 +203,18 @@ class Repo:
         """
         Map a name to a remote url.
 
+        Reads the repository at `url` and records its identifier alongside the name and
+        url, so the remote has to be reachable and the repository has to exist.
+
         Args:
             name: `str`
                 The name of the remote. Ex) origin
             url: `str`
                 The url you want to map the name to. Ex) https://hub.oxen.ai/ox/chatbot
+
+        Raises:
+            PyOxenError: If the repository at `url` cannot be read, or if `name` is
+                already attached to a different repository.
         """
         self._repo.set_remote(name, url)
 

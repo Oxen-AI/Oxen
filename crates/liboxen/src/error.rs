@@ -15,6 +15,7 @@ use std::num::ParseIntError;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::task::JoinError;
+use uuid::Uuid;
 
 use crate::api::requests::RepoNew;
 use crate::command::migrate::Direction;
@@ -128,6 +129,16 @@ pub enum OxenError {
         "No remote named '{0}' is set. You can set a remote by running:\n\noxen config --set-remote '{0}' <url>\n"
     )]
     RemoteNotSet(String),
+
+    /// The repository at a remote's URL reports a different UUID than the one recorded for that
+    /// remote, so the URL no longer points at the repository the remote was attached to.
+    #[error("Remote '{name}' is attached to repository {recorded}, but {url} reports {reported}.")]
+    RemotePointsAtDifferentRepo {
+        name: String,
+        url: String,
+        recorded: Uuid,
+        reported: Uuid,
+    },
 
     //
     // Branches/Commits
@@ -798,6 +809,11 @@ impl OxenError {
             RemoteRepoNotFound(_) => {
                 "Verify the remote URL is correct. Check your remotes with `oxen remote -v`."
             }
+            RemotePointsAtDifferentRepo { name, .. } => {
+                return Some(format!(
+                    "Delete it with `oxen config --delete-remote {name}`, then set it again."
+                ));
+            }
             BranchNotFound(_) => "List available branches with `oxen branch --all`.",
             LockTimeout(_) => {
                 "A maintenance operation holds the repository's exclusive lock. Wait a few seconds and retry."
@@ -977,6 +993,7 @@ impl OxenError {
             OxenError::DirHashIndexMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
+            OxenError::RemotePointsAtDifferentRepo { .. } => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,

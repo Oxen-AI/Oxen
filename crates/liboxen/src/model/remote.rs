@@ -1,3 +1,4 @@
+use crate::error::OxenError;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -27,6 +28,21 @@ impl Remote {
         Remote {
             repo_uuid: self.repo_uuid.or(repo_uuid),
             ..self
+        }
+    }
+
+    /// Errors when this remote and `reported` both carry a UUID and the two disagree.
+    pub(crate) fn ensure_same_repo_uuid(&self, reported: Option<Uuid>) -> Result<(), OxenError> {
+        match (self.repo_uuid, reported) {
+            (Some(recorded), Some(reported)) if recorded != reported => {
+                Err(OxenError::RemotePointsAtDifferentRepo {
+                    name: self.name.clone(),
+                    url: self.url.clone(),
+                    recorded,
+                    reported,
+                })
+            }
+            _ => Ok(()),
         }
     }
 }
@@ -62,6 +78,34 @@ mod tests {
             .expect("serialize");
 
         assert!(!toml.contains("repo_uuid"), "unexpected key in:\n{toml}");
+    }
+
+    #[test]
+    fn a_disagreeing_reported_uuid_is_refused() {
+        let remote = Remote::new("origin", "http://localhost:3000/ox/cats")
+            .with_repo_uuid_if_absent(Some(Uuid::new_v4()));
+
+        let result = remote.ensure_same_repo_uuid(Some(Uuid::new_v4()));
+
+        assert!(
+            matches!(result, Err(OxenError::RemotePointsAtDifferentRepo { .. })),
+            "expected a refusal, got: {result:?}"
+        );
+    }
+
+    /// Only a disagreement fails: a remote with nothing recorded takes what the server reports,
+    /// and a server reporting nothing leaves a recorded UUID alone.
+    #[test]
+    fn an_agreeing_or_absent_uuid_is_accepted() {
+        let repo_uuid = Uuid::new_v4();
+        let recorded = Remote::new("origin", "http://localhost:3000/ox/cats")
+            .with_repo_uuid_if_absent(Some(repo_uuid));
+        let unrecorded = Remote::new("origin", "http://localhost:3000/ox/cats");
+
+        assert!(recorded.ensure_same_repo_uuid(Some(repo_uuid)).is_ok());
+        assert!(recorded.ensure_same_repo_uuid(None).is_ok());
+        assert!(unrecorded.ensure_same_repo_uuid(Some(repo_uuid)).is_ok());
+        assert!(unrecorded.ensure_same_repo_uuid(None).is_ok());
     }
 
     #[test]
