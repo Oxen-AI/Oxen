@@ -513,16 +513,15 @@ mod tests {
         }
     }
 
-    /// Every concurrent append to one data frame lands. Writers that overlap can end up on
-    /// separate DuckDB databases over the same file, and the one that folds its state into the
-    /// file last wins, so the other's rows are gone while each caller was told its own row was
-    /// saved.
+    /// Every concurrent append to one data frame lands, with the connection cache under enough
+    /// pressure to close the data frame's connection whenever it is idle. Writers that overlap
+    /// can end up on separate DuckDB databases over the same file, and the one that folds its
+    /// state into the file last wins, so the other's rows are gone while each caller was told its
+    /// own row was saved.
     ///
-    /// Evicting the data frame's cached DuckDB connection is what makes the hazard reachable.
-    /// That connection is per-file and serializes writes only while every writer shares it; LRU
-    /// pressure drops the entry on its own, and once it is gone an in-flight writer keeps the old
-    /// connection while the next writer opens its own to the same file. Exclusion therefore has
-    /// to come from something the cache cannot take away.
+    /// The cache is what prevents that: its entry is the process's one connection to the file,
+    /// and it must survive eviction while a writer holds it, so the next writer joins that
+    /// connection rather than opening its own.
     #[tokio::test]
     async fn test_concurrent_row_appends_all_land() -> Result<(), OxenError> {
         // Skip duckdb if on windows
@@ -542,45 +541,60 @@ mod tests {
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
 
             let committed_rows = workspaces::data_frames::count(&workspace, &file_path)?;
-            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
 
             let stop = Arc::new(AtomicBool::new(false));
             let stopper = StopOnDrop(stop.clone());
             let evictor = {
-                let db_path = db_path.clone();
                 let stop = stop.clone();
+                // Under the test's own directory, so the test's cleanup removes the entries.
+                let filler_dir = repo.path.join("lru-pressure");
                 tokio::task::spawn_blocking(move || {
-                    // Scoped to this data frame's entry, so it cannot disturb the connections a
-                    // sibling test in this binary has cached.
+                    // Cycling through more entries than the cache keeps evicts this data frame's
+                    // connection whenever no writer holds it, so writers reopen it throughout the
+                    // run. The fillers are empty slots for paths that name no file, so nothing
+                    // opens.
+                    let mut i = 0;
                     while !stop.load(Ordering::Relaxed) {
-                        df_db::remove_df_db_from_cache(&db_path)
-                            .expect("evicting a cache entry cannot fail");
+                        let filler =
+                            filler_dir.join((i % (df_db::DF_DB_CACHE_SIZE + 1)).to_string());
+                        df_db::with_db_closed(&filler, || {});
+                        i += 1;
                     }
                 })
             };
 
             // Successive rounds compound the loss: once two connections disagree about the table,
-            // a write through the stale one discards everything the other added.
-            let appends_per_round = 16;
+            // a write through the stale one discards everything the other added. Each writer
+            // appends back to back, so its later appends arrive while other writers hold the
+            // connection and after the pressure has had time to evict it; a burst of one-shot
+            // writers would all take the connection before the first eviction.
+            let writers = 4;
+            let appends_per_writer = 4;
+            let appends_per_round = writers * appends_per_writer;
             for round in 0..3 {
                 let mut handles = Vec::new();
-                for i in 0..appends_per_round {
+                for writer in 0..writers {
                     let repo = repo.clone();
                     let workspace = workspace.clone();
                     let file_path = file_path.clone();
-                    handles.push(tokio::task::spawn_blocking(move || {
-                        let json_data = json!({
-                            "file": format!("concurrent-{round}-{i}.jpg"),
-                            "label": "dog",
-                            "min_x": 1.0,
-                            "min_y": 2.0,
-                            "width": 10.0,
-                            "height": 10.0
-                        });
-                        workspaces::data_frames::rows::add(
-                            &repo, &workspace, &file_path, &json_data,
-                        )
-                    }));
+                    handles.push(tokio::task::spawn_blocking(
+                        move || -> Result<(), OxenError> {
+                            for i in 0..appends_per_writer {
+                                let json_data = json!({
+                                    "file": format!("concurrent-{round}-{writer}-{i}.jpg"),
+                                    "label": "dog",
+                                    "min_x": 1.0,
+                                    "min_y": 2.0,
+                                    "width": 10.0,
+                                    "height": 10.0
+                                });
+                                workspaces::data_frames::rows::add(
+                                    &repo, &workspace, &file_path, &json_data,
+                                )?;
+                            }
+                            Ok(())
+                        },
+                    ));
                 }
                 for handle in handles {
                     handle.await.expect("join append task")?;
