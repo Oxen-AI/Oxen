@@ -857,8 +857,7 @@ async fn upload_data_chunk_to_server(
 mod tests {
 
     use crate::api;
-    use crate::command;
-    use crate::constants;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
 
@@ -874,12 +873,9 @@ mod tests {
             let num_local_commits = commit_history.len();
 
             // Set the proper remote
-            let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let _name = local_repo.dirname();
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Push it
             repositories::push(&local_repo).await?;
@@ -905,11 +901,8 @@ mod tests {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Write, add, and commit file_1
             let file_1 = local_repo.path.join("file_1.txt");
@@ -967,11 +960,8 @@ mod tests {
             let mut local_repo = local_repo;
             // Set the proper remote
             let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Write, add, and commit file_1
             // create the file within a subdirectory

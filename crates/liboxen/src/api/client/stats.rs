@@ -41,8 +41,7 @@ pub async fn get(remote_repo: &RemoteRepository) -> Result<RepositoryStatsView, 
 mod tests {
 
     use crate::api;
-    use crate::command;
-    use crate::constants::DEFAULT_REMOTE_NAME;
+
     use crate::error::OxenError;
     use crate::repositories;
     use crate::test;
@@ -63,12 +62,8 @@ mod tests {
             repositories::add(&local_repo, &csv_file).await?;
             repositories::commit(&local_repo, "add test.csv")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create the repo
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Push the repo
             repositories::push(&local_repo).await?;

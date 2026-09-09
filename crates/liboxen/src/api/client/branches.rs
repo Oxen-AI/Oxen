@@ -215,7 +215,7 @@ mod tests {
     use std::path::Path;
 
     use crate::api;
-    use crate::command;
+
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -235,9 +235,7 @@ mod tests {
             repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
-            // set proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // push it
             repositories::push(&local_repo).await?;
@@ -262,9 +260,7 @@ mod tests {
             repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
-            // set proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // push it
             repositories::push(&local_repo).await?;
@@ -292,9 +288,7 @@ mod tests {
             repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
-            // set proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // push it
             repositories::push(&local_repo).await?;
@@ -322,9 +316,7 @@ mod tests {
             repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
-            // Set proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // Push it
             repositories::push(&local_repo).await?;
@@ -364,9 +356,7 @@ mod tests {
             repositories::add(&local_repo, new_file).await?;
             repositories::commit(&local_repo, "Added a new file")?;
 
-            // set proper remote
-            let remote = test::repo_remote_url_from(&local_repo.dirname());
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // push it
             repositories::push(&local_repo).await?;
@@ -433,12 +423,8 @@ mod tests {
     #[tokio::test]
     async fn test_delete_remote_branch() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Push it
             repositories::push(&repo).await?;
@@ -473,12 +459,8 @@ mod tests {
     #[tokio::test]
     async fn test_should_not_push_branch_that_does_not_exist() -> Result<(), OxenError> {
         test::run_training_data_repo_test_fully_committed_async(|mut repo| async move {
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             let opts = PushOpts {
                 remote: constants::DEFAULT_REMOTE_NAME.to_string(),
                 branch: "main".to_string(),
@@ -638,10 +620,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_entry_versions() -> Result<(), OxenError> {
         test::run_select_data_repo_test_committed_async("annotations", |mut repo| async move {
-            // Set up remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
 
             // Get path to existing annotations file
             let file_path = Path::new("annotations")

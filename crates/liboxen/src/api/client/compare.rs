@@ -202,7 +202,7 @@ pub async fn entries(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
+
     use crate::constants;
     use crate::constants::DIFF_STATUS_COL;
     use crate::error::OxenError;
@@ -239,12 +239,7 @@ mod tests {
                 commit_ids.push(commit.id);
             }
 
-            // Set remote
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
@@ -281,12 +276,7 @@ mod tests {
             let commit_message = "add test_me_out.txt";
             let new_commit = repositories::commit(&local_repo, commit_message)?;
 
-            // Set remote
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
@@ -334,12 +324,7 @@ mod tests {
             repositories::add(&local_repo, &local_repo.path).await?;
             let new_commit = repositories::commit(&local_repo, commit_message)?;
 
-            // Set remote
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
@@ -428,12 +413,7 @@ mod tests {
                 commit_ids.push(commit.id);
             }
 
-            // Set remote
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             // Push the commits to the remote
             repositories::push(&local_repo).await?;
@@ -475,11 +455,7 @@ mod tests {
 
             // set remote
 
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
             repositories::push(&local_repo).await?;
 
             let compare_id = "abcdefgh";
@@ -577,11 +553,7 @@ mod tests {
 
             // set remote
 
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
 
             repositories::push(&local_repo).await?;
 

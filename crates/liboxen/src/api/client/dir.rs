@@ -118,8 +118,6 @@ pub async fn get_dir(
 #[cfg(test)]
 mod tests {
     use crate::api;
-    use crate::command;
-    use crate::constants;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
@@ -140,12 +138,9 @@ mod tests {
             let mut local_repo = local_repo;
 
             // Set the proper remote
-            let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            // Create Remote
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let _name = local_repo.dirname();
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             // Push it
             repositories::push(&local_repo).await?;
@@ -396,11 +391,7 @@ mod tests {
         test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let mut local_repo = local_repo;
 
-            command::config::set_remote(
-                &mut local_repo,
-                constants::DEFAULT_REMOTE_NAME,
-                &remote_repo.remote.url,
-            )?;
+            test::attach_remote_repo(&mut local_repo, &remote_repo)?;
             let repo_path = local_repo.path.join("dir=dir");
             util::fs::create_dir_all(&repo_path)?;
             let file_path = repo_path.join("file example.txt");
@@ -525,11 +516,9 @@ mod tests {
         test::run_empty_local_repo_test_async(|local_repo| async move {
             let mut local_repo = local_repo;
 
-            let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let _name = local_repo.dirname();
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             let file_a = local_repo.path.join("a_file.txt");
             util::fs::write_to_path(&file_a, "content a")?;
@@ -571,11 +560,9 @@ mod tests {
         test::run_empty_local_repo_test_async(|local_repo| async move {
             let mut local_repo = local_repo;
 
-            let name = local_repo.dirname();
-            let remote = test::repo_remote_url_from(&name);
-            command::config::set_remote(&mut local_repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-
-            let remote_repo = test::create_remote_repo(&local_repo).await?;
+            let _name = local_repo.dirname();
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut local_repo).await?;
 
             let dir_a = local_repo.path.join("dir_a");
             let dir_a_subdir = dir_a.join("subdir");

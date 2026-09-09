@@ -1,12 +1,12 @@
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use liboxen::api;
 use liboxen::constants::DEFAULT_REMOTE_NAME;
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, RemoteRepository};
 use liboxen::opts::FetchOpts;
 use liboxen::repositories;
-use liboxen::test::create_or_clear_remote_repo;
+use liboxen::test::{attach_remote_repo, create_or_clear_remote_repo};
 use liboxen::util;
-use liboxen::{api, command};
 use rand::distr::Alphanumeric;
 use rand::{Rng, RngExt};
 use std::fs;
@@ -55,7 +55,7 @@ async fn setup_repo_for_fetch_benchmark(
 
     let mut repo = repositories::init(&repo_dir)?;
     let remote_repo = create_or_clear_remote_repo(&repo).await?;
-    command::config::set_remote(&mut repo, DEFAULT_REMOTE_NAME, &remote_repo.remote.url)?;
+    attach_remote_repo(&mut repo, &remote_repo)?;
 
     let mut rng = rand::rng();
     let files_dir = if let Some(data_path) = data_path {

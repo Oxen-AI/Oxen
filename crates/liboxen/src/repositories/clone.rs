@@ -91,7 +91,7 @@ mod tests {
 
     use crate::api;
     use crate::api::requests::RepoNew;
-    use crate::command;
+
     use crate::constants;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::constants::DEFAULT_REMOTE_NAME;
@@ -443,7 +443,7 @@ mod tests {
                     repositories::deep_clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
 
                 let repo_name = format!("new_remote_repo_name_{}", uuid::Uuid::new_v4());
-                let remote_url = test::repo_remote_url_from(&repo_name);
+                let _remote_url = test::repo_remote_url_from(&repo_name);
                 let remote_name = "different";
 
                 // Create a different repo
@@ -453,9 +453,11 @@ mod tests {
                     test::test_host(),
                     None,
                 );
-                api::client::repositories::create_from_local(&cloned_repo, repo_new).await?;
+                let different_repo =
+                    api::client::repositories::create_from_local(&cloned_repo, repo_new).await?;
 
-                command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
+                cloned_repo.set_remote_repo(remote_name, &different_repo);
+                cloned_repo.save()?;
 
                 let opts = PushOpts {
                     remote: remote_name.to_string(),
@@ -521,7 +523,7 @@ mod tests {
                     repositories::deep_clone_url(&remote_repo.remote.url, &new_repo_dir).await?;
 
                 let repo_name = format!("new_remote_repo_name_{}", uuid::Uuid::new_v4());
-                let remote_url = test::repo_remote_url_from(&repo_name);
+                let _remote_url = test::repo_remote_url_from(&repo_name);
                 let remote_name = "different";
 
                 // Create a different repo
@@ -531,9 +533,10 @@ mod tests {
                     test::test_host(),
                     None,
                 );
-                api::client::repositories::create_empty(repo_new).await?;
+                let different_repo = api::client::repositories::create_empty(repo_new).await?;
 
-                command::config::set_remote(&mut cloned_repo, remote_name, &remote_url)?;
+                cloned_repo.set_remote_repo(remote_name, &different_repo);
+                cloned_repo.save()?;
 
                 let opts = PushOpts {
                     remote: remote_name.to_string(),
@@ -587,10 +590,8 @@ mod tests {
             repositories::add(&repo, &test_path).await?;
             repositories::commit(&repo, "Adding test dir")?;
 
-            // Set the proper remote
-            let remote = test::repo_remote_url_from(&repo.dirname());
-            command::config::set_remote(&mut repo, constants::DEFAULT_REMOTE_NAME, &remote)?;
-            let remote_repo = test::create_remote_repo(&repo).await?;
+            // Create the remote repo and point the local one at it
+            let remote_repo = test::connect_remote_repo(&mut repo).await?;
             repositories::push(&repo).await?;
 
             let expected_files = util::fs::rcount_files_in_dir(&repo.path);
