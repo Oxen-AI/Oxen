@@ -158,7 +158,7 @@ type = "local"
 path = "/mnt/nfs/oxen-data"
 ```
 
-`oxen-server` continues to read the legacy form on every load — `type` is treated as `kind` and `[storage.settings] path` is promoted to `versions_path` — so an upgrade does not force a migration. No admin action is required.
+`oxen-server` continues to read the legacy form on every load, so an upgrade does not force a migration and no admin action is required. The legacy `type` key is ignored, leaving `kind` at its `local` default, and `[storage.settings] path` is promoted to `versions_path`.
 
 The file is opportunistically rewritten into the new shape the next time the server has another reason to save the repo's config. In practice that means after a namespace transfer; if that never happens, the legacy keys stay on disk indefinitely and the repo continues to work normally.
 
