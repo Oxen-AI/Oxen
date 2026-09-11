@@ -657,12 +657,14 @@ pub async fn put(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHtt
     let data: DataFramePayload = serde_json::from_str(&body)?;
     log::debug!("workspace {workspace_id} data frame put {data:?}");
 
-    let to_index = data.is_indexed;
-    let is_indexed = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
-
-    if !is_indexed && to_index {
-        repositories::workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-    } else if is_indexed && !to_index {
+    // Both branches decide under an exclusive hold on the data frame rather than on an
+    // `is_indexed` read taken here, so a rebuild cannot discard rows a row write committed
+    // between the read and the rebuild. `unindex` drops the table if it exists, so it needs no
+    // pre-check of its own.
+    if data.is_indexed {
+        repositories::workspaces::data_frames::index_if_absent(&repo, &workspace, &file_path)
+            .await?;
+    } else {
         repositories::workspaces::data_frames::unindex(&workspace, &file_path)?;
     }
 
