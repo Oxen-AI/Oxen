@@ -1714,13 +1714,21 @@ pub fn print_tree_depth(
     Ok(())
 }
 
-/// The merkle node hashes and version-blob hashes a commit's tree introduces relative to a base.
+/// The sizes file nodes declare for one version blob, each mapped to a path declaring it. More
+/// than one entry means nodes disagree about the size of the same content, of which at most one
+/// can match the stored blob.
+pub type DeclaredSizes = HashMap<u64, PathBuf>;
+
+/// The merkle nodes and version blobs a commit's tree introduces relative to a base.
 #[derive(Debug, Default)]
 pub struct AddedObjects {
     /// Merkle tree node hashes (dirs and vnodes) reachable from the added subtrees.
     pub nodes: HashSet<MerkleHash>,
-    /// Content hashes of the version blobs the added files reference.
-    pub versions: HashSet<String>,
+    /// The version blobs the added files reference, keyed by content hash.
+    pub versions: HashMap<String, DeclaredSizes>,
+    /// Nodes the store holds but could not read, mapped to the failure. Whatever each one contains
+    /// is absent from `nodes` and `versions`.
+    pub unreadable: HashMap<MerkleHash, String>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1748,13 +1756,7 @@ pub fn added_objects(
     }
 
     let mut added = AddedObjects::default();
-    collect_added_from_dir(
-        repo,
-        base_root,
-        head_root,
-        &mut added.nodes,
-        &mut added.versions,
-    )?;
+    collect_added_from_dir(repo, base_root, head_root, Path::new(""), &mut added)?;
     Ok(Some(added))
 }
 
@@ -1795,6 +1797,14 @@ pub async fn find_missing_added_objects(
                 return Ok((vec![head.hash()?.to_string()], vec![]));
             };
 
+            // A ref must never advance onto a tree whose contents could not be read: unreadable is
+            // not the same answer as present, and only this caller can say which it needs.
+            if let Some((hash, err)) = added.unreadable.iter().next() {
+                return Err(OxenError::InternalError(
+                    format!("merkle node {hash} could not be read: {err}").into(),
+                ));
+            }
+
             let store = walk_repo.merkle_node_store();
             let mut missing_nodes = Vec::new();
             for hash in &added.nodes {
@@ -1803,7 +1813,7 @@ pub async fn find_missing_added_objects(
                 }
             }
 
-            Ok((missing_nodes, added.versions.into_iter().collect()))
+            Ok((missing_nodes, added.versions.into_keys().collect()))
         })
         .await??;
 
@@ -1835,20 +1845,33 @@ fn collect_added_from_dir(
     repo: &LocalRepository,
     base_dir: Option<MerkleHash>,
     head_dir: MerkleHash,
-    added_nodes: &mut HashSet<MerkleHash>,
-    added_versions: &mut HashSet<String>,
+    head_dir_path: &Path,
+    added: &mut AddedObjects,
 ) -> Result<(), OxenError> {
-    added_nodes.insert(head_dir);
+    added.nodes.insert(head_dir);
 
-    let (head_entries, head_vnodes) = dir_entries(repo, &head_dir)?;
-    added_nodes.extend(head_vnodes);
+    let head = match dir_entries(repo, &head_dir) {
+        Ok(contents) => contents,
+        Err(err) => {
+            // A directory node that will not parse hides everything beneath it, so it is recorded
+            // and the walk stops descending here instead of abandoning the rest of the tree.
+            added.unreadable.insert(head_dir, err.to_string());
+            return Ok(());
+        }
+    };
+    added.nodes.extend(head.vnodes);
+    added.unreadable.extend(head.unreadable);
 
+    // Damage on the base side prunes nothing: an entry it could not read is absent from
+    // `base_entries`, so the head entry of that name counts as added.
     let base_entries = match base_dir {
-        Some(base_dir) => dir_entries(repo, &base_dir)?.0,
+        Some(base_dir) => dir_entries(repo, &base_dir)
+            .map(|contents| contents.entries)
+            .unwrap_or_default(),
         None => HashMap::new(),
     };
 
-    for (name, entry) in head_entries {
+    for (name, entry) in head.entries {
         if base_entries
             .get(&name)
             .is_some_and(|base_entry| base_entry.hash == entry.hash)
@@ -1858,17 +1881,28 @@ fn collect_added_from_dir(
         }
 
         match entry.kind {
-            EntryKind::File { version } => {
+            EntryKind::File { version, num_bytes } => {
                 // A file node lives inline in its parent vnode's DB (which we just read), not as a
                 // standalone node, so its presence is already covered. Verify its content blob.
-                added_versions.insert(version);
+                added
+                    .versions
+                    .entry(version)
+                    .or_default()
+                    .entry(num_bytes)
+                    .or_insert_with(|| head_dir_path.join(&name));
             }
             EntryKind::Dir => {
                 let base_sub = base_entries
                     .get(&name)
                     .filter(|base_entry| matches!(base_entry.kind, EntryKind::Dir))
                     .map(|base_entry| base_entry.hash);
-                collect_added_from_dir(repo, base_sub, entry.hash, added_nodes, added_versions)?;
+                collect_added_from_dir(
+                    repo,
+                    base_sub,
+                    entry.hash,
+                    &head_dir_path.join(&name),
+                    added,
+                )?;
             }
         }
     }
@@ -1877,9 +1911,10 @@ fn collect_added_from_dir(
 }
 
 enum EntryKind {
-    /// A file entry, carrying its content (version-store) hash.
+    /// A file entry, carrying its content (version-store) hash and the size it declares.
     File {
         version: String,
+        num_bytes: u64,
     },
     Dir,
 }
@@ -1889,31 +1924,49 @@ struct DirEntry {
     kind: EntryKind,
 }
 
-/// The immediate file/dir entries of a directory node (flattening its vnode layer), keyed by name,
-/// plus the hashes of the vnodes traversed. Returns empty when the directory node is absent.
-fn dir_entries(
-    repo: &LocalRepository,
-    dir_hash: &MerkleHash,
-) -> Result<(HashMap<String, DirEntry>, Vec<MerkleHash>), OxenError> {
-    let mut entries = HashMap::new();
-    let mut vnode_hashes = Vec::new();
+/// What one directory node holds, gathered across its vnodes.
+struct DirContents {
+    entries: HashMap<String, DirEntry>,
+    vnodes: Vec<MerkleHash>,
+    /// VNodes the store holds but could not read, mapped to the failure. The entries each one
+    /// holds are absent from `entries`.
+    unreadable: HashMap<MerkleHash, String>,
+}
+
+/// Read the entries a directory node holds, descending through its vnodes.
+///
+/// A node the store does not hold reads as empty: an absent directory or vnode yields no entries
+/// and no failure. A node it holds but cannot parse does fail, the directory as an `Err` and a
+/// vnode as an entry in `unreadable` whose contents are then absent from `entries`.
+fn dir_entries(repo: &LocalRepository, dir_hash: &MerkleHash) -> Result<DirContents, OxenError> {
+    let mut contents = DirContents {
+        entries: HashMap::new(),
+        vnodes: Vec::new(),
+        unreadable: HashMap::new(),
+    };
 
     for (child_hash, child) in MerkleTreeNode::read_children_from_hash(repo, dir_hash)? {
         match &child.node {
             EMerkleTreeNode::VNode(_) => {
-                vnode_hashes.push(child_hash);
-                for (entry_hash, entry) in
-                    MerkleTreeNode::read_children_from_hash(repo, &child_hash)?
-                {
-                    insert_entry(&mut entries, entry_hash, &entry);
+                contents.vnodes.push(child_hash);
+                match MerkleTreeNode::read_children_from_hash(repo, &child_hash) {
+                    Ok(children) => {
+                        for (entry_hash, entry) in children {
+                            insert_entry(&mut contents.entries, entry_hash, &entry);
+                        }
+                    }
+                    // A vnode hides only the entries it holds, so its siblings are still read.
+                    Err(err) => {
+                        contents.unreadable.insert(child_hash, err.to_string());
+                    }
                 }
             }
             // Some trees may attach files/dirs directly under a directory node.
-            _ => insert_entry(&mut entries, child_hash, &child),
+            _ => insert_entry(&mut contents.entries, child_hash, &child),
         }
     }
 
-    Ok((entries, vnode_hashes))
+    Ok(contents)
 }
 
 fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node: &MerkleTreeNode) {
@@ -1925,6 +1978,7 @@ fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node:
                     hash,
                     kind: EntryKind::File {
                         version: file_node.hash().to_string(),
+                        num_bytes: file_node.num_bytes(),
                     },
                 },
             );
@@ -1962,6 +2016,36 @@ mod tests {
     // The incremental check must flag a blob the head commit *adds* when it's missing,
     // and must NOT re-check blobs inherited unchanged from the base (that's the whole point of
     // scoping to the changed set rather than walking the full tree).
+    #[tokio::test]
+    async fn test_find_missing_added_objects_refuses_an_unreadable_node() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let nested = repo.path.join("nested");
+            util::fs::create_dir_all(&nested)?;
+            test::write_txt_file_to_path(nested.join("a.txt"), "alpha")?;
+            repositories::add(&repo, &repo.path).await?;
+            let head = repositories::commit(&repo, "add nested/a.txt")?;
+
+            let dir = get_dir_with_children(&repo, &head, "nested", None)?
+                .expect("the nested directory has a node");
+            repo.merkle_node_store().write_node(
+                &dir.hash,
+                Bytes::from_static(b"not a node"),
+                Bytes::from_static(b"not children"),
+            )?;
+
+            // Advancing a ref onto a tree that cannot be read must fail rather than report the
+            // parts that happened to be reachable, unlike `oxen verify`, which reports and goes on.
+            let result = find_missing_added_objects(&repo, None, &head).await;
+            assert!(
+                result.is_err(),
+                "the gate accepted a tree it could not read: {result:?}"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_find_missing_added_objects_scopes_to_the_added_set() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {

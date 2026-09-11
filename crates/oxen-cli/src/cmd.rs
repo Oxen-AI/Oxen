@@ -119,6 +119,9 @@ pub use prune::PruneCmd;
 pub mod fsck;
 pub use fsck::FsckCmd;
 
+pub mod verify;
+pub use verify::VerifyCmd;
+
 /// Maps the name of a [`RunCmd`] to its implementation.
 pub type Runners = HashMap<String, Box<dyn RunCmd>>;
 
