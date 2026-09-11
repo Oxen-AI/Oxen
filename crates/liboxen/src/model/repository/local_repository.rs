@@ -5,8 +5,8 @@ use crate::core::db::merkle_node::{
     DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store,
 };
 use crate::error::OxenError;
-use crate::model::merkle_tree::node::FileNode;
-use crate::model::{Remote, RemoteRepository, RepoIdentity};
+use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
+use crate::model::{MerkleHash, Remote, RemoteRepository, RepoIdentity};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
 use crate::util;
 use crate::util::fs::AtomicFile;
@@ -102,6 +102,34 @@ impl LocalRepository {
     /// Get a reference to the version store.
     pub fn version_store(&self) -> Arc<dyn VersionStore> {
         Arc::clone(&self.version_store)
+    }
+
+    /// Total bytes of the version files this repo's tree references, counting each version once.
+    ///
+    /// Independent of where the version files physically live, so it is the same figure for a
+    /// local-backend repo, one whose `versions_path` points off the repo directory, and an
+    /// S3-backed repo. Every file node the node store holds counts, so history no branch reaches
+    /// still counts until `prune` drops its nodes.
+    pub fn version_bytes(&self) -> Result<u64, OxenError> {
+        let mut counted: HashSet<MerkleHash> = HashSet::new();
+        let mut total: u64 = 0;
+
+        // File nodes are not keyed in the node store on their own; they arrive as the children of
+        // the nodes that are. Reading the children of every stored node therefore reaches every
+        // file node, and reaches it once per stored node rather than once per commit holding it.
+        for node_hash in self.merkle_node_store().list_hashes()? {
+            for (_, child) in MerkleTreeNode::read_children_from_hash(self, &node_hash)? {
+                // One version file can be reached under several names, each its own file node, so
+                // the sum dedups on the version hash the store is addressed by.
+                if let EMerkleTreeNode::File(file_node) = &child.node
+                    && counted.insert(*file_node.hash())
+                {
+                    total = total.saturating_add(file_node.num_bytes());
+                }
+            }
+        }
+
+        Ok(total)
     }
 
     /// Get a handle to the Merkle node store backing this repo's tree nodes.
@@ -675,6 +703,7 @@ mod tests {
     use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
     use crate::error::OxenError;
     use crate::model::{LocalRepository, Remote, RemoteRepository, RepoIdentity};
+    use crate::repositories;
     use crate::storage::StorageKind;
     use crate::test;
     use tempfile::TempDir;
@@ -1116,5 +1145,48 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_version_bytes_counts_a_committed_file() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let contents = "a".repeat(1234);
+            let path = test::write_txt_file_to_path(repo.path.join("one.txt"), &contents)?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "Add one file")?;
+
+            assert_eq!(repo.version_bytes()?, contents.len() as u64);
+            Ok(())
+        })
+        .await
+    }
+
+    /// The same content at two paths is two file nodes addressing one version file, so its bytes
+    /// count once rather than twice.
+    #[tokio::test]
+    async fn test_version_bytes_counts_duplicate_content_once() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let contents = "b".repeat(500);
+            let first = test::write_txt_file_to_path(repo.path.join("first.txt"), &contents)?;
+            let second = test::write_txt_file_to_path(repo.path.join("second.txt"), &contents)?;
+            repositories::add(&repo, &first).await?;
+            repositories::add(&repo, &second).await?;
+            repositories::commit(&repo, "Add the same content twice")?;
+
+            assert_eq!(repo.version_bytes()?, contents.len() as u64);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Nothing committed means nothing referenced, so the walk reports zero rather than failing on
+    /// a tree that holds no file nodes.
+    #[tokio::test]
+    async fn test_version_bytes_is_zero_for_an_empty_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            assert_eq!(repo.version_bytes()?, 0);
+            Ok(())
+        })
+        .await
     }
 }
