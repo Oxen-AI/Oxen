@@ -4786,6 +4786,7 @@ dependencies = [
  "parking_lot",
  "pathdiff",
  "polars",
+ "polars-utils",
  "qsv-sniffer",
  "rand 0.10.2",
  "rayon",
