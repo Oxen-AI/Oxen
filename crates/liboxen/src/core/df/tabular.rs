@@ -1,6 +1,7 @@
 use duckdb::ToSql;
 use polars::io::cloud::CloudOptions;
 use polars::prelude::*;
+use polars_utils::mmap::MemSlice;
 use serde_json::json;
 use std::collections::HashSet;
 use std::fs::File;
@@ -70,13 +71,36 @@ fn read_df_csv(
         .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
-fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    let path = path
-        .as_ref()
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str("Could not convert path to string"))?;
-    LazyJsonLineReader::new(path)
+/// An NDJSON file's bytes as an in-memory polars scan source, with trailing newlines trimmed.
+///
+/// polars' NDJSON reader (`polars_io::ndjson::core::get_line_stats_json`, still the same on main
+/// as of 0.49) samples line lengths from the 75% byte mark whenever the scan carries a positive
+/// slice, which every paginated data frame read does. The sampler takes the position *after* the
+/// first `}\n` in that tail and then skips one more byte, so when that newline is the last byte of
+/// the file it indexes one past the end and panics with "range start index N+1 out of range for
+/// slice of length N". That is any file of six or more rows whose last row spans the 75% mark: a
+/// chat history whose newest conversation is longer than the rest combined, for one. With no
+/// trailing newline that position cannot be produced, and NDJSON without a final newline is valid.
+///
+/// Memory-mapped and in-memory sources are sliced without copying, so this costs nothing over
+/// handing polars the path, and the streaming reader loads the whole file either way.
+fn ndjson_scan_source(bytes: MemSlice) -> ScanSources {
+    let end = bytes
+        .iter()
+        .rposition(|&b| b != b'\n' && b != b'\r')
+        .map_or(0, |i| i + 1);
+    ScanSources::Buffers(Arc::from([bytes.slice(0..end)]))
+}
+
+fn lazy_jsonl_reader(bytes: MemSlice) -> LazyJsonLineReader {
+    LazyJsonLineReader::new_with_sources(ndjson_scan_source(bytes))
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
+}
+
+fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
+    let path = path.as_ref();
+    let bytes = MemSlice::from_file(&File::open(path)?)?;
+    lazy_jsonl_reader(bytes)
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
@@ -148,12 +172,9 @@ pub fn scan_df_csv(
 }
 
 pub fn scan_df_jsonl(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFrame, OxenError> {
-    let path = path
-        .as_ref()
-        .to_str()
-        .ok_or_else(|| OxenError::basic_str("Could not convert path to string"))?;
-    LazyJsonLineReader::new(path)
-        .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
+    let path = path.as_ref();
+    let bytes = MemSlice::from_file(&File::open(path)?)?;
+    lazy_jsonl_reader(bytes)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
@@ -1209,7 +1230,11 @@ async fn read_s3_version_df(
 
     let df_lazy = match extension {
         "ndjson" | "jsonl" => {
-            task::spawn_blocking(move || read_s3_jsonl(&url, cloud_opts)).await??
+            // The NDJSON reader loads the whole object anyway, so pull it through the store and
+            // scan the bytes; see `ndjson_scan_source` for why polars must not see the file's
+            // trailing newline.
+            let bytes = version_store.get_version(hash).await?;
+            task::spawn_blocking(move || read_jsonl_bytes(bytes)).await??
         }
         "json" => {
             // `JsonReader` is byte-stream only (no cloud reader), so pull the bytes through the
@@ -1293,10 +1318,8 @@ fn read_s3_ipc(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenErr
     LazyFrame::scan_ipc(url, args).map_err(OxenError::from)
 }
 
-fn read_s3_jsonl(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
-    LazyJsonLineReader::new(url)
-        .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
-        .with_cloud_options(Some(cloud_opts))
+fn read_jsonl_bytes(bytes: Vec<u8>) -> Result<LazyFrame, OxenError> {
+    lazy_jsonl_reader(MemSlice::from_vec(bytes))
         .finish()
         .map_err(OxenError::from)
 }
@@ -1920,6 +1943,43 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    /// polars' NDJSON line sampler indexes past the end of a file of six or more rows whose last
+    /// row spans the 75% byte mark (see `ndjson_scan_source`). The slice is what makes it run, as
+    /// it does for every paginated data frame read.
+    #[tokio::test]
+    async fn test_read_jsonl_slice_when_last_row_spans_three_quarter_mark() -> Result<(), OxenError>
+    {
+        test::run_empty_dir_test_async(|dir| async move {
+            let path = dir.join("chat_history.jsonl");
+            let mut contents = String::new();
+            for id in 0..6 {
+                contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
+            }
+            contents.push_str(&format!(
+                "{{\"id\":6,\"text\":\"{}\"}}\n",
+                "x".repeat(20_000)
+            ));
+            std::fs::write(&path, contents)?;
+
+            let mut opts = DFOpts::empty();
+            opts.slice = Some(SliceRange::for_page(1, 100));
+            let df = tabular::read_df_with_extension(path.clone(), "jsonl", &opts).await?;
+            assert_eq!(df.height(), 7);
+
+            // A row limit is pushed down as the same kind of slice.
+            let scanned = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+                tabular::scan_df_jsonl(&path, 3)?
+                    .collect()
+                    .map_err(OxenError::from)
+            })
+            .await??;
+            assert_eq!(scanned.height(), 3);
+
+            Ok(())
+        })
+        .await
     }
 
     #[tokio::test]
