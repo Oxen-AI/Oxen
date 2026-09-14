@@ -48,71 +48,38 @@ mod tests {
 
     use crate::api;
     use crate::config::UserConfig;
-    use crate::constants::DEFAULT_REMOTE_NAME;
     use crate::error::OxenError;
     use crate::opts::FetchOpts;
-    use crate::opts::PushOpts;
     use crate::repositories;
     use crate::test;
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_remote_merger_no_commits() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_head_with_no_commits_stays_mergeable() -> Result<(), OxenError> {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
-
             assert!(mergeability.is_mergeable);
-            // Only one commit in the history, the head
-            assert_eq!(mergeability.commits.len(), 1);
+            assert_eq!(
+                mergeability.commits.len(),
+                1,
+                "a head that added nothing carries only the commit it forked from"
+            );
 
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_remote_merger_base_is_ahead() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let base = "main";
-            let head = "add-data";
-
-            repositories::branches::create_checkout(&local_repo, head)?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
-
-            // Checkout main and add a file to be ahead
+            // Put the base ahead of the head
             repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file 1")?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: base.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
-
             assert!(mergeability.is_mergeable);
             assert_eq!(mergeability.commits.len(), 1);
 
@@ -123,25 +90,20 @@ mod tests {
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_remote_merger_mergeable_multiple_commits() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+    async fn test_remote_merger_multiple_commits_until_the_base_conflicts() -> Result<(), OxenError>
+    {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
-            // Modify README.md
+            // Two commits on the head branch, the first of which rewrites README.md
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am the README now")?;
             repositories::add(&local_repo, &path).await?;
 
-            // Commit twice
             let path = local_repo.path.join("file_1.txt");
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
@@ -152,88 +114,29 @@ mod tests {
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file 2")?;
 
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
-
-            println!("Got {} commits", mergeability.commits.len());
-            for commit in &mergeability.commits {
-                println!("mergeability commit: {commit:?}");
-            }
-
             assert!(mergeability.is_mergeable);
             assert_eq!(mergeability.commits.len(), 3);
             assert_eq!(mergeability.conflicts.len(), 0);
 
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_remote_merger_multiple_commits_conflict_head_is_ahead() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let base = "main";
-            let head = "add-data";
-
-            repositories::branches::create_checkout(&local_repo, head)?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
-
-            // Modify README.md to have a conflict
-            let path = local_repo.path.join("README.md");
-            test::write_txt_file_to_path(&path, "I am the README now")?;
-            repositories::add(&local_repo, &path).await?;
-
-            // Commit twice
-            let path = local_repo.path.join("file_1.txt");
-            test::write_txt_file_to_path(&path, "hello")?;
-            repositories::add(&local_repo, &path).await?;
-            repositories::commit(&local_repo, "adding file 1")?;
-
-            let path = local_repo.path.join("file_2.txt");
-            test::write_txt_file_to_path(&path, "world")?;
-            repositories::add(&local_repo, &path).await?;
-            repositories::commit(&local_repo, "adding file 2")?;
-
-            // Push commits
-
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
-
-            // Checkout main and modify README.md to have a conflict
+            // Rewrite the same file on the base branch
             repositories::checkout(&local_repo, base).await?;
             let path = local_repo.path.join("README.md");
             test::write_txt_file_to_path(&path, "I am on main conflicting the README")?;
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "modifying readme on main")?;
-
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: base.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             let mergeability = api::client::merger::mergeable(&remote_repo, base, head).await?;
-
             assert!(!mergeability.is_mergeable);
             assert_eq!(mergeability.commits.len(), 3);
-            assert_eq!(mergeability.conflicts.len(), 1);
+            assert_eq!(
+                mergeability.conflicts.len(),
+                1,
+                "both branches rewrote README.md"
+            );
 
             Ok(remote_repo)
         })
@@ -243,17 +146,12 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_merger_merge_unique() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             let base = "main";
             let head = "add-data";
 
             repositories::branches::create_checkout(&local_repo, head)?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             // Modify a file on the head branch
             let new_file_name = "merge_file.txt";
@@ -261,19 +159,14 @@ mod tests {
             test::write_txt_file_to_path(&path, "hello")?;
             repositories::add(&local_repo, &path).await?;
             repositories::commit(&local_repo, "adding file")?;
-            let opts = PushOpts {
-                remote: DEFAULT_REMOTE_NAME.to_string(),
-                branch: head.to_string(),
-                ..Default::default()
-            };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push(&local_repo).await?;
 
             // Merge the head branch into base
             let author = UserConfig::get()?.to_user();
             let merge_result =
                 api::client::merger::merge(&remote_repo, base, head, &author).await?;
 
-            repositories::checkout::checkout(&local_repo, base).await?;
+            repositories::checkout(&local_repo, base).await?;
             let commits_before = repositories::commits::list(&local_repo)?;
             let fetch_opts = FetchOpts::new();
             repositories::pull::pull_remote_branch(&local_repo, &fetch_opts).await?;
