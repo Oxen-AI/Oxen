@@ -43,8 +43,10 @@ mod tests {
     use crate::config::UserConfig;
     use crate::error::OxenError;
     use crate::model::NewCommitBody;
+    use crate::repositories::size;
     use crate::repositories::{self, workspaces};
     use crate::test;
+    use crate::util::fs;
 
     #[tokio::test]
     async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
@@ -100,6 +102,13 @@ mod tests {
                 "Move should be detected in moved_files"
             );
 
+            assert!(
+                !size::repo_size_path(&repo).exists(),
+                "committing locally records no size, so there is none to start from"
+            );
+            let legacy_size = fs::oxen_hidden_dir(&repo.path).join("repo_size.toml");
+            fs::write_to_path(&legacy_size, r#"{"status":"done","size":1}"#)?;
+
             // Commit the workspace and verify the file is at the new location
             let user = UserConfig::get()?.to_user();
             let new_commit = NewCommitBody {
@@ -122,6 +131,20 @@ mod tests {
             assert!(
                 old_file.is_none(),
                 "File should not exist at original path after commit"
+            );
+
+            assert!(
+                size::repo_size_path(&repo).exists(),
+                "committing a workspace must leave a recorded size behind"
+            );
+            assert_eq!(
+                size::wait_for_recorded_size(&repo)?,
+                repo.version_bytes()?,
+                "the figure recorded is the bytes the tree references"
+            );
+            assert!(
+                !legacy_size.exists(),
+                "recording a size drops what an older format left under a .toml name"
             );
 
             Ok(())

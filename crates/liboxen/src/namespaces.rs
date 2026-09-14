@@ -79,3 +79,40 @@ fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories::size::{RepoSizeFile, SizeStatus, repo_size_path};
+    use crate::test;
+    use crate::util::fs::AtomicFile;
+
+    /// Record `size` for a repo at `path` without going through a commit, since what is under test
+    /// is the summation rather than how a figure gets computed.
+    fn repo_recording(path: &Path, size: u64) -> Result<(), OxenError> {
+        let repo = repositories::init(path)?;
+        let recorded = RepoSizeFile {
+            status: SizeStatus::Done,
+            size,
+        };
+        AtomicFile::new(repo_size_path(&repo)).write(recorded.to_string().as_bytes())
+    }
+
+    #[test]
+    fn test_get_sums_the_recorded_size_of_every_repo() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            assert!(
+                get(dir, "ox")?.is_none(),
+                "a namespace with no directory on disk is reported as absent"
+            );
+
+            let namespace_path = dir.join("ox");
+            repo_recording(&namespace_path.join("first"), 1500)?;
+            repo_recording(&namespace_path.join("second"), 2500)?;
+
+            let namespace = get(dir, "ox")?.expect("namespace exists");
+            assert_eq!(namespace.storage_usage_gb, 4000.0 / bytesize::GB as f64);
+            Ok(())
+        })
+    }
+}

@@ -21,6 +21,7 @@ use crate::model::{
     Branch, Commit, EntryDataType, MerkleHash, NewCommitBody, StagedEntryStatus, Workspace,
 };
 use crate::repositories;
+use crate::repositories::size;
 use crate::util;
 use crate::util::progress_bar::FinishOnDropProgressBar;
 use crate::view::merge::{MergeConflictFile, Mergeable};
@@ -68,6 +69,15 @@ pub async fn commit(
     };
     drop(lock);
     cleanup_commit_lock(&lock_key);
+
+    // The commit is what makes the workspace's version files referenced, so the recorded size
+    // is stale until this recalculation lands.
+    if result.is_ok()
+        && let Err(err) = size::update_size(&workspace.base_repo)
+    {
+        log::error!("Failed to start a size recalculation: {err}");
+    }
+
     result
 }
 

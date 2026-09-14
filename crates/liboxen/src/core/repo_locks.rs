@@ -212,6 +212,7 @@ async fn drain(gate: &RepoGate) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repositories::size;
     use crate::test;
     use tokio::sync::oneshot;
 
@@ -237,6 +238,11 @@ mod tests {
             assert!(
                 matches!(acquire_write(&repo), Err(OxenError::LockTimeout(_))),
                 "a write must be rejected while the exclusive lock is held"
+            );
+            size::update_size(&repo)?;
+            assert!(
+                !size::repo_size_path(&repo).exists(),
+                "a rejected size recalculation records nothing at all"
             );
 
             release_tx.send(()).expect("release the exclusive op");
