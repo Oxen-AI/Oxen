@@ -938,22 +938,27 @@ mod tests {
             .collect()
     }
 
-    // The defining property of base..head: reachable(head) minus reachable(base).
+    // The defining property of base..head: reachable(head) minus reachable(base). `reachable`
+    // holds one walk per commit, keyed by commit id.
     fn reference_range_ids(
-        repo: &LocalRepository,
+        reachable: &HashMap<String, HashSet<String>>,
         base: &Commit,
         head: &Commit,
     ) -> HashSet<String> {
-        let base_set = reachable_ids(repo, &base.id);
-        reachable_ids(repo, &head.id)
-            .into_iter()
-            .filter(|id| !base_set.contains(id))
+        reachable[&head.id]
+            .difference(&reachable[&base.id])
+            .cloned()
             .collect()
     }
 
     // Differential check: list_between_exclusive must equal the reference set, list
     // no commit twice, and never place a commit before one of its children.
-    async fn assert_range_matches_reference(repo: &LocalRepository, base: &Commit, head: &Commit) {
+    async fn assert_range_matches_reference(
+        repo: &LocalRepository,
+        reachable: &HashMap<String, HashSet<String>>,
+        base: &Commit,
+        head: &Commit,
+    ) {
         let got = repositories::commits::list_between_exclusive(repo, base, head)
             .await
             .unwrap();
@@ -973,7 +978,7 @@ mod tests {
         let got_set: HashSet<String> = order.keys().cloned().collect();
         assert_eq!(
             got_set,
-            reference_range_ids(repo, base, head),
+            reference_range_ids(reachable, base, head),
             "wrong set for {}..{}",
             base.id,
             head.id
@@ -994,11 +999,16 @@ mod tests {
     }
 
     // Every ordered pair drawn from `commits` must satisfy the reference, including
-    // self-pairs (empty) and reversed pairs (head behind base).
+    // self-pairs (empty) and reversed pairs (head behind base). Each commit's reachable set is
+    // walked once here and shared by every pair that needs it.
     async fn assert_all_pairs(repo: &LocalRepository, commits: &[&Commit]) {
+        let reachable: HashMap<String, HashSet<String>> = commits
+            .iter()
+            .map(|c| (c.id.clone(), reachable_ids(repo, &c.id)))
+            .collect();
         for base in commits {
             for head in commits {
-                assert_range_matches_reference(repo, base, head).await;
+                assert_range_matches_reference(repo, &reachable, base, head).await;
             }
         }
     }
