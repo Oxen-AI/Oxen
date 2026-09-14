@@ -223,4 +223,50 @@ mod tests {
         })
         .await
     }
+
+    // A chained rename: the second move's source is staged but absent from the base commit, so it
+    // is unstaged outright rather than staged for removal, and only the original committed path
+    // carries the `Removed` marker.
+    #[tokio::test]
+    async fn test_mv_twice_leaves_one_removed_marker() -> Result<(), OxenError> {
+        // Skip workspace ops on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let committed = repo.path.join("first.txt");
+            crate::util::fs::write_to_path(&committed, "hello")?;
+            repositories::add(&repo, &committed).await?;
+            let commit = repositories::commit(&repo, "Add first.txt")?;
+
+            let workspace = repositories::workspaces::create(&repo, &commit, "mv-twice", true)?;
+
+            let first = Path::new("first.txt");
+            let second = Path::new("second.txt");
+            let third = Path::new("third.txt");
+            workspaces::files::mv(&workspace, first, second)?;
+            workspaces::files::mv(&workspace, second, third)?;
+
+            let status = workspaces::status::status(&workspace)?;
+            assert_eq!(
+                status.staged_files.get(first).map(|entry| &entry.status),
+                Some(&crate::model::StagedEntryStatus::Removed),
+                "the committed source keeps its Removed marker across both moves"
+            );
+            assert_eq!(
+                status.staged_files.get(third).map(|entry| &entry.status),
+                Some(&crate::model::StagedEntryStatus::Added),
+                "the final destination is staged as Added"
+            );
+            assert!(
+                !status.staged_files.contains_key(second),
+                "the intermediate path was never committed, so it is unstaged rather than \
+                 staged for removal"
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
