@@ -38,6 +38,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::migrations())
                 .service(services::prune())
                 .service(services::revisions())
+                .service(services::verify())
                 .service(services::size())
                 .service(services::schemas())
                 .service(services::stats())
