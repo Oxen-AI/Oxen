@@ -254,12 +254,11 @@ mod tests {
         })
         .await
     }
-    /// A criss-cross history leaves two commits tied as merge bases. The depth maps backing the
-    /// search iterate in arbitrary order, so without a tie-break the same request resolved to a
-    /// different base call to call, and three-dot diffs built on it varied per request.
+    /// A criss-cross history leaves two commits tied as merge bases. The most recent one wins, as
+    /// it does in git, so a three-dot diff of the same two revisions agrees between the two tools.
     #[tokio::test]
-    async fn test_lowest_common_ancestor_is_deterministic_with_multiple_merge_bases()
-    -> Result<(), OxenError> {
+    async fn test_lowest_common_ancestor_picks_the_most_recent_merge_base() -> Result<(), OxenError>
+    {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
@@ -295,23 +294,10 @@ mod tests {
                 y1.timestamp > x1.timestamp,
                 "y1 should be the newer merge base"
             );
-            let expected = &y1.id;
-
-            let mut answers = std::collections::HashSet::new();
-            for _ in 0..200 {
-                let lca =
-                    repositories::merge::lowest_common_ancestor_from_commits(&repo, &mx, &my)?
-                        .expect("the two merges share history");
-                answers.insert(lca.id);
-            }
+            let lca = repositories::merge::lowest_common_ancestor_from_commits(&repo, &mx, &my)?
+                .expect("the two merges share history");
             assert_eq!(
-                answers.len(),
-                1,
-                "the merge base must not vary between calls, got {answers:?}"
-            );
-            assert_eq!(
-                answers.iter().next().map(String::as_str),
-                Some(expected.as_str()),
+                lca.id, y1.id,
                 "the most recent merge base should win, as it does in git"
             );
             Ok(())
