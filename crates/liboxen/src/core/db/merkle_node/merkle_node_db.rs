@@ -470,8 +470,10 @@ impl MerkleNodeDB {
         else {
             return Err(MerkleDbError::CloseBeforeOpen);
         };
-        self.store
-            .write_node(&self.node_id, node_buf.freeze(), children_buf.freeze())?;
+        self.store.write_nodes(
+            vec![(self.node_id, node_buf.freeze(), children_buf.freeze())],
+            true,
+        )?;
         self.flushed = true;
         Ok(())
     }
