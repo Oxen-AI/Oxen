@@ -148,7 +148,8 @@ fn remove_legacy_size_file(repo: &LocalRepository) {
     }
 }
 
-/// Poll the figure recorded for `repo` until a recalculation has landed, panicking past 30s.
+/// Poll the figure recorded for `repo` until a recalculation lands, erroring on a recorded failure
+/// and panicking past 30s.
 #[cfg(test)]
 pub(crate) fn wait_for_recorded_size(repo: &LocalRepository) -> Result<u64, OxenError> {
     use std::time::{Duration, Instant};
@@ -156,13 +157,18 @@ pub(crate) fn wait_for_recorded_size(repo: &LocalRepository) -> Result<u64, Oxen
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let recorded = get_size(repo)?;
-        if recorded.status == SizeStatus::Done {
-            return Ok(recorded.size);
+        match recorded.status {
+            SizeStatus::Done => return Ok(recorded.size),
+            SizeStatus::Error => {
+                return Err(OxenError::internal_error(
+                    "the size recalculation recorded an error, which the log details",
+                ));
+            }
+            SizeStatus::Pending => {}
         }
         assert!(
             Instant::now() < deadline,
-            "the size stayed {:?} past the deadline",
-            recorded.status
+            "the size stayed pending past the deadline"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
