@@ -29,7 +29,7 @@ impl RunCmd for WorkspaceStatusCmd {
     }
     fn args(&self) -> Command {
         Command::new(NAME)
-            .about("See at what files are ready to be added or committed")
+            .about("See what files are ready to be added or committed")
             .arg(
                 Arg::new("workspace-id")
                     .long("workspace-id")

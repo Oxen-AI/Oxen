@@ -105,7 +105,7 @@ impl RunCmd for DFCmd {
         .arg(
             Arg::new("page-size")
                 .long("page-size")
-                .help("Paginated through the data frame. Default page-size = 10")
+                .help("Paginate through the data frame. Default page-size = 10")
                 .action(clap::ArgAction::Set),
         )
         .arg(

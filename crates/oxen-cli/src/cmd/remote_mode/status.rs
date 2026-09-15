@@ -27,7 +27,7 @@ impl RunCmd for RemoteModeStatusCmd {
     fn args(&self) -> Command {
         Command::new(NAME)
             // TODO: Update about message
-            .about("See at what files are ready to be added or committed")
+            .about("See what files are ready to be added or committed")
             .arg(
                 Arg::new("skip")
                     .long("skip")

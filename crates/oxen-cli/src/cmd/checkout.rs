@@ -17,7 +17,7 @@ impl RunCmd for CheckoutCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the command
         Command::new(NAME)
-            .about("Checks out a branches in the repository")
+            .about("Checks out a branch in the repository")
             .arg(Arg::new("name").help("Name of the branch or commit id to checkout"))
             .arg(
                 Arg::new("create")
@@ -30,13 +30,13 @@ impl RunCmd for CheckoutCmd {
             .arg(
                 Arg::new("ours")
                     .long("ours")
-                    .help("Checkout the content of the base branch and take it as the working directories version. Will overwrite your working file.")
+                    .help("Checkout the content of the base branch and take it as the working directory's version. Will overwrite your working file.")
                     .action(clap::ArgAction::SetTrue),
             )
             .arg(
                 Arg::new("theirs")
                     .long("theirs")
-                    .help("Checkout the content of the merge branch and take it as the working directories version. Will overwrite your working file.")
+                    .help("Checkout the content of the merge branch and take it as the working directory's version. Will overwrite your working file.")
                     .action(clap::ArgAction::SetTrue),
             )
     }

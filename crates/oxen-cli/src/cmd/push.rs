@@ -25,7 +25,7 @@ impl RunCmd for PushCmd {
 
     fn args(&self) -> Command {
         Command::new(NAME)
-            .about("Push the the files to the remote branch")
+            .about("Push the files to the remote branch")
             .arg(
                 Arg::new("REMOTE")
                     .help("Remote you want to push to")
