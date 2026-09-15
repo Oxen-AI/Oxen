@@ -301,11 +301,12 @@ mod tests {
     use uuid::Uuid;
 
     use crate::error::OxenError;
-    use crate::model::MerkleHash;
+    use crate::model::{MerkleHash, StagedEntryStatus};
     use crate::opts::{PaginateOpts, SortBy, SortOpts};
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::view::entries::EMetadataEntry;
     use tokio::time::sleep;
 
     #[tokio::test]
@@ -1338,6 +1339,202 @@ mod tests {
             let async_names: Vec<&str> = async_.entries.iter().map(|e| e.filename()).collect();
             let sync_names: Vec<&str> = sync.entries.iter().map(|e| e.filename()).collect();
             assert_eq!(async_names, sync_names);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Names and `changes` status for every entry in a workspace listing, keyed by filename.
+    fn workspace_listing(
+        paginated: &crate::view::PaginatedDirEntries,
+    ) -> std::collections::HashMap<String, Option<StagedEntryStatus>> {
+        paginated
+            .entries
+            .iter()
+            .map(|entry| {
+                let status = match entry {
+                    EMetadataEntry::WorkspaceMetadataEntry(e) => {
+                        e.changes.as_ref().map(|c| c.status.clone())
+                    }
+                    EMetadataEntry::MetadataEntry(_) => None,
+                };
+                (entry.filename().to_string(), status)
+            })
+            .collect()
+    }
+
+    /// Stage a tree of changes into a workspace over a committed tree that repeats the filename
+    /// `shared.txt` at two depths, so cross-directory bleed is visible.
+    async fn workspace_with_staged_changes(
+        repo: &crate::model::LocalRepository,
+    ) -> Result<crate::model::Workspace, OxenError> {
+        let data_dir = repo.path.join("data");
+        let nested_dir = data_dir.join("nested");
+        util::fs::create_dir_all(&nested_dir)?;
+        util::fs::write_to_path(repo.path.join("shared.txt"), "root shared")?;
+        util::fs::write_to_path(repo.path.join("keep.txt"), "keep")?;
+        util::fs::write_to_path(data_dir.join("shared.txt"), "data shared")?;
+        util::fs::write_to_path(nested_dir.join("deep.txt"), "deep")?;
+        repositories::add(repo, &repo.path).await?;
+        let commit = repositories::commit(repo, "Adding committed tree")?;
+
+        let workspace =
+            repositories::workspaces::create(repo, &commit, Uuid::new_v4().to_string(), true)?;
+
+        // Additions at three depths, the last of them under a directory only the workspace knows.
+        for path in [
+            PathBuf::from("root_new.txt"),
+            Path::new("data").join("data_new.txt"),
+            Path::new("data").join("nested").join("nested_new.txt"),
+            Path::new("new_dir").join("inside.txt"),
+        ] {
+            let full_path = workspace.workspace_repo.path.join(&path);
+            if let Some(parent) = full_path.parent() {
+                util::fs::create_dir_all(parent)?;
+            }
+            util::fs::write_to_path(&full_path, "staged")?;
+            repositories::workspaces::files::add(&workspace, &full_path).await?;
+        }
+
+        // Modify the deeper `shared.txt`, leaving the root one untouched.
+        let modified = workspace
+            .workspace_repo
+            .path
+            .join("data")
+            .join("shared.txt");
+        util::fs::write_to_path(&modified, "data shared, edited")?;
+        repositories::workspaces::files::add(&workspace, &modified).await?;
+
+        // Remove a committed file at the root.
+        let err_files =
+            repositories::workspaces::files::rm(&workspace, Path::new("keep.txt")).await?;
+        assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
+
+        Ok(workspace)
+    }
+
+    fn list_workspace_dir(
+        repo: &crate::model::LocalRepository,
+        workspace: &crate::model::Workspace,
+        directory: &Path,
+    ) -> Result<crate::view::PaginatedDirEntries, OxenError> {
+        repositories::entries::list_directory_w_workspace_depth(
+            repo,
+            directory,
+            &workspace.commit.id,
+            Some(workspace.clone()),
+            &PaginateOpts {
+                page_num: 1,
+                page_size: 100,
+            },
+            &SortOpts::default(),
+            0,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_list_workspace_root_scopes_staged_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let workspace = workspace_with_staged_changes(&repo).await?;
+            let listing = workspace_listing(&list_workspace_dir(&repo, &workspace, Path::new(""))?);
+
+            // Only the root level, and staged entries are named by basename like committed ones.
+            let mut names: Vec<&str> = listing.keys().map(|s| s.as_str()).collect();
+            names.sort();
+            assert_eq!(
+                names,
+                vec!["data", "keep.txt", "new_dir", "root_new.txt", "shared.txt"]
+            );
+
+            assert_eq!(listing["root_new.txt"], Some(StagedEntryStatus::Added));
+            // The workspace-only directory holding `new_dir/inside.txt`.
+            assert_eq!(listing["new_dir"], Some(StagedEntryStatus::Added));
+            assert_eq!(listing["keep.txt"], Some(StagedEntryStatus::Removed));
+            // `data/shared.txt` is the modified one, so the root's `shared.txt` is untouched.
+            assert_eq!(listing["shared.txt"], None);
+            // `data` came from the commit tree, so no second entry is synthesized for it.
+            assert_eq!(listing["data"], None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_list_workspace_nested_dir_scopes_staged_changes() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let workspace = workspace_with_staged_changes(&repo).await?;
+
+            let listing =
+                workspace_listing(&list_workspace_dir(&repo, &workspace, Path::new("data"))?);
+            let mut names: Vec<&str> = listing.keys().map(|s| s.as_str()).collect();
+            names.sort();
+            assert_eq!(names, vec!["data_new.txt", "nested", "shared.txt"]);
+            assert_eq!(listing["data_new.txt"], Some(StagedEntryStatus::Added));
+            assert_eq!(listing["shared.txt"], Some(StagedEntryStatus::Modified));
+            // `nested` is in the commit tree, and its staged addition does not duplicate it.
+            assert_eq!(listing["nested"], None);
+
+            let nested = Path::new("data").join("nested");
+            let listing = workspace_listing(&list_workspace_dir(&repo, &workspace, &nested)?);
+            let mut names: Vec<&str> = listing.keys().map(|s| s.as_str()).collect();
+            names.sort();
+            assert_eq!(names, vec!["deep.txt", "nested_new.txt"]);
+            assert_eq!(listing["nested_new.txt"], Some(StagedEntryStatus::Added));
+            assert_eq!(listing["deep.txt"], None);
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A staged entry can land on a path the commit tree already fills with the other kind of
+    /// entry. Committing the workspace resolves that in favor of what is staged, so the listing
+    /// has to show the same thing rather than the entry being superseded.
+    #[tokio::test]
+    async fn test_list_workspace_directory_staged_entry_replaces_committed_entry()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            // `to_dir` is committed as a file, `to_file` as a directory.
+            util::fs::write_to_path(repo.path.join("to_dir"), "a file for now")?;
+            let committed_dir = repo.path.join("to_file");
+            util::fs::create_dir_all(&committed_dir)?;
+            util::fs::write_to_path(committed_dir.join("child.txt"), "child")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding a file and a directory")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, Uuid::new_v4().to_string(), true)?;
+
+            // Stage beneath the committed file, turning it into a directory.
+            let inside = workspace.workspace_repo.path.join("to_dir").join("in.txt");
+            util::fs::create_dir_all(inside.parent().unwrap())?;
+            util::fs::write_to_path(&inside, "staged")?;
+            repositories::workspaces::files::add(&workspace, &inside).await?;
+
+            // Stage the committed directory's own path as a file.
+            let as_file = workspace.workspace_repo.path.join("to_file");
+            util::fs::write_to_path(&as_file, "a file now")?;
+            repositories::workspaces::files::add(&workspace, &as_file).await?;
+
+            let paginated = list_workspace_dir(&repo, &workspace, Path::new(""))?;
+
+            // One entry per name, each of the kind the commit will produce. Sorted by name here
+            // because the overlay appends its own entries; ordering across the merge is its own
+            // concern.
+            let mut kinds: Vec<(&str, bool)> = paginated
+                .entries
+                .iter()
+                .map(|e| (e.filename(), e.is_dir()))
+                .collect();
+            kinds.sort();
+            assert_eq!(kinds, vec![("to_dir", true), ("to_file", false)]);
+
+            // Both are staged, so both are annotated.
+            let listing = workspace_listing(&paginated);
+            assert_eq!(listing["to_dir"], Some(StagedEntryStatus::Added));
+            assert_eq!(listing["to_file"], Some(StagedEntryStatus::Added));
 
             Ok(())
         })
