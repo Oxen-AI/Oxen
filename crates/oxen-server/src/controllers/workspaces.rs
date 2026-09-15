@@ -112,7 +112,9 @@ pub async fn get_or_create(
         workspace_identifier = workspace_id.clone();
     }
     log::debug!("get_or_create workspace_id {workspace_id:?}");
-    if let Ok(Some(workspace)) = repositories::workspaces::get(&repo, &workspace_identifier) {
+    if let Ok(Some(workspace)) =
+        repositories::workspaces::get_async(&repo, &workspace_identifier).await
+    {
         return Ok(HttpResponse::Ok().json(WorkspaceResponseView {
             status: StatusMessage::resource_found(),
             workspace: WorkspaceResponse {
@@ -170,7 +172,7 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -311,20 +313,27 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 
     let repo = get_repo(app_data, namespace, repo_name)?;
     let _write = repo_locks::begin_write(&repo)?;
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    repositories::workspaces::delete(&workspace)?;
+    // Deleting a workspace closes its staged db (waiting out any concurrent holder with a blocking
+    // sleep) and removes the directory, so it runs off the actix worker.
+    let name = workspace.name.clone();
+    let commit = workspace.commit.clone();
+    let created_at = workspace.created_at;
+    tasks::spawn_blocking(move || repositories::workspaces::delete(&workspace))
+        .await
+        .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().json(WorkspaceResponseView {
         status: StatusMessage::resource_created(),
         workspace: WorkspaceResponse {
             id: workspace_id,
-            name: workspace.name,
-            commit: workspace.commit,
-            created_at: workspace.created_at,
+            name,
+            commit,
+            created_at,
         },
     }))
 }
@@ -354,7 +363,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     let repo = get_repo(app_data, &namespace, &repo_name)?;
     let branch_name = path_param(&req, "branch")?.to_string();
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -426,7 +435,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         }
     };
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -461,5 +470,119 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             log::warn!("unable to commit branch {branch_name:?}. Err: {err}");
             Ok(HttpResponse::UnprocessableEntity().json(StatusMessage::error(format!("{err:?}"))))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_data::OxenAppData;
+    use crate::controllers;
+    use crate::test;
+    use actix_web::{App, web};
+    use liboxen::error::OxenError;
+    use liboxen::repositories;
+
+    /// Covers the route and the response for a workspace lookup.
+    #[actix_web::test]
+    async fn test_get_returns_the_workspace() -> Result<(), OxenError> {
+        let (sync_dir, repo, workspace_id) =
+            test::repo_with_workspace("Testing-Namespace", "Testing-Workspace-Get").await?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}",
+                    web::get().to(controllers::workspaces::get),
+                ),
+        )
+        .await;
+
+        let uri =
+            format!("/oxen/Testing-Namespace/Testing-Workspace-Get/workspaces/{workspace_id}");
+        let req = actix_web::test::TestRequest::get().uri(&uri).to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Covers the route and the response for a workspace delete, and that the workspace is gone
+    /// afterwards.
+    #[actix_web::test]
+    async fn test_delete_removes_the_workspace() -> Result<(), OxenError> {
+        let (sync_dir, repo, workspace_id) =
+            test::repo_with_workspace("Testing-Namespace", "Testing-Workspace-Delete").await?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}",
+                    web::delete().to(controllers::workspaces::delete),
+                ),
+        )
+        .await;
+
+        let uri =
+            format!("/oxen/Testing-Namespace/Testing-Workspace-Delete/workspaces/{workspace_id}");
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&uri)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        assert!(
+            repositories::workspaces::get(&repo, &workspace_id)?.is_none(),
+            "the workspace should be gone after the delete"
+        );
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Covers a staged change landing on the branch through the handler. The assertion that the
+    /// commit runs off the worker lives on `workspaces::commit` itself, where no earlier await can
+    /// satisfy it.
+    #[actix_web::test]
+    async fn test_commit_lands_the_workspace() -> Result<(), OxenError> {
+        let (sync_dir, repo, workspace_id) =
+            test::repo_with_workspace("Testing-Namespace", "Testing-Workspace-Commit").await?;
+
+        // Stage a change so the commit has something to land. The workspace holds its repo's
+        // LMDB env open, so it is scoped to drop before the cleanup below removes the directory.
+        {
+            let workspace = repositories::workspaces::get(&repo, &workspace_id)?
+                .expect("the seeded workspace should exist");
+            let staged = workspace.workspace_repo.path.join("staged.txt");
+            liboxen::util::fs::write_to_path(&staged, "staged")?;
+            repositories::workspaces::files::add(&workspace, &staged).await?;
+        }
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/merge/{branch:.*}",
+                    web::post().to(controllers::workspaces::commit),
+                ),
+        )
+        .await;
+
+        let uri = format!(
+            "/oxen/Testing-Namespace/Testing-Workspace-Commit/workspaces/{workspace_id}/merge/main"
+        );
+        let req = actix_web::test::TestRequest::post()
+            .uri(&uri)
+            .set_payload(r#"{"author":"ox","email":"ox@oxen.ai","message":"commit the workspace"}"#)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
     }
 }

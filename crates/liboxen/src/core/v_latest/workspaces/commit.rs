@@ -4,6 +4,7 @@ use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::fs::File;
 use tokio::io::BufReader;
 use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::OwnedMutexGuard;
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -64,8 +65,11 @@ pub async fn commit(
     let lock_key = workspace.workspace_repo.path.clone();
     let lock = commit_lock_for(&lock_key);
     let result = {
-        let _guard = lock.lock().await;
-        commit_inner(workspace, new_commit, branch_name.as_ref()).await
+        // An owned guard, because the guard travels into the blocking task that does the writing.
+        // A borrowed one lives on this future, and tokio runs an already-started blocking closure
+        // to completion even when the caller drops that future.
+        let guard = Arc::clone(&lock).lock_owned().await;
+        commit_inner(workspace, new_commit, branch_name.as_ref(), guard).await
     };
     drop(lock);
     cleanup_commit_lock(&lock_key);
@@ -85,7 +89,39 @@ async fn commit_inner(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: &str,
+    commit_lock: OwnedMutexGuard<()>,
 ) -> Result<Commit, OxenError> {
+    // Sandwich (docs/async_policy.md): the staged-entry scan and conflict check are one blocking
+    // unit, the data-frame export is async, and writing the commit tree and updating the refs and
+    // workspace are a second blocking unit. Every hop hands the next one owned values.
+    let dir_entries = {
+        let workspace = workspace.clone();
+        let branch_name = branch_name.to_string();
+        tokio::task::spawn_blocking(move || read_staged_for_commit(&workspace, &branch_name))
+            .await?
+    }?;
+
+    let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
+
+    let workspace_for_write = workspace.clone();
+    let new_commit = new_commit.clone();
+    let branch_name = branch_name.to_string();
+    tokio::task::spawn_blocking(move || {
+        // The lock is released when this closure returns, not when the caller stops awaiting it:
+        // a cancelled caller must not let the next commit in while this one is still clearing the
+        // staged db and moving the branch.
+        let _commit_lock = commit_lock;
+        write_commit_from_staged(&workspace_for_write, dir_entries, &new_commit, &branch_name)
+    })
+    .await?
+}
+
+/// Resolve the target branch (creating it when missing), read the workspace's staged entries, and
+/// reject the commit when any staged path also changed on the branch since the workspace's base.
+fn read_staged_for_commit(
+    workspace: &Workspace,
+    branch_name: &str,
+) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
@@ -99,35 +135,38 @@ async fn commit_inner(
     };
     log::debug!("commit looking up branch: {:#?}", branch);
 
-    let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
+    let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
+    let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
+        &workspace.workspace_repo,
+        &commit_progress_bar,
+    )?;
 
-    log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
-    let commit = {
-        let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
+    let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
+    if !conflicts.is_empty() {
+        return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
+    }
 
-        // Read all the staged entries
-        let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &commit_progress_bar,
-        )?;
+    Ok(dir_entries)
+}
 
-        let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
-        if !conflicts.is_empty() {
-            return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
-        }
-
-        let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
-
-        repositories::commits::commit_writer::commit_dir_entries(
-            &workspace.base_repo,
-            dir_entries,
-            new_commit,
-            branch_name,
-        )?
-    };
+/// Write `dir_entries` as a commit on `branch_name`, then clear the staged db and either repoint
+/// the workspace at the new commit or delete it.
+fn write_commit_from_staged(
+    workspace: &Workspace,
+    dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+    new_commit: &NewCommitBody,
+    branch_name: &str,
+) -> Result<Commit, OxenError> {
+    let commit = repositories::commits::commit_writer::commit_dir_entries(
+        &workspace.base_repo,
+        dir_entries,
+        new_commit,
+        branch_name,
+    )?;
 
     // Clear through the shared handle rather than dropping it and removing the directory: the next
     // reader's open would collide with RocksDB's per-directory LOCK until the last holder finishes.
+    let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
     log::debug!("Clearing staged db: {staged_db_path:?}");
     get_staged_db_manager(&workspace.workspace_repo)?.clear()?;
 
@@ -516,6 +555,39 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
+
+    /// Committing a workspace scans the whole staged set, checks every staged path against the
+    /// branch, and writes the new commit tree. oxen-server calls this from an actix handler, and
+    /// an actix worker runs every connection assigned to it on one current-thread runtime, so
+    /// running that work inline would park every one of those connections for the whole commit.
+    #[tokio::test]
+    async fn test_commit_runs_off_the_calling_thread() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello = repo.path.join("hello.txt");
+            util::fs::write_to_path(&hello, "hello")?;
+            repositories::add(&repo, &hello).await?;
+            let base = repositories::commit(&repo, "Add hello.txt")?;
+
+            let workspace =
+                repositories::workspaces::create(&repo, &base, "commit-yield-workspace", true)?;
+            let staged = workspace.workspace_repo.path.join("staged.txt");
+            util::fs::write_to_path(&staged, "staged")?;
+            repositories::workspaces::files::add(&workspace, &staged).await?;
+
+            let body = NewCommitBody {
+                author: "ox".to_string(),
+                email: "ox@oxen.ai".to_string(),
+                message: "commit the workspace".to_string(),
+            };
+            let (result, yielded) =
+                test::run_and_report_yield(commit(&workspace, &body, "main")).await;
+            result?;
+            assert!(yielded, "commit held the thread it was called on");
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_commit_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
