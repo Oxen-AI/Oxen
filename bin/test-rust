@@ -86,6 +86,7 @@ cd "$SCRIPT_DIR/.."
 
 SERVER_PID=""
 RAMDISK_DEV=""
+PYTHON_CONFIG_DIR=""
 
 # Create a ramdisk for test data. On macOS this creates an APFS RAM disk via hdiutil; on Linux it
 # uses /dev/shm (tmpfs). Falls back to the regular filesystem if ramdisk creation fails.
@@ -131,6 +132,9 @@ cleanup() {
         wait "$SERVER_PID" 2>/dev/null || true
         # Ensure the watchdog is killed, so it doesn't hang around when the server exits normally
         kill "$WATCHDOG" 2>/dev/null || true
+    fi
+    if [ -n "$PYTHON_CONFIG_DIR" ]; then
+        rm -rf "$PYTHON_CONFIG_DIR"
     fi
     if [ "$KEEP_DATA" = false ]; then
         echo "==> Removing test data..."
@@ -237,8 +241,14 @@ echo "==> Waiting for oxen-server health check to pass..."
 wait_for_server
 
 if [ "$RUN_PYTHON" = true ]; then
-    # Configure oxen CLI user for the Python tests
-    echo "==> Configuring oxen CLI user..."
+    # Configure oxen CLI user for the Python tests. The Python extension resolves the
+    # config dir through `oxen_config_dir()` with no override installed, so both the write
+    # below and the extension's reads follow $OXEN_CONFIG_DIR. Point it at a throwaway dir:
+    # without it, `oxen config` replaces the name and email in the developer's real
+    # ~/.config/oxen/user_config.toml.
+    PYTHON_CONFIG_DIR=$(mktemp -d)
+    export OXEN_CONFIG_DIR="$PYTHON_CONFIG_DIR"
+    echo "==> Configuring oxen CLI user (config dir ${PYTHON_CONFIG_DIR})..."
     ./target/debug/oxen config --name "Bessie Testington" --email "bessie@yourcompany.com"
 
     # Set up Python environment and build the extension (in a subshell to avoid
