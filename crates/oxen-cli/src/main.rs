@@ -164,7 +164,7 @@ fn main_oxen_command() -> (Command, Runners) {
 }
 
 /// Every command that is used by the `oxen` CLI **MUST** be listed here!
-fn all_commands() -> [Box<dyn cmd::RunCmd>; 39] {
+fn all_commands() -> [Box<dyn cmd::RunCmd>; 40] {
     [
         Box::new(cmd::AddCmd),
         Box::new(cmd::BranchCmd),
@@ -196,6 +196,7 @@ fn all_commands() -> [Box<dyn cmd::RunCmd>; 39] {
         Box::new(cmd::VerifyCmd),
         Box::new(cmd::PullCmd),
         Box::new(cmd::PushCmd),
+        Box::new(cmd::ResetCmd),
         Box::new(cmd::RestoreCmd),
         Box::new(cmd::RemoteCmd),
         Box::new(cmd::RmCmd),
