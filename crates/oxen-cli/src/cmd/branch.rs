@@ -26,7 +26,7 @@ impl RunCmd for BranchCmd {
     fn args(&self) -> Command {
         // Setups the CLI args for the init command
         Command::new(NAME)
-            .about("Manage branches in repository")
+            .about("Manage branches in the repository")
             .arg(Arg::new("name").help("Name of the branch"))
             .arg(
                 Arg::new("commit_id")

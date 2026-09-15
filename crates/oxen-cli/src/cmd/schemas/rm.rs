@@ -23,7 +23,7 @@ impl RunCmd for SchemasRmCmd {
             .arg(
                 Arg::new("staged")
                     .long("staged")
-                    .help("Removed a staged schema")
+                    .help("Remove a staged schema")
                     .action(clap::ArgAction::SetTrue),
             )
     }
