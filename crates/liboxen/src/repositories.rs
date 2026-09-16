@@ -217,7 +217,7 @@ pub fn record_name_hints(
 
     // Held across the read and the write, so no maintenance operation can run its exclusive
     // section between them. Multiple config writers can still run concurrently.
-    let _write = repo_locks::acquire_write(repo)?;
+    let _write = repo_locks::begin_write(repo)?;
     let path = util::fs::config_filepath(&repo.path);
     let mut config = RepositoryConfig::from_file(&path)?;
     let Some(identity) = config.identity.as_mut() else {

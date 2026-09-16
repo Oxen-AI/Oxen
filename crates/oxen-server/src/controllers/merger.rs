@@ -123,7 +123,7 @@ pub async fn merge(
 
     // Get the repository or return error
     let repo = get_repo(app_data, namespace, name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     // Parse the base and head from the base..head string
     let (base, head) = parse_two_dot(&base_head)?;

@@ -20,7 +20,7 @@ impl Migrate for BackfillRepoIdentityMigration {
     }
 
     /// Writes the config directly rather than through `repositories::record_name_hints`: this runs
-    /// under the repository's exclusive lock, which a write reservation cannot be taken against.
+    /// under the repository's exclusive lock, against which no write can begin.
     fn up(&self, repo: LocalRepository) -> Result<(), OxenError> {
         // Whether identity is already recorded comes from the config rather than `repo`, which the
         // caller opened before taking the exclusive lock: re-minting would change the UUID the

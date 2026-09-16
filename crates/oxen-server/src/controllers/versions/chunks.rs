@@ -32,7 +32,7 @@ pub async fn upload(
     let offset = query.offset.unwrap_or(0);
 
     let repo = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     log::debug!(
         "/upload version {} chunk offset{} to repo: {:?}",
@@ -63,7 +63,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let version_id = path_param(&req, "version_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     log::debug!("/complete version chunk upload to repo: {:?}", repo.path);
 

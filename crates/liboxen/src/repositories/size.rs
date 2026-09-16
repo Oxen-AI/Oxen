@@ -49,9 +49,9 @@ impl fmt::Display for RepoSizeFile {
 /// pass records the failure and keeps the figure from before it. No pass starts while a maintenance
 /// operation holds `repo`, and the figure already recorded stays as it is.
 pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
-    // An exclusive maintenance operation drains this reservation before it runs, so the walk
-    // never reads a store that is being deleted or migrated.
-    let Ok(write) = repo_locks::acquire_write(repo) else {
+    // An exclusive maintenance operation drains this write before it runs, so the walk never
+    // reads a store that is being deleted or migrated.
+    let Ok(write) = repo_locks::begin_write(repo) else {
         log::info!("Skipping a size recalculation while the repository is held for maintenance");
         return Ok(());
     };
@@ -86,7 +86,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
 
     // Spawn background thread for size calculation
     std::thread::spawn(move || {
-        // The reservation outlives the walk and the handle the walk opens.
+        // The write stays in flight past the walk and the handle the walk opens.
         let _write = write;
 
         let recorded = match repo.version_bytes() {
@@ -103,7 +103,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
             }
         };
 
-        // Released before the reservation, so a drained operation finds no handle from this walk.
+        // Released before the write ends, so a drained operation finds no handle from this walk.
         drop(repo);
 
         if let Err(e) = AtomicFile::new(&path).write(recorded.to_string().as_bytes()) {

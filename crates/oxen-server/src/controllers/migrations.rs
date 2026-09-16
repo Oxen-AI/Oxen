@@ -115,7 +115,7 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     .await?;
 
     // Recorded outside the exclusive section: a migration writes the whole identity table, and a
-    // hint write takes a write reservation the exclusive section would block.
+    // hint write begins a write the exclusive section would block.
     let hinted = repo.clone();
     tasks::spawn_blocking(move || {
         repositories::record_name_hints(
@@ -191,8 +191,8 @@ mod tests {
         Ok(())
     }
 
-    /// The migration runs under the repo's exclusive lock: while a write reservation is
-    /// outstanding it waits for that write to drain before running, rather than racing it. Guards
+    /// The migration runs under the repo's exclusive lock: while a write is in flight it waits
+    /// for that write to drain before running, rather than racing it. Guards
     /// the `with_repo_exclusive` wiring — the happy-path test above passes with or without the
     /// wrap, so this is what would fail if the lock were dropped.
     #[actix_web::test]
@@ -212,7 +212,7 @@ mod tests {
             &sync_dir, namespace, repo_name, None,
         )?
         .expect("repo should exist");
-        let guard = repo_locks::acquire_write(&handler_repo)?;
+        let guard = repo_locks::begin_write(&handler_repo)?;
 
         let req = test::repo_request_with_param(
             &sync_dir,

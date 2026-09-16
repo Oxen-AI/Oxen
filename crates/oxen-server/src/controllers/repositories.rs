@@ -242,7 +242,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    let _write = repo_locks::acquire_write(&repository)?;
+    let _write = repo_locks::begin_write(&repository)?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -271,7 +271,7 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let repository = get_repo(app_data, &namespace, &name)?;
     // `size::get_size` records a pending figure on a miss (a GET that mutates — tech-debt
     // ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
-    let _write = repo_locks::acquire_write(&repository)?;
+    let _write = repo_locks::begin_write(&repository)?;
     let size = repositories::size::get_size(&repository)?;
     Ok(HttpResponse::Ok().json(size))
 }
@@ -575,7 +575,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     // Taken only where the repository opened, since an unreadable one has no lock to contend for.
     let write_guard = repository
         .as_ref()
-        .map(repo_locks::acquire_write)
+        .map(repo_locks::begin_write)
         .transpose()?;
 
     // Delete in a background task because it could take awhile; the blocking directory
