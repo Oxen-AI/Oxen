@@ -1584,7 +1584,24 @@ mod tests {
         let listed = list_keys(&store, &prefix).await;
         assert_eq!(listed.len(), count, "lister must page across every key");
 
-        store.delete_objects_with_prefix(&prefix).await.unwrap();
+        if let Err(err) = store.delete_objects_with_prefix(&prefix).await {
+            // Keys are deleted one batch per DELETE_OBJECTS_MAX_KEYS, so the survivor count
+            // names which batch failed.
+            let survivors = async {
+                let keys: Vec<String> = store
+                    .stream_objects_with_prefix(&prefix)
+                    .await?
+                    .try_collect()
+                    .await?;
+                Ok::<_, OxenError>(keys.len())
+            }
+            .await;
+            let survivors = match survivors {
+                Ok(remaining) => format!("{remaining} still present"),
+                Err(e) => format!("survivors uncountable: {e}"),
+            };
+            panic!("batched delete of {count} keys under {prefix} failed ({survivors}): {err}");
+        }
 
         let remaining = list_keys(&store, &prefix).await;
         assert!(
