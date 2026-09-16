@@ -33,7 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 use tokio::time::{sleep, timeout};
 use tracing::level_filters::LevelFilter;
 use walkdir::WalkDir;
@@ -1446,21 +1447,36 @@ fn should_cleanup() -> bool {
         .unwrap_or(false)
 }
 
-/// Panics when any LMDB env under `dir` is still open, naming each one. Removing a directory that
-/// holds an open env leaves its memory-mapped `data.mdb` and `lock.mdb` behind (an outright removal
-/// failure on Windows, a hidden `.nfsXXXX` entry on NFS that fails the `rmdir` with `ENOTEMPTY`),
-/// so every `LocalRepository` under `dir` must be dropped before this call.
+/// Returns once no LMDB env under `dir` is open, panicking past the deadline and naming each one
+/// still open. Removing a directory that holds an open env leaves its memory-mapped `data.mdb` and
+/// `lock.mdb` behind (an outright removal failure on Windows, a hidden `.nfsXXXX` entry on NFS that
+/// fails the `rmdir` with `ENOTEMPTY`). A background pass can hold an env after the call that
+/// started it returned, so a caller that has dropped every handle of its own can still see one.
 pub fn assert_no_live_lmdb_envs(dir: &Path) {
-    let live: Vec<PathBuf> = WalkDir::new(dir)
-        .into_iter()
-        .flatten()
-        .map(|entry| entry.path().to_path_buf())
-        .filter(|path| path.ends_with(constants::NODES_LMDB_DIR) && lmdb::shared_env_is_live(path))
-        .collect();
+    const TIMEOUT: Duration = Duration::from_secs(30);
+    const POLL_INTERVAL: Duration = Duration::from_millis(2);
+
+    let live_envs = || -> Vec<PathBuf> {
+        WalkDir::new(dir)
+            .into_iter()
+            .flatten()
+            .map(|entry| entry.path().to_path_buf())
+            .filter(|path| {
+                path.ends_with(constants::NODES_LMDB_DIR) && lmdb::shared_env_is_live(path)
+            })
+            .collect()
+    };
+
+    let deadline = Instant::now() + TIMEOUT;
+    let mut live = live_envs();
+    while !live.is_empty() && Instant::now() < deadline {
+        thread::sleep(POLL_INTERVAL);
+        live = live_envs();
+    }
     assert!(
         live.is_empty(),
-        "LMDB envs still open while removing {dir:?}: {live:?}. \
-         Drop every LocalRepository under it first."
+        "LMDB envs under {dir:?} still open after {TIMEOUT:?}: {live:?}. \
+         Drop every LocalRepository under it, including any a background thread holds."
     );
 }
 

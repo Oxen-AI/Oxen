@@ -697,10 +697,13 @@ mod tests {
                 .expect("the nested directory has a node");
 
             // Present but unparseable, which is the case a missing-node check cannot see.
-            repo.merkle_node_store().write_node(
-                &dir.hash,
-                Bytes::from_static(b"not a node"),
-                Bytes::from_static(b"not children"),
+            repo.merkle_node_store().write_nodes(
+                vec![(
+                    dir.hash,
+                    Bytes::from_static(b"not a node"),
+                    Bytes::from_static(b"not children"),
+                )],
+                true,
             )?;
 
             let report = verify_repo(&repo).await?;
@@ -759,10 +762,13 @@ mod tests {
                 "the fixture needs entries outside the damaged vnode: {vnodes:?}"
             );
 
-            repo.merkle_node_store().write_node(
-                &damaged,
-                Bytes::from_static(b"not a node"),
-                Bytes::from_static(b"not children"),
+            repo.merkle_node_store().write_nodes(
+                vec![(
+                    damaged,
+                    Bytes::from_static(b"not a node"),
+                    Bytes::from_static(b"not children"),
+                )],
+                true,
             )?;
 
             let report = verify_repo(&repo).await?;

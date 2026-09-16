@@ -2027,10 +2027,13 @@ mod tests {
 
             let dir = get_dir_with_children(&repo, &head, "nested", None)?
                 .expect("the nested directory has a node");
-            repo.merkle_node_store().write_node(
-                &dir.hash,
-                Bytes::from_static(b"not a node"),
-                Bytes::from_static(b"not children"),
+            repo.merkle_node_store().write_nodes(
+                vec![(
+                    dir.hash,
+                    Bytes::from_static(b"not a node"),
+                    Bytes::from_static(b"not children"),
+                )],
+                true,
             )?;
 
             // Advancing a ref onto a tree that cannot be read must fail rather than report the
