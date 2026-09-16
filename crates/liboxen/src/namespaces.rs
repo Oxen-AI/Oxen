@@ -89,7 +89,9 @@ fn get_storage_for_repo(repo: &LocalRepository) -> u64 {
 mod tests {
     use super::*;
     use crate::error::OxenError;
-    use crate::repositories::size::{RepoSizeFile, SizeStatus, repo_size_path};
+    use crate::repositories::size::{
+        RepoSizeFile, SizeStatus, repo_size_path, wait_for_recorded_size,
+    };
     use crate::test;
     use crate::util::fs::AtomicFile;
 
@@ -100,6 +102,7 @@ mod tests {
         let recorded = RepoSizeFile {
             status: SizeStatus::Done,
             size,
+            error: None,
         };
         AtomicFile::new(repo_size_path(&repo)).write(recorded.to_string().as_bytes())?;
         Ok(repo)
@@ -123,6 +126,7 @@ mod tests {
             let failed = RepoSizeFile {
                 status: SizeStatus::Error,
                 size: 2500,
+                error: Some("No such file or directory".to_string()),
             };
             AtomicFile::new(repo_size_path(&second)).write(failed.to_string().as_bytes())?;
             let namespace = get(dir, "ox").expect("namespace exists");
@@ -131,6 +135,10 @@ mod tests {
                 4000.0 / bytesize::GB as f64,
                 "a repository whose recalculation failed counts at the figure from before it"
             );
+
+            // Reading a failed record restarts the pass behind it, so let that pass land before
+            // replacing the record it will write.
+            wait_for_recorded_size(&second)?;
 
             util::fs::write_to_path(repo_size_path(&second), "not a size record")?;
             let namespace = get(dir, "ox").expect("namespace exists");
