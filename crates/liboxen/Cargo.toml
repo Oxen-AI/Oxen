@@ -109,6 +109,7 @@ par-stream = { workspace = true }
 parking_lot = { workspace = true }
 pathdiff = { workspace = true }
 polars = { workspace = true }
+polars-utils = { workspace = true }
 qsv-sniffer = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }
