@@ -903,7 +903,7 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_merge_fast_forward_pull() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
             test::run_empty_dir_test_async(|repo_dir_a| async move {
                 let repo_dir_a = repo_dir_a.join("repo_a");
