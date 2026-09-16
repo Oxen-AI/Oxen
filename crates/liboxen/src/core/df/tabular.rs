@@ -85,10 +85,7 @@ fn read_df_csv(
 /// Memory-mapped and in-memory sources are sliced without copying, so this costs nothing over
 /// handing polars the path, and the streaming reader loads the whole file either way.
 fn ndjson_scan_source(bytes: MemSlice) -> ScanSources {
-    let end = bytes
-        .iter()
-        .rposition(|&b| b != b'\n')
-        .map_or(0, |i| i + 1);
+    let end = bytes.iter().rposition(|&b| b != b'\n').map_or(0, |i| i + 1);
     ScanSources::Buffers(Arc::from([bytes.slice(0..end)]))
 }
 
@@ -1731,6 +1728,7 @@ mod tests {
         opts::{DFOpts, SliceRange},
     };
     use itertools::Itertools;
+    use std::path::PathBuf;
     use tokio::task;
 
     #[test]
@@ -1949,6 +1947,54 @@ mod tests {
         Ok(())
     }
 
+    /// Writes the JSONL file that trips polars' NDJSON line sampler: six or more rows, with the
+    /// last row spanning the 75% byte mark (see `ndjson_scan_source`).
+    fn write_jsonl_with_last_row_spanning_three_quarter_mark(
+        dir: &Path,
+    ) -> Result<PathBuf, OxenError> {
+        let path = dir.join("chat_history.jsonl");
+        let mut contents = String::new();
+        for id in 0..6 {
+            contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
+        }
+        contents.push_str(&format!(
+            "{{\"id\":6,\"text\":\"{}\"}}\n",
+            "x".repeat(20_000)
+        ));
+        fs::write_to_path(&path, contents)?;
+        Ok(path)
+    }
+
+    /// Canary for the polars bug that `ndjson_scan_source` works around: a path scan of the file
+    /// that trips the sampler still fails under a slice. When this test starts failing, polars has
+    /// fixed the sampler, so delete `ndjson_scan_source`, drop the `polars-utils` dependency, and
+    /// keep `test_read_jsonl_slice_when_last_row_spans_three_quarter_mark` as the regression test.
+    #[tokio::test]
+    async fn test_polars_path_scan_still_fails_when_last_row_spans_three_quarter_mark()
+    -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            let path = write_jsonl_with_last_row_spanning_three_quarter_mark(&dir)?;
+            // The scan panics inside polars, so the join error is the expected outcome here.
+            let scan = task::spawn_blocking(move || {
+                LazyJsonLineReader::new(path)
+                    .with_infer_schema_length(Some(
+                        NonZeroUsize::new(10000).expect("10000 is non-zero"),
+                    ))
+                    .finish()?
+                    .slice(0, 100)
+                    .collect()
+            })
+            .await;
+            assert!(
+                !matches!(scan, Ok(Ok(_))),
+                "polars now reads this file from a path: remove `ndjson_scan_source` and the \
+                 `polars-utils` dependency, and keep the regression test"
+            );
+            Ok(())
+        })
+        .await
+    }
+
     /// polars' NDJSON line sampler indexes past the end of a file of six or more rows whose last
     /// row spans the 75% byte mark (see `ndjson_scan_source`). The slice is what makes it run, as
     /// it does for every paginated data frame read.
@@ -1956,16 +2002,7 @@ mod tests {
     async fn test_read_jsonl_slice_when_last_row_spans_three_quarter_mark() -> Result<(), OxenError>
     {
         test::run_empty_dir_test_async(|dir| async move {
-            let path = dir.join("chat_history.jsonl");
-            let mut contents = String::new();
-            for id in 0..6 {
-                contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
-            }
-            contents.push_str(&format!(
-                "{{\"id\":6,\"text\":\"{}\"}}\n",
-                "x".repeat(20_000)
-            ));
-            fs::write_to_path(&path, contents)?;
+            let path = write_jsonl_with_last_row_spanning_three_quarter_mark(&dir)?;
 
             let mut opts = DFOpts::empty();
             opts.slice = Some(SliceRange::for_page(1, 100));
