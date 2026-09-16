@@ -35,6 +35,7 @@ use liboxen::model::metadata::{
     generic_metadata::GenericMetadata,
 };
 use liboxen::model::{Commit, CommitStats};
+use liboxen::repositories::size::{RepoSizeFile, SizeStatus};
 use liboxen::view::commit::CommitTreeValidationResponse;
 use liboxen::view::compare::{
     CommitSide, CompareCommit, CompareCommits, CompareCommitsResponse, CompareDupes,
@@ -259,6 +260,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             MetadataVideo, MetadataAudio, MetadataTabular,
             // Version Schemas,
             VersionFile, VersionFileResponse,
+            // Size Schemas
+            RepoSizeFile, SizeStatus,
         ),
     ),
     modifiers(

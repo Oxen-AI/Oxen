@@ -114,13 +114,9 @@ impl LocalRepository {
         let mut counted: HashSet<MerkleHash> = HashSet::new();
         let mut total: u64 = 0;
 
-        // File nodes are not keyed in the node store on their own; they arrive as the children of
-        // the nodes that are. Reading the children of every stored node therefore reaches every
-        // file node, and reaches it once per stored node rather than once per commit holding it.
+        // File nodes are reachable only as children of the hashes the store keys.
         for node_hash in self.merkle_node_store().list_hashes()? {
             for (_, child) in MerkleTreeNode::read_children_from_hash(self, &node_hash)? {
-                // One version file can be reached under several names, each its own file node, so
-                // the sum dedups on the version hash the store is addressed by.
                 if let EMerkleTreeNode::File(file_node) = &child.node
                     && counted.insert(*file_node.hash())
                 {

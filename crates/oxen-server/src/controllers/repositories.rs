@@ -17,6 +17,7 @@ use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
 use liboxen::model::{Branch, ParsedResource, RepoIdentity};
 use liboxen::repositories;
+use liboxen::repositories::size::RepoSizeFile;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
 use liboxen::view::repository::{
     DataTypeView, RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
@@ -221,10 +222,11 @@ pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 
 /// Update repository size
 #[utoipa::path(
-    put,
+    post,
     path = "/api/repos/{namespace}/{repo_name}/size",
     tag = "Repositories",
-    description = "Recalculate and update the cached repository size.",
+    description = "Kick off a recalculation of the repository size. `GET /size` keeps serving \
+                   the previous figure until the new one lands.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -257,7 +259,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
     ),
     responses(
-        (status = 200, description = "Repository size in bytes", body = u64),
+        (status = 200, description = "Repository size in bytes", body = RepoSizeFile),
         (status = 404, description = "Repository not found")
     )
 )]
@@ -267,8 +269,8 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    // `size::get_size` writes the size cache on a miss (a GET that mutates — tech-debt ENG-1374);
-    // guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
+    // `size::get_size` records a pending figure on a miss (a GET that mutates — tech-debt
+    // ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
     let _write = repo_locks::acquire_write(&repository)?;
     let size = repositories::size::get_size(&repository)?;
     Ok(HttpResponse::Ok().json(size))

@@ -5,6 +5,12 @@ use crate::controllers;
 
 pub fn action() -> Scope {
     web::scope("/action")
+        // Ahead of the wildcard below, so only a POST to this exact path starts the size
+        // recalculation a finished push needs.
+        .route(
+            "/completed/push",
+            web::post().to(controllers::action::completed_push),
+        )
         .route(
             "/completed/{action}",
             web::get().to(controllers::action::completed),
