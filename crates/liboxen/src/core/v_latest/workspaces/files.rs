@@ -1096,16 +1096,23 @@ pub fn mv(
 
     let workspace_repo = &workspace.workspace_repo;
 
+    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+
     // First, try to read existing staged entry for the source path
-    let staged_entry = get_staged_db_manager(workspace_repo)?.read_from_staged_db(path)?;
+    let staged_entry = staged_db_manager.read_from_staged_db(path)?;
+
+    // The committed node at the source path, read once: it is both the fallback for an unstaged
+    // source and what decides whether the source has to be staged for removal below.
+    let source_in_base =
+        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?;
+    let source_exists_in_base = source_in_base.is_some();
 
     // Get the file node - either from staged_db or from the base repo
     let file_node = if let Some(entry) = staged_entry {
         entry.node.file()?
     } else {
         // File not staged, get it from the base repo
-        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or_else(|| OxenError::path_does_not_exist(path))?
+        source_in_base.ok_or_else(|| OxenError::path_does_not_exist(path))?
     };
 
     // Create the new file node with updated name (full path for the new location)
@@ -1125,7 +1132,6 @@ pub fn mv(
 
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
 
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     if staged_db_manager.read_from_staged_db(new_path)?.is_some() {
         return Err(OxenError::DestinationAlreadyStaged(
             new_path.to_path_buf().into(),
@@ -1134,11 +1140,7 @@ pub fn mv(
     // Add the file node at the new path
     staged_db_manager.upsert_file_node(new_path, new_status, &new_file_node)?;
 
-    // Check if the source file exists in the base repo (needs to be staged for removal)
-    let source_exists_in_base =
-        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .is_some();
-
+    // A source that exists in the base repo has to be staged for removal
     if source_exists_in_base {
         // Create a file node for the removed entry with the full original path as name
         let mut removed_file_node = file_node.clone();
