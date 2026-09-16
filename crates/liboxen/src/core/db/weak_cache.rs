@@ -72,11 +72,13 @@ impl<V> WeakDbCache<V> {
         }
         let opened = Arc::new(open()?);
         *handle = Arc::downgrade(&opened);
+        // The evicted handle drops with both locks released, so closing a database never blocks a
+        // caller for its path or for any other.
+        drop(handle);
         let evicted = self
             .warm
             .lock()
             .push(path.to_path_buf(), Arc::clone(&opened));
-        // Closing a database is slow, so it happens with the warm lock released.
         drop(evicted);
         Ok(opened)
     }
