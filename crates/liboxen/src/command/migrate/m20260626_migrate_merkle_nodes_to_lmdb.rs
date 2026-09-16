@@ -308,10 +308,13 @@ mod tests {
             let mut hashes = Vec::new();
             for i in 1..=5u128 {
                 let hash = MerkleHash::new(i);
-                fs.write_node(
-                    &hash,
-                    Bytes::from(format!("node-{i}")),
-                    Bytes::from(format!("children-{i}")),
+                fs.write_nodes(
+                    vec![(
+                        hash,
+                        Bytes::from(format!("node-{i}")),
+                        Bytes::from(format!("children-{i}")),
+                    )],
+                    true,
                 )?;
                 hashes.push(hash);
             }
@@ -397,10 +400,9 @@ mod tests {
             // tree. `down` must clear the backup rather than merge into it, so this node must not
             // survive the migration (nor fail its set-equality verification).
             let stale = MerkleHash::new(0xdead_beef);
-            FsMerkleNodeStore::new(&repo.path).write_node(
-                &stale,
-                Bytes::from_static(b"stale node"),
-                Bytes::new(),
+            FsMerkleNodeStore::new(&repo.path).write_nodes(
+                vec![(stale, Bytes::from_static(b"stale node"), Bytes::new())],
+                true,
             )?;
 
             // --- down: LMDB → FS ---

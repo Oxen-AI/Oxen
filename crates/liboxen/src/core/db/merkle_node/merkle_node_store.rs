@@ -92,17 +92,11 @@ pub(crate) trait MerkleNodeStore: Debug + Send + Sync {
     /// stored bytes to the wire — no backend-specific directory walking outside the store.
     fn list_hashes(&self) -> Result<Vec<MerkleHash>, MerkleDbError>;
 
-    /// Persist both blobs for `hash` as one unit. Implementations make this atomic so a node is
-    /// never observable with only one of its two blobs present.
-    fn write_node(
-        &self,
-        hash: &MerkleHash,
-        node: Bytes,
-        children: Bytes,
-    ) -> Result<(), MerkleDbError>;
-
     /// Persist many nodes at once and return the hashes actually written. With `overwrite_existing`
     /// false, a node already present is left untouched and kept out of the returned set.
+    ///
+    /// Implementations make each node atomic so it is never observable with only one of its two
+    /// blobs present.
     ///
     /// Unpacking a commit's tree writes one node for every directory and vnode. A large repo has
     /// tens of thousands of them, and writing them one at a time means tens of thousands of
@@ -190,10 +184,9 @@ mod tests {
     fn resolve_load_backend_detects_fs_tree() -> Result<(), OxenError> {
         let dir = tempfile::tempdir().expect("create temp dir");
         // Writing a node creates the `.oxen/tree/nodes` tree the detector looks for.
-        FsMerkleNodeStore::new(dir.path()).write_node(
-            &MerkleHash::new(0x1),
-            Bytes::from_static(b"n"),
-            Bytes::new(),
+        FsMerkleNodeStore::new(dir.path()).write_nodes(
+            vec![(MerkleHash::new(0x1), Bytes::from_static(b"n"), Bytes::new())],
+            true,
         )?;
         assert_eq!(
             resolve_load_backend(None, dir.path()),
@@ -220,10 +213,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("create temp dir");
         // The env opens lazily, so write a node to create the `.oxen/tree/nodes_lmdb` env the
         // detector looks for.
-        LmdbMerkleNodeStore::new(dir.path())?.write_node(
-            &MerkleHash::new(0x1),
-            Bytes::from_static(b"n"),
-            Bytes::new(),
+        LmdbMerkleNodeStore::new(dir.path())?.write_nodes(
+            vec![(MerkleHash::new(0x1), Bytes::from_static(b"n"), Bytes::new())],
+            true,
         )?;
         assert_eq!(
             resolve_load_backend(None, dir.path()),

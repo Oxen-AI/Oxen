@@ -5,8 +5,8 @@
 //!
 //! Key layout: a node's two blobs share its [`MerkleHash`] and are distinguished by a one-byte
 //! tag suffix — `hash_le(16) ‖ 0` holds the `node` blob, `hash_le(16) ‖ 1` holds `children`.
-//! `write_node` puts both under one write transaction, so a node is never observable with only one
-//! blob (the same atomicity the FS backend gets from writing both files before anything reads).
+//! `write_nodes` puts both under one write transaction, so a node is never observable with only
+//! one blob (the same atomicity the FS backend gets from writing both files before anything reads).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -171,7 +171,7 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
             let node = db
                 .get(txn, &Self::key(hash, NODE_TAG))?
                 .ok_or(MerkleDbError::MissingNodeDir(*hash))?;
-            // `write_node` always writes both keys (a childless node still gets an empty children
+            // `write_nodes` always writes both keys (a childless node still gets an empty children
             // blob), so a missing children key is an incomplete record, not a childless node;
             // report it as missing rather than as a valid zero-length blob.
             let children = db
@@ -202,20 +202,6 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
         })
     }
 
-    fn write_node(
-        &self,
-        hash: &MerkleHash,
-        node: Bytes,
-        children: Bytes,
-    ) -> Result<(), MerkleDbError> {
-        // Both blobs in one write txn: the commit is atomic, so a node is never half-present.
-        self.write(|db, txn| {
-            db.put(txn, &Self::key(hash, NODE_TAG), node.as_ref())?;
-            db.put(txn, &Self::key(hash, CHILDREN_TAG), children.as_ref())?;
-            Ok(())
-        })
-    }
-
     fn write_nodes(
         &self,
         nodes: Vec<(MerkleHash, Bytes, Bytes)>,
@@ -228,9 +214,10 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
         self.write(|db, txn| {
             let mut written = Vec::new();
             for (hash, node, children) in &nodes {
-                let present = db.contains(txn, &Self::key(hash, NODE_TAG))?
-                    && db.contains(txn, &Self::key(hash, CHILDREN_TAG))?;
-                if !overwrite_existing && present {
+                if !overwrite_existing
+                    && db.contains(txn, &Self::key(hash, NODE_TAG))?
+                    && db.contains(txn, &Self::key(hash, CHILDREN_TAG))?
+                {
                     continue;
                 }
                 db.put(txn, &Self::key(hash, NODE_TAG), node.as_ref())?;
@@ -309,7 +296,7 @@ mod tests {
             "node should not exist before writing"
         );
 
-        store.write_node(&hash, node.clone(), children.clone())?;
+        store.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
 
         assert!(store.exists(&hash)?, "node should exist after writing");
         assert_eq!(store.read_node(&hash)?, node);
@@ -321,7 +308,10 @@ mod tests {
 
         // A childless node (empty children blob) round-trips.
         let leaf = MerkleHash::new(0x42);
-        store.write_node(&leaf, Bytes::from_static(b"leaf"), Bytes::new())?;
+        store.write_nodes(
+            vec![(leaf, Bytes::from_static(b"leaf"), Bytes::new())],
+            true,
+        )?;
         assert!(store.read_children(&leaf)?.is_empty());
         assert_eq!(store.node_byte_sizes(&leaf)?, (4, 0));
 
@@ -365,8 +355,8 @@ mod tests {
         let node = Bytes::from_static(b"node blob bytes");
         let children = Bytes::from_static(b"children blob bytes");
 
-        fs.write_node(&hash, node.clone(), children.clone())?;
-        lmdb.write_node(&hash, node.clone(), children.clone())?;
+        fs.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
+        lmdb.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
 
         assert_eq!(fs.exists(&hash)?, lmdb.exists(&hash)?);
         assert_eq!(fs.read_node(&hash)?, lmdb.read_node(&hash)?);
@@ -432,7 +422,7 @@ mod tests {
 
     /// A record with its node key but no children key counts as absent, so `write_nodes` writes it
     /// even when `overwrite_existing` is false. Only corruption produces that state, since
-    /// `write_node` writes both keys in one transaction. This test guards the presence check that
+    /// a write puts both keys in one transaction. This test guards the presence check that
     /// requires both keys.
     #[test]
     fn lmdb_write_nodes_rewrites_a_half_written_node() -> Result<(), OxenError> {

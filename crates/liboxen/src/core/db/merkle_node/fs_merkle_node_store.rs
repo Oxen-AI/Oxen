@@ -55,6 +55,26 @@ impl FsMerkleNodeStore {
             Err(e) => Err(MerkleDbError::Io(e)),
         }
     }
+
+    /// Publish one node's two blobs, creating its directory if needed.
+    fn write_one(
+        &self,
+        hash: &MerkleHash,
+        node: Bytes,
+        children: Bytes,
+    ) -> Result<(), MerkleDbError> {
+        let dir = node_db_path(&self.repo_path, hash);
+        if !dir.exists() {
+            util::fs::create_dir_all(&dir).map_err(MerkleDbError::dir_create)?;
+        }
+        AtomicFile::new(dir.join(NODE_FILE))
+            .write(node.as_ref())
+            .map_err(MerkleDbError::fs_transport)?;
+        AtomicFile::new(dir.join(CHILDREN_FILE))
+            .write(children.as_ref())
+            .map_err(MerkleDbError::fs_transport)?;
+        Ok(())
+    }
 }
 
 /// Parse a hex node id and push it onto `hashes`, logging and skipping a non-hex name.
@@ -90,7 +110,7 @@ impl MerkleNodeStore for FsMerkleNodeStore {
             }
             Err(e) => return Err(MerkleDbError::Io(e)),
         };
-        // `write_node` always writes both files, so a missing children file means a childless
+        // `write_one` always writes both files, so a missing children file means a childless
         // node whose blob is empty; treat it as zero-length rather than an error.
         let children_len = match std::fs::metadata(dir.join(CHILDREN_FILE)) {
             Ok(meta) => meta.len(),
@@ -137,7 +157,7 @@ impl MerkleNodeStore for FsMerkleNodeStore {
                 let file_type = inner_entry.file_type().map_err(MerkleDbError::Io)?;
                 if file_type.is_dir() {
                     // A suffix dir: the hash is `{prefix}{suffix}`, but only if it actually holds a
-                    // node blob — `write_node` always writes `NODE_FILE`, so a suffix dir without
+                    // node blob — `write_one` always writes `NODE_FILE`, so a suffix dir without
                     // one is not a node (matching `exists`/`node_byte_sizes`).
                     let Some(suffix) = inner_entry.file_name().to_str().map(str::to_owned) else {
                         continue;
@@ -160,25 +180,6 @@ impl MerkleNodeStore for FsMerkleNodeStore {
         Ok(hashes)
     }
 
-    fn write_node(
-        &self,
-        hash: &MerkleHash,
-        node: Bytes,
-        children: Bytes,
-    ) -> Result<(), MerkleDbError> {
-        let dir = node_db_path(&self.repo_path, hash);
-        if !dir.exists() {
-            util::fs::create_dir_all(&dir).map_err(MerkleDbError::dir_create)?;
-        }
-        AtomicFile::new(dir.join(NODE_FILE))
-            .write(node.as_ref())
-            .map_err(MerkleDbError::fs_transport)?;
-        AtomicFile::new(dir.join(CHILDREN_FILE))
-            .write(children.as_ref())
-            .map_err(MerkleDbError::fs_transport)?;
-        Ok(())
-    }
-
     fn write_nodes(
         &self,
         nodes: Vec<(MerkleHash, Bytes, Bytes)>,
@@ -188,7 +189,7 @@ impl MerkleNodeStore for FsMerkleNodeStore {
         // never touch the same files. Each write pays filesystem latency (create, write, fsync,
         // rename, done twice), which is time spent waiting on the disk. Running the batch across a
         // rayon pool lets those waits overlap, so even a large unpack finishes in seconds.
-        // `write_node` is atomic on its own, so the only thing to coordinate is the first error.
+        // `write_one` is atomic on its own, so the only thing to coordinate is the first error.
         use rayon::prelude::*;
         let written = nodes
             .into_par_iter()
@@ -196,7 +197,7 @@ impl MerkleNodeStore for FsMerkleNodeStore {
                 if !overwrite_existing && self.exists(&hash)? {
                     return Ok(None);
                 }
-                self.write_node(&hash, node, children)?;
+                self.write_one(&hash, node, children)?;
                 Ok(Some(hash))
             })
             .collect::<Result<Vec<_>, MerkleDbError>>()?;
@@ -252,7 +253,7 @@ mod tests {
             "node should not exist before writing"
         );
 
-        store.write_node(&hash, node.clone(), children.clone())?;
+        store.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
 
         assert!(store.exists(&hash)?, "node should exist after writing");
         assert_eq!(store.read_node(&hash)?, node);
@@ -266,7 +267,10 @@ mod tests {
 
         // An empty children blob (childless node) round-trips too.
         let leaf = MerkleHash::new(0x42);
-        store.write_node(&leaf, Bytes::from_static(b"leaf"), Bytes::new())?;
+        store.write_nodes(
+            vec![(leaf, Bytes::from_static(b"leaf"), Bytes::new())],
+            true,
+        )?;
         assert!(store.read_children(&leaf)?.is_empty());
         assert_eq!(store.node_byte_sizes(&leaf)?, (4, 0));
 
@@ -315,8 +319,8 @@ mod tests {
         let short = MerkleHash::new(0xabc);
         let sibling = MerkleHash::new(0xabc_def);
         let body = Bytes::from_static(b"blob");
-        store.write_node(&short, body.clone(), Bytes::new())?;
-        store.write_node(&sibling, body.clone(), Bytes::new())?;
+        store.write_nodes(vec![(short, body.clone(), Bytes::new())], true)?;
+        store.write_nodes(vec![(sibling, body.clone(), Bytes::new())], true)?;
 
         store.delete(&short)?;
 

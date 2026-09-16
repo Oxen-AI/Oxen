@@ -1021,7 +1021,7 @@ fn write_all_tar<W: Write>(
 ///     entries start at `{prefix}/{suffix}/{node,children}` with no `tree/nodes/` prefix.
 ///
 /// Each node is two leaf entries (`node` + `children`). They are buffered per hash and
-/// persisted as a unit through [`MerkleNodeStore::write_node`] once both are present, so the
+/// persisted as a unit through [`MerkleNodeStore::write_nodes`] once both are present, so the
 /// install is engine-agnostic and a node is never observable with only one blob. Directory
 /// entries carry no bytes and are ignored — the store recreates whatever structure it needs.
 ///
@@ -1106,7 +1106,7 @@ fn extract_tar_under<R: Read>(
         // paths (non-hex ids, unexpected depth, unknown leaf names).
         extract_hash_from_entry_path(&entry_path, oxen_hidden)?;
 
-        // Directory entries carry no bytes; the store recreates structure in `write_node`.
+        // Directory entries carry no bytes; the store recreates structure in `write_nodes`.
         if entry_type.is_dir() {
             continue;
         }
@@ -1350,7 +1350,7 @@ pub(crate) fn pack_nodes_byte_estimate(
 
 /// Unpack a tar-gz wire stream into the repo's Merkle node store, applying `opts`'s
 /// existing-node policy. Each node is persisted atomically through
-/// [`MerkleNodeStore::write_node`].
+/// [`MerkleNodeStore::write_nodes`].
 pub(crate) fn unpack(
     repo: &LocalRepository,
     reader: &mut dyn Read,
