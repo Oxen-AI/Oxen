@@ -86,7 +86,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
 
     // Spawn background thread for size calculation
     std::thread::spawn(move || {
-        // The reservation lives for the whole walk.
+        // The reservation outlives the walk and the handle the walk opens.
         let _write = write;
 
         let recorded = match repo.version_bytes() {
@@ -102,6 +102,10 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
                 }
             }
         };
+
+        // Released before the reservation, so a drained operation finds no handle from this walk.
+        drop(repo);
+
         if let Err(e) = AtomicFile::new(&path).write(recorded.to_string().as_bytes()) {
             log::error!("Failed to write the recalculated size: {e}");
         }
