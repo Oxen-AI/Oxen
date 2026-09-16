@@ -2,7 +2,7 @@ use rocksdb::{BlockBasedOptions, LogLevel, Options};
 
 /// The block-based table format every oxen database is written in. Raising it makes new
 /// databases unreadable to oxen releases built against an older RocksDB.
-pub const TABLE_FORMAT_VERSION: i32 = 5;
+pub const TABLE_FORMAT_VERSION: i32 = 6;
 
 pub fn default() -> Options {
     let mut opts = Options::default();
