@@ -1961,7 +1961,7 @@ mod tests {
                 "{{\"id\":6,\"text\":\"{}\"}}\n",
                 "x".repeat(20_000)
             ));
-            std::fs::write(&path, contents)?;
+            fs::write_to_path(&path, contents)?;
 
             let mut opts = DFOpts::empty();
             opts.slice = Some(SliceRange::for_page(1, 100));
