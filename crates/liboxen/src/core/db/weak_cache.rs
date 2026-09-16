@@ -16,8 +16,8 @@
 //! block callers of any other path. Two concurrent first-opens of the same path rendezvous on that
 //! lock and only one of them opens.
 //!
-//! The per-path lock is not re-entrant: an `open` closure must not call back into the same cache
-//! for the same path.
+//! The per-path lock is not re-entrant: an `open` closure must not call
+//! [`WeakDbCache::get_or_open`] for the same path.
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
@@ -72,13 +72,21 @@ impl<V> WeakDbCache<V> {
         }
         let opened = Arc::new(open()?);
         *handle = Arc::downgrade(&opened);
-        // The evicted handle drops with both locks released, so closing a database never blocks a
-        // caller for its path or for any other.
+        // Closing an evicted database runs with every lock released, so it never blocks a caller
+        // for its path or for any other.
         drop(handle);
-        let evicted = self
-            .warm
-            .lock()
-            .push(path.to_path_buf(), Arc::clone(&opened));
+        // Keep-warm takes the handle only while the slot map still holds this open's slot, so a
+        // path forgotten during the open stays forgotten.
+        let evicted = {
+            let slots = self.slots.read();
+            if slots.get(path).is_some_and(|live| Arc::ptr_eq(live, &slot)) {
+                self.warm
+                    .lock()
+                    .push(path.to_path_buf(), Arc::clone(&opened))
+            } else {
+                None
+            }
+        };
         drop(evicted);
         Ok(opened)
     }
@@ -254,6 +262,20 @@ mod tests {
             opens.load(Ordering::SeqCst),
             4,
             "a forgotten subtree was still served from the warm cache"
+        );
+
+        let three = Path::new("repo/three");
+        let opened_while_forgotten = cache
+            .get_or_open(three, || {
+                cache.forget(three);
+                counting_open(&opens)
+            })
+            .unwrap();
+        let watch_three = Arc::downgrade(&opened_while_forgotten);
+        drop(opened_while_forgotten);
+        assert!(
+            watch_three.upgrade().is_none(),
+            "a path forgotten during its own open kept a warm handle"
         );
     }
 
