@@ -47,19 +47,16 @@ mod tests {
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_get_file_entry() -> Result<(), OxenError> {
+    async fn test_get_file_and_dir_entries() -> Result<(), OxenError> {
         test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let path = Path::new("annotations").join("README.md");
             let revision = DEFAULT_BRANCH_NAME;
+            let file_path = Path::new("annotations").join("README.md");
 
             let head = repositories::commits::head_commit(&local_repo)?;
-
-            // Try to get the entry from the local repo
             let tree = repositories::tree::get_root_with_children(&local_repo, &head)?.unwrap();
-            let entry = tree.get_by_path(&path)?;
-            assert!(entry.is_some());
+            assert!(tree.get_by_path(&file_path)?.is_some());
 
-            let entry = api::client::metadata::get_file(&remote_repo, revision, path)
+            let entry = api::client::metadata::get_file(&remote_repo, revision, &file_path)
                 .await?
                 .unwrap()
                 .entry;
@@ -68,10 +65,7 @@ mod tests {
             assert!(!entry.is_dir());
             assert_eq!(entry.data_type(), EntryDataType::Text);
             assert_eq!(entry.mime_type(), "text/markdown");
-            assert_eq!(
-                Path::new(&entry.resource().unwrap().path),
-                Path::new("annotations").join("README.md")
-            );
+            assert_eq!(Path::new(&entry.resource().unwrap().path), file_path);
             assert_eq!(
                 &entry.resource().unwrap().version,
                 Path::new(DEFAULT_BRANCH_NAME)
@@ -81,25 +75,16 @@ mod tests {
                 DEFAULT_BRANCH_NAME
             );
 
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_get_dir_entry() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let path = "train";
-            let revision = DEFAULT_BRANCH_NAME;
-            let entry = api::client::metadata::get_file(&remote_repo, revision, path)
+            let dir_path = "train";
+            let entry = api::client::metadata::get_file(&remote_repo, revision, dir_path)
                 .await?
                 .unwrap()
                 .entry;
 
-            assert_eq!(entry.filename(), path);
+            assert_eq!(entry.filename(), dir_path);
             assert!(entry.is_dir());
             assert_eq!(entry.data_type(), EntryDataType::Dir);
+            assert_eq!(entry.mime_type(), "inode/directory");
             assert!(entry.size() > 0);
 
             Ok(remote_repo)
@@ -109,28 +94,8 @@ mod tests {
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_get_remote_metadata() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let branch = DEFAULT_BRANCH_NAME;
-            let directory = Path::new("train");
-
-            let meta: EMetadataEntryResponseView =
-                api::client::metadata::get_file(&remote_repo, branch, directory)
-                    .await?
-                    .unwrap();
-
-            assert_eq!(meta.entry.mime_type(), "inode/directory");
-            assert_eq!(meta.entry.data_type(), EntryDataType::Dir);
-
-            Ok(remote_repo)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
     async fn test_latest_commit_by_branch() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_readme_remote_repo_test(|local_repo, remote_repo| async move {
             // Now push a new commit
             let labels_path = local_repo.path.join("labels.txt");
             let path = Path::new("labels.txt");
