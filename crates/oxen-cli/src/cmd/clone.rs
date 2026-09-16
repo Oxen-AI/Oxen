@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use clap::{Arg, Command, arg};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use liboxen::api;
@@ -29,7 +29,10 @@ impl RunCmd for CloneCmd {
             .about("Clone a repository by its URL")
             .arg_required_else_help(true)
             .arg(arg!(<URL> "URL of the repository you want to clone"))
-            .arg(arg!([DESTINATION] "Optional name of the directory to clone into").required(false))
+            .arg(
+                arg!([DESTINATION] "Optional path of the directory to clone into. Relative paths resolve against the current directory.")
+                    .required(false),
+            )
             .arg(
                 Arg::new("filter")
                     .long("filter")
@@ -104,32 +107,11 @@ impl RunCmd for CloneCmd {
         let is_remote = args.get_flag("remote");
 
         let current_dir = std::env::current_dir()?;
-        let dst: PathBuf = match args.get_one::<String>("DESTINATION") {
-            Some(dir_name) => {
-                let path = Path::new(dir_name);
-
-                if path.is_absolute()
-                    || path.components().any(|c| matches!(c, Component::ParentDir))
-                {
-                    return Err(anyhow::anyhow!(
-                        "Invalid destination: absolute paths or '..' not allowed",
-                    ));
-                }
-
-                let joined = current_dir.join(path);
-                if !joined.starts_with(&current_dir) {
-                    return Err(anyhow::anyhow!(
-                        "Invalid destination: path escapes base directory",
-                    ));
-                }
-                joined
-            }
-            None => {
-                // Get the name of the repo from the url
-                let repo_name = url.split('/').next_back().unwrap_or("repository");
-                current_dir.join(repo_name)
-            }
-        };
+        let dst = resolve_destination(
+            &current_dir,
+            args.get_one::<String>("DESTINATION").map(String::as_str),
+            url,
+        );
 
         let opts = CloneOpts {
             url: url.to_string(),
@@ -158,6 +140,23 @@ impl RunCmd for CloneCmd {
     }
 }
 
+/// Resolve where the clone lands. A relative destination resolves against
+/// `current_dir`; an absolute one is used as given. With no destination the
+/// directory is named after the last segment of the URL.
+fn resolve_destination(current_dir: &Path, destination: Option<&str>, url: &str) -> PathBuf {
+    match destination {
+        Some(dir_name) => current_dir.join(dir_name),
+        None => current_dir.join(repo_name_from_url(url)),
+    }
+}
+
+/// Last non-empty segment of `url`, so a trailing slash does not yield an empty name.
+fn repo_name_from_url(url: &str) -> &str {
+    url.rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .unwrap_or("repository")
+}
+
 fn filters_to_subtree_paths(filters: &[PathBuf], depth: Option<i32>) -> Option<Vec<PathBuf>> {
     if filters.is_empty() {
         if depth.is_some() {
@@ -168,5 +167,83 @@ fn filters_to_subtree_paths(filters: &[PathBuf], depth: Option<i32>) -> Option<V
         }
     } else {
         Some(filters.to_vec())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cwd() -> PathBuf {
+        PathBuf::from("/home/ox/work")
+    }
+
+    #[test]
+    fn test_resolve_destination_relative() {
+        assert_eq!(
+            resolve_destination(
+                &cwd(),
+                Some("test_repo"),
+                "https://hub.oxen.ai/ox/test_repo"
+            ),
+            PathBuf::from("/home/ox/work/test_repo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_destination_nested_relative() {
+        assert_eq!(
+            resolve_destination(
+                &cwd(),
+                Some("data/test_repo"),
+                "https://hub.oxen.ai/ox/test_repo"
+            ),
+            PathBuf::from("/home/ox/work/data/test_repo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_destination_absolute() {
+        assert_eq!(
+            resolve_destination(
+                &cwd(),
+                Some("/var/data/test_repo"),
+                "https://hub.oxen.ai/ox/test_repo"
+            ),
+            PathBuf::from("/var/data/test_repo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_destination_parent_dir() {
+        assert_eq!(
+            resolve_destination(
+                &cwd(),
+                Some("../test_repo"),
+                "https://hub.oxen.ai/ox/test_repo"
+            ),
+            PathBuf::from("/home/ox/work/../test_repo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_destination_defaults_to_repo_name() {
+        assert_eq!(
+            resolve_destination(&cwd(), None, "https://hub.oxen.ai/ox/test_repo"),
+            PathBuf::from("/home/ox/work/test_repo")
+        );
+    }
+
+    #[test]
+    fn test_resolve_destination_ignores_trailing_slash_in_url() {
+        assert_eq!(
+            resolve_destination(&cwd(), None, "https://hub.oxen.ai/ox/test_repo/"),
+            PathBuf::from("/home/ox/work/test_repo")
+        );
+    }
+
+    #[test]
+    fn test_repo_name_from_url_without_any_segments() {
+        assert_eq!(repo_name_from_url("///"), "repository");
     }
 }
