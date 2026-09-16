@@ -87,7 +87,7 @@ fn read_df_csv(
 fn ndjson_scan_source(bytes: MemSlice) -> ScanSources {
     let end = bytes
         .iter()
-        .rposition(|&b| b != b'\n' && b != b'\r')
+        .rposition(|&b| b != b'\n')
         .map_or(0, |i| i + 1);
     ScanSources::Buffers(Arc::from([bytes.slice(0..end)]))
 }
