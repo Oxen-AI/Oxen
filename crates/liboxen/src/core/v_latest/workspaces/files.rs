@@ -1096,8 +1096,6 @@ pub fn mv(
 
     let workspace_repo = &workspace.workspace_repo;
 
-    // One handle for the whole rename: the staged DB opens and closes with the manager, so a
-    // second `get_staged_db_manager` here would reopen the same RocksDB mid-rename.
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
 
     // First, try to read existing staged entry for the source path
