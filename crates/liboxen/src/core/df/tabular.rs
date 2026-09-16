@@ -97,10 +97,15 @@ fn lazy_jsonl_reader(bytes: MemSlice) -> LazyJsonLineReader {
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
 }
 
+/// Memory-maps a JSONL file, naming the path in the error when it is missing or unreadable.
+fn mmap_jsonl(path: &Path) -> Result<MemSlice, OxenError> {
+    MemSlice::from_file(&fs::open_file(path)?)
+        .map_err(|e| OxenError::basic_str(format!("{READ_ERROR}: {path:?}: {e}")))
+}
+
 fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
     let path = path.as_ref();
-    let bytes = MemSlice::from_file(&File::open(path)?)?;
-    lazy_jsonl_reader(bytes)
+    lazy_jsonl_reader(mmap_jsonl(path)?)
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
@@ -173,8 +178,7 @@ pub fn scan_df_csv(
 
 pub fn scan_df_jsonl(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFrame, OxenError> {
     let path = path.as_ref();
-    let bytes = MemSlice::from_file(&File::open(path)?)?;
-    lazy_jsonl_reader(bytes)
+    lazy_jsonl_reader(mmap_jsonl(path)?)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
