@@ -25,6 +25,8 @@ impl fmt::Display for SizeStatus {
     }
 }
 
+/// A repository's size in bytes together with the state of the calculation behind it. On a
+/// `Pending` or `Error` status the figure is the last one a pass completed, or zero when none has.
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct RepoSizeFile {
     pub status: SizeStatus,
@@ -43,9 +45,9 @@ impl fmt::Display for RepoSizeFile {
 /// Recalculate `repo`'s size on a background thread, leaving the recorded figure readable
 /// while it runs. Call it wherever version files become referenced by the merkle tree.
 ///
-/// Each call starts its own pass, and the last one to finish is the figure that sticks. No pass
-/// starts while a maintenance operation holds `repo`, and the figure already recorded stays as it
-/// is.
+/// Each call starts its own pass, and the last one to finish is the figure that sticks. A failed
+/// pass records the failure and keeps the figure from before it. No pass starts while a maintenance
+/// operation holds `repo`, and the figure already recorded stays as it is.
 pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     // An exclusive maintenance operation drains this reservation before it runs, so the walk
     // never reads a store that is being deleted or migrated.
@@ -55,7 +57,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     };
 
     let path = repo_size_path(repo);
-    let size = match util::fs::read_from_path(&path) {
+    let pending = match util::fs::read_from_path(&path) {
         Ok(content) => match serde_json::from_str::<RepoSizeFile>(&content) {
             Ok(parsed) => RepoSizeFile {
                 status: SizeStatus::Pending,
@@ -78,7 +80,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
         }
     };
 
-    AtomicFile::new(&path).write(size.to_string().as_bytes())?;
+    AtomicFile::new(&path).write(pending.to_string().as_bytes())?;
 
     let repo = repo.clone();
 
@@ -87,27 +89,21 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
         // The reservation lives for the whole walk.
         let _write = write;
 
-        let size_result = repo.version_bytes();
-        match size_result {
-            Ok(calculated_size) => {
-                let size = RepoSizeFile {
-                    status: SizeStatus::Done,
-                    size: calculated_size,
-                };
-                if let Err(e) = AtomicFile::new(&path).write(size.to_string().as_bytes()) {
-                    log::error!("Failed to write size result: {e}");
-                }
-            }
+        let recorded = match repo.version_bytes() {
+            Ok(calculated) => RepoSizeFile {
+                status: SizeStatus::Done,
+                size: calculated,
+            },
             Err(e) => {
                 log::error!("Failed to calculate repository size: {e}");
-                let size = RepoSizeFile {
+                RepoSizeFile {
                     status: SizeStatus::Error,
-                    size: 0,
-                };
-                if let Err(e) = AtomicFile::new(&path).write(size.to_string().as_bytes()) {
-                    log::error!("Failed to write size error status: {e}");
+                    size: pending.size,
                 }
             }
+        };
+        if let Err(e) = AtomicFile::new(&path).write(recorded.to_string().as_bytes()) {
+            log::error!("Failed to write the recalculated size: {e}");
         }
     });
 
