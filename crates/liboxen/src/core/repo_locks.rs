@@ -241,7 +241,7 @@ mod tests {
                 matches!(begin_write(&repo), Err(OxenError::LockTimeout(_))),
                 "a write must be rejected while the exclusive lock is held"
             );
-            size::update_size(&repo)?;
+            size::update_size(&repo);
             assert!(
                 !size::repo_size_path(&repo).exists(),
                 "a rejected size recalculation records nothing at all"

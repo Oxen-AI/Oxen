@@ -37,9 +37,7 @@ pub async fn completed_push(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let repository = get_repo(app_data, &namespace, &name)?;
 
     log::debug!("push action completed");
-    if let Err(err) = repositories::size::update_size(&repository) {
-        log::error!("Failed to start a size recalculation: {err}");
-    }
+    repositories::size::update_size(&repository);
 
     Ok(HttpResponse::Ok().json(ActionResponse::new("push", "completed")))
 }

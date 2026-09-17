@@ -72,10 +72,8 @@ pub async fn commit(
 
     // The commit is what makes the workspace's version files referenced, so the recorded size
     // is stale until this recalculation lands.
-    if result.is_ok()
-        && let Err(err) = size::update_size(&workspace.base_repo)
-    {
-        log::error!("Failed to start a size recalculation: {err}");
+    if result.is_ok() {
+        size::update_size(&workspace.base_repo);
     }
 
     result
