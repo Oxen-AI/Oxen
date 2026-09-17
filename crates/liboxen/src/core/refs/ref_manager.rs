@@ -4,6 +4,7 @@
 //! Per-operation `spawn_blocking` callers are fine because the guard lifetime is bounded
 //! by the closure.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, LazyLock};
@@ -20,21 +21,25 @@ use crate::repositories;
 use crate::util;
 use crate::util::fs::AtomicFile;
 
+// How many repositories keep their refs database open after their last caller drops it.
+const WARM_REFS_DBS: NonZeroUsize = NonZeroUsize::new(256).unwrap();
+
 // Registry of open refs DB handles, keyed by `.oxen/refs` dir. An in-use handle is never
 // evicted, so the shared-Arc invariant that compound read-modify-write sequences
 // (e.g. `create_branch`'s "check exists, then put") rely on holds unconditionally.
-static REFS_DBS: LazyLock<WeakDbCache<RwLock<DB>>> = LazyLock::new(WeakDbCache::new);
+static REFS_DBS: LazyLock<WeakDbCache<RwLock<DB>>> =
+    LazyLock::new(|| WeakDbCache::new(WARM_REFS_DBS));
 
-/// Drops this repository's registry entry. A handle a caller still holds stays open and closes
-/// on its last drop.
+/// Drops this repository's registry entry and its warm handle. A handle a caller still holds
+/// stays open and closes on its last drop.
 pub fn remove_from_cache(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let refs_dir = util::fs::oxen_hidden_dir(repository_path).join(REFS_DIR);
     REFS_DBS.forget(&refs_dir);
     Ok(())
 }
 
-/// Drops the registry entries under `repository_path`, with the same effect on open handles as
-/// [`remove_from_cache`].
+/// Drops the registry entries and warm handles under `repository_path`, with the same effect on
+/// open handles as [`remove_from_cache`].
 pub fn remove_from_cache_with_children(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
     REFS_DBS.forget_prefix(repository_path.as_ref());
     Ok(())
