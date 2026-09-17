@@ -569,6 +569,9 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
 
     // Evict the name index DB handle from cache before removing the directory
     workspace_name_index::remove_from_cache(repo);
+    // Drop the staged database handles under any workspace before removing the dir. Windows
+    // refuses to remove a directory holding an open RocksDB.
+    core::staged::remove_from_cache_with_children(&workspaces_dir)?;
     // Drop cached DuckDB connections under any workspace before removing the dir. On NFS,
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
     df_db::remove_df_db_from_cache_with_children(&workspaces_dir)?;
