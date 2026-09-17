@@ -27,8 +27,8 @@ pub fn list(path: &Path) -> Vec<String> {
 }
 
 /// The named namespace, or `None` when it has no directory on disk. Starts a size recalculation for
-/// every repository with no figure recorded yet, so the total is a lower bound until those land,
-/// and a warning names how many are outstanding.
+/// every repository that has no figure to count, so the total is a lower bound that later reads
+/// converge on, and a warning names how many repositories are counted at an unfinished figure.
 pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
@@ -42,6 +42,14 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     // Get storage per repo in parallel and sum up
     let figures: Vec<RepoSizeFile> = repos.par_iter().map(size::get_size).collect();
 
+    // A read reports a failed pass rather than starting another, so a repository left with no
+    // figure would count as nothing on every later read. Start one here for those.
+    for (repo, figure) in repos.iter().zip(&figures) {
+        if matches!(figure.status, SizeStatus::Error) && figure.size == 0 {
+            size::update_size(repo);
+        }
+    }
+
     let outstanding = figures
         .iter()
         .filter(|figure| !matches!(figure.status, SizeStatus::Done))
@@ -51,8 +59,7 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
             namespace = name,
             outstanding,
             repositories = figures.len(),
-            "Reporting a storage total that counts every repository without a completed size as \
-             nothing"
+            "Reporting a storage total that counts some repositories at a figure no pass completed"
         );
     }
 
