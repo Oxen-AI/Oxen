@@ -4,50 +4,39 @@
 //! Per-operation `spawn_blocking` callers are fine because the guard lifetime is bounded
 //! by the closure.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str;
-use std::sync::{Arc, LazyLock, Weak};
-use std::thread::sleep;
+use std::sync::{Arc, LazyLock};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rocksdb::{DB, IteratorMode};
 
 use crate::constants::{HEAD_FILE, REFS_DIR};
 use crate::core::db;
+use crate::core::db::weak_cache::WeakDbCache;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, LocalRepository};
 use crate::repositories;
 use crate::util;
 use crate::util::fs::AtomicFile;
 
-// Weak-ref registry of open refs DB handles, keyed by `.oxen/refs` dir. The strong
-// `Arc<RwLock<DB>>` lives only as long as some `with_ref_manager` scope holds it;
-// when the last caller drops, RocksDB closes and the entry becomes a tombstone that
-// the next opener prunes. There is no capacity cap, so an in-use entry can never be
-// evicted — the shared-Arc invariant that compound read-modify-write sequences
+// Registry of open refs DB handles, keyed by `.oxen/refs` dir. An in-use handle is never
+// evicted, so the shared-Arc invariant that compound read-modify-write sequences
 // (e.g. `create_branch`'s "check exists, then put") rely on holds unconditionally.
-// A brief LOCK collision is still possible when an open races the tail of a
-// concurrent close (RocksDB releases the OS lock in its `Drop`, after `strong_count`
-// already hit zero); see [`with_ref_manager`] for the bounded-retry that waits it out.
-static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static REFS_DBS: LazyLock<WeakDbCache<RwLock<DB>>> = LazyLock::new(WeakDbCache::new);
 
-/// Removes this repository's tombstone entry from the registry. Live entries (someone still
-/// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
+/// Drops this repository's registry entry. A handle a caller still holds stays open and closes
+/// on its last drop.
 pub fn remove_from_cache(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
     let refs_dir = util::fs::oxen_hidden_dir(repository_path).join(REFS_DIR);
-    let mut instances = DB_INSTANCES.lock();
-    instances.remove(&refs_dir);
+    REFS_DBS.forget(&refs_dir);
     Ok(())
 }
 
-/// Removes tombstone entries under `repository_path` from the registry. Live entries are
-/// unaffected; the DB closes when the last strong reference drops.
+/// Drops the registry entries under `repository_path`, with the same effect on open handles as
+/// [`remove_from_cache`].
 pub fn remove_from_cache_with_children(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let repository_path = repository_path.as_ref();
-    let mut instances = DB_INSTANCES.lock();
-    instances.retain(|key, _| !key.starts_with(repository_path));
+    REFS_DBS.forget_prefix(repository_path.as_ref());
     Ok(())
 }
 
@@ -59,9 +48,9 @@ pub struct RefManager {
 
 /// Runs `operation` against a [`RefManager`] for `repository`.
 ///
-/// Every concurrent caller for the same repo receives the same shared `Arc<RwLock<DB>>`
-/// for as long as at least one `with_ref_manager` scope stays alive. May briefly block on
-/// a concurrent close — see the module doc and [`open_refs_db`] for the retry that covers it.
+/// Every concurrent caller for the same repo receives the same shared `Arc<RwLock<DB>>` for as
+/// long as at least one `with_ref_manager` scope stays alive. A caller whose repo is mid-open
+/// waits for that open; callers for other repos do not.
 pub fn with_ref_manager<F, T>(repository: &LocalRepository, operation: F) -> Result<T, OxenError>
 where
     F: FnOnce(&RefManager) -> Result<T, OxenError>,
@@ -77,48 +66,16 @@ where
     operation(&manager)
 }
 
-/// Return the shared refs-DB handle for `refs_dir`, retrying briefly on a LOCK-collision
-/// race with a concurrent close (see module doc).
+/// Return the shared refs-DB handle for `refs_dir`, opening it when no live handle exists.
+/// A cache hit does no filesystem work.
 fn open_refs_db(refs_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
-    // Fast path: cache hit does no filesystem work.
-    if let Some(strong) = lookup_live(refs_dir) {
-        return Ok(strong);
-    }
-    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
-    // then open with bounded LOCK-collision retry.
-    util::fs::create_dir_all(refs_dir)?;
-    let opts = db::key_val::opts::default();
-    let mut attempts = 0;
-    loop {
-        let mut instances = DB_INSTANCES.lock();
-        if let Some(weak) = instances.get(refs_dir)
-            && let Some(strong) = weak.upgrade()
-        {
-            return Ok(strong);
-        }
-        match DB::open(&opts, dunce::simplified(refs_dir)) {
-            Ok(db) => {
-                let arc_db = Arc::new(RwLock::new(db));
-                instances.insert(refs_dir.to_path_buf(), Arc::downgrade(&arc_db));
-                instances.retain(|_, weak| weak.strong_count() > 0);
-                return Ok(arc_db);
-            }
-            Err(err) if db::is_lock_collision(&err) => {
-                drop(instances);
-                attempts += 1;
-                if attempts >= db::OPEN_RETRIES {
-                    return Err(refs_db_open_failed(refs_dir, err));
-                }
-                sleep(db::OPEN_RETRY_INTERVAL);
-            }
-            Err(err) => return Err(refs_db_open_failed(refs_dir, err)),
-        }
-    }
-}
-
-fn lookup_live(refs_dir: &Path) -> Option<Arc<RwLock<DB>>> {
-    let instances = DB_INSTANCES.lock();
-    instances.get(refs_dir)?.upgrade()
+    REFS_DBS.get_or_open(refs_dir, || {
+        util::fs::create_dir_all(refs_dir)?;
+        let opts = db::key_val::opts::default();
+        db::open_with_lock_retry(|| DB::open(&opts, dunce::simplified(refs_dir)))
+            .map(RwLock::new)
+            .map_err(|err| refs_db_open_failed(refs_dir, err))
+    })
 }
 
 fn refs_db_open_failed(refs_dir: &Path, source: rocksdb::Error) -> OxenError {

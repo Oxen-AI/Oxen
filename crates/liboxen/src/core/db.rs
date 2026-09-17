@@ -1,12 +1,14 @@
 //! Interacting with the oxen databases
 //!
 
+use std::thread::sleep;
 use std::time::Duration;
 
 pub mod data_frames;
 pub mod dir_hashes;
 pub mod key_val;
 pub mod merkle_node;
+pub(crate) mod weak_cache;
 
 /// How long a weak-handle registry waits out a concurrent close before surfacing a LOCK error.
 pub const OPEN_RETRIES: u32 = 100;
@@ -24,6 +26,27 @@ pub fn is_lock_collision(err: &rocksdb::Error) -> bool {
     msg.contains("While lock file")
         || msg.contains("lock hold by current process")
         || msg.contains("Failed to create lock file")
+}
+
+/// Runs `open`, waiting out a LOCK collision so an open that races the tail of a concurrent close
+/// succeeds once that close releases the OS lock. Surfaces the collision as an error only after
+/// [`OPEN_RETRIES`] attempts.
+pub(crate) fn open_with_lock_retry<T>(
+    mut open: impl FnMut() -> Result<T, rocksdb::Error>,
+) -> Result<T, rocksdb::Error> {
+    let mut attempts = 0;
+    loop {
+        match open() {
+            Err(err) if is_lock_collision(&err) => {
+                attempts += 1;
+                if attempts >= OPEN_RETRIES {
+                    return Err(err);
+                }
+                sleep(OPEN_RETRY_INTERVAL);
+            }
+            result => return result,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -67,6 +90,14 @@ mod tests {
             let msg = err.to_string();
             assert!(msg.contains("LOCK"), "path missing from the error: {msg}");
             assert!(!is_lock_collision(&err), "misread as a collision: {msg}");
+
+            let retried =
+                open_with_lock_retry(|| DBWithThreadMode::<MultiThreaded>::open(&opts, &db_path))
+                    .expect_err("a non-collision failure must not be retried into success");
+            assert!(
+                !is_lock_collision(&retried),
+                "the retry changed which error surfaced: {retried}"
+            );
 
             Ok(())
         })
