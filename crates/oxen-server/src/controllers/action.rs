@@ -29,7 +29,8 @@ pub async fn completed(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
     Ok(HttpResponse::Ok().json(ActionResponse::new(action, "completed")))
 }
 
-/// Record that a push finished, and start a recalculation of the repository's size.
+/// Record that a push finished, and start a recalculation of the repository's size. A repository
+/// held for maintenance reports 429 with a `Retry-After` instead of a completed push.
 pub async fn completed_push(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
@@ -37,7 +38,7 @@ pub async fn completed_push(req: HttpRequest) -> actix_web::Result<HttpResponse,
     let repository = get_repo(app_data, &namespace, &name)?;
 
     log::debug!("push action completed");
-    repositories::size::update_size(&repository);
+    repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(ActionResponse::new("push", "completed")))
 }

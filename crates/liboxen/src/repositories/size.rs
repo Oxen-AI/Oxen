@@ -5,12 +5,10 @@ use std::sync::LazyLock;
 use utoipa::ToSchema;
 
 use crate::core::repo_locks;
+use crate::error::OxenError;
 use crate::util::fs::AtomicFile;
 use crate::{model::LocalRepository, util};
 use std::path::PathBuf;
-
-#[cfg(test)]
-use crate::error::OxenError;
 
 #[derive(Serialize, Debug, Clone, PartialEq, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -83,15 +81,13 @@ impl Drop for PassMarker {
 /// while it runs. Call it wherever version files become referenced by the merkle tree.
 ///
 /// Only a completed pass records anything, so the figure on disk is always one a walk finished.
-/// Each call starts its own pass and the last to finish is the figure that sticks. No pass starts
-/// while a maintenance operation holds `repo`, and the figure already recorded stays as it is.
-pub fn update_size(repo: &LocalRepository) {
+/// Each call starts its own pass and the last to finish is the figure that sticks. Returns
+/// [`OxenError::LockTimeout`] without starting a pass while a maintenance operation holds `repo`,
+/// leaving the figure already recorded as it is.
+pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     // An exclusive maintenance operation drains this write before it runs, so the walk never
     // reads a store that is being deleted or migrated.
-    let Ok(write) = repo_locks::begin_write(repo) else {
-        log::info!("Skipping a size recalculation while the repository is held for maintenance");
-        return;
-    };
+    let write = repo_locks::begin_write(repo)?;
 
     let marker = PassMarker::new(repo.path.clone());
     let repo = repo.clone();
@@ -135,13 +131,16 @@ pub fn update_size(repo: &LocalRepository) {
 
         marker.finish(failed);
     });
+
+    Ok(())
 }
 
 /// The figure recorded for `repo` and the state of the calculation behind it, starting a
 /// recalculation when nothing is recorded.
 ///
 /// `Pending` and `Error` describe passes in this process, so a repository whose walk a restart
-/// killed reports the figure that walk was replacing.
+/// killed reports the figure that walk was replacing. A recalculation a maintenance operation
+/// refuses is `Error` as well.
 pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
     let (walking, last_failed) = PASSES
         .lock()
@@ -175,8 +174,17 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
                 repo.path
             ),
         }
-        update_size(repo);
-        SizeStatus::Pending
+        match update_size(repo) {
+            Ok(()) => SizeStatus::Pending,
+            Err(cause) => {
+                tracing::error!(
+                    repo = ?repo.path,
+                    ?cause,
+                    "Could not start the recalculation a repository with no figure needs"
+                );
+                SizeStatus::Error
+            }
+        }
     };
 
     RepoSizeFile {

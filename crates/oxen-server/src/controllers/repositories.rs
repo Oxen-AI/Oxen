@@ -242,8 +242,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    let _write = repo_locks::begin_write(&repository)?;
-    repositories::size::update_size(&repository);
+    repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }

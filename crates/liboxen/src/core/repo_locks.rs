@@ -214,7 +214,7 @@ async fn drain(gate: &RepoGate) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::size;
+    use crate::repositories::size::{self, SizeStatus};
     use crate::test;
     use tokio::sync::oneshot;
 
@@ -241,10 +241,17 @@ mod tests {
                 matches!(begin_write(&repo), Err(OxenError::LockTimeout(_))),
                 "a write must be rejected while the exclusive lock is held"
             );
-            size::update_size(&repo);
+            assert!(
+                matches!(size::update_size(&repo), Err(OxenError::LockTimeout(_))),
+                "a size recalculation must be rejected while the exclusive lock is held"
+            );
             assert!(
                 !size::repo_size_path(&repo).exists(),
                 "a rejected size recalculation records nothing at all"
+            );
+            assert!(
+                matches!(size::get_size(&repo).status, SizeStatus::Error),
+                "a repository whose recalculation was refused is not reported as sized"
             );
 
             release_tx.send(()).expect("release the exclusive op");

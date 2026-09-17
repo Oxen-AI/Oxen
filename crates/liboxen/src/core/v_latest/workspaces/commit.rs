@@ -71,9 +71,15 @@ pub async fn commit(
     cleanup_commit_lock(&lock_key);
 
     // The commit is what makes the workspace's version files referenced, so the recorded size
-    // is stale until this recalculation lands.
-    if result.is_ok() {
-        size::update_size(&workspace.base_repo);
+    // is stale until this recalculation lands. A repository held for maintenance keeps the stale
+    // figure rather than failing a commit that has already landed.
+    if result.is_ok()
+        && let Err(cause) = size::update_size(&workspace.base_repo)
+    {
+        log::warn!(
+            "Could not start a size recalculation for {:?}: {cause}",
+            workspace.base_repo.path
+        );
     }
 
     result

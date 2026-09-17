@@ -45,8 +45,15 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     // A read reports a failed pass rather than starting another, so a repository left with no
     // figure would count as nothing on every later read. Start one here for those.
     for (repo, figure) in repos.iter().zip(&figures) {
-        if matches!(figure.status, SizeStatus::Error) && figure.size == 0 {
-            size::update_size(repo);
+        if matches!(figure.status, SizeStatus::Error)
+            && figure.size == 0
+            && let Err(cause) = size::update_size(repo)
+        {
+            tracing::warn!(
+                repo = ?repo.path,
+                ?cause,
+                "Could not start a size recalculation for a repository counted as nothing"
+            );
         }
     }
 
