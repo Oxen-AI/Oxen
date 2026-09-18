@@ -521,7 +521,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
 
     // Stage the move
     log::debug!("file::mv moving {source_path:?} to {new_path:?}");
-    repositories::workspaces::files::mv(&workspace, &source_path, &new_path)?;
+    repositories::workspaces::files::mv(&workspace, &source_path, &new_path).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {

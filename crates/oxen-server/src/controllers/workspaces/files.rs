@@ -212,7 +212,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let _write = repo_locks::begin_write(&repo)?;
     let directory = path_param(&req, "path")?.to_string();
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -292,7 +292,7 @@ pub async fn rm_files(
     let repo = get_repo(app_data, namespace, repo_name)?;
     let _write = repo_locks::begin_write(&repo)?;
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -387,13 +387,16 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     // Validate and normalize new_path
     let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
     // Check if new_path already exists in the workspace or base repo
-    if repositories::tree::get_node_by_path(&repo, &workspace.commit, &new_path)?.is_some() {
+    if repositories::tree::get_node_by_path_async(&repo, &workspace.commit, &new_path)
+        .await?
+        .is_some()
+    {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));
@@ -403,7 +406,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     if util::fs::is_tabular(&path) {
         repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
     } else {
-        repositories::workspaces::files::mv(&workspace, &path, &new_path)?;
+        repositories::workspaces::files::mv(&workspace, &path, &new_path).await?;
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -568,6 +571,71 @@ mod tests {
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::web::Bytes;
     use mime;
+
+    /// The assertion that the move runs off the worker lives on `workspaces::files::mv` itself,
+    /// where no earlier await can satisfy it: this handler awaits the workspace and tree lookups
+    /// first, and both yield on their own. What this covers is the route and the response.
+    #[actix_web::test]
+    async fn test_mv_renames_a_staged_file() -> Result<(), OxenError> {
+        let (sync_dir, repo, workspace_id) =
+            test::repo_with_workspace("Testing-Namespace", "Testing-Workspace-Mv").await?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
+                    web::patch().to(controllers::workspaces::files::mv),
+                ),
+        )
+        .await;
+
+        let uri = format!(
+            "/oxen/Testing-Namespace/Testing-Workspace-Mv/workspaces/{workspace_id}/files/hello.txt"
+        );
+        let req = actix_web::test::TestRequest::patch()
+            .uri(&uri)
+            .set_payload(r#"{"new_path":"renamed.txt"}"#)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// As with the move above, `workspaces::files::rm` carries its own off-the-worker assertion;
+    /// this covers the route and the response.
+    #[actix_web::test]
+    async fn test_rm_files_stages_a_removal() -> Result<(), OxenError> {
+        let (sync_dir, repo, workspace_id) =
+            test::repo_with_workspace("Testing-Namespace", "Testing-Workspace-Rm").await?;
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files",
+                    web::delete().to(controllers::workspaces::files::rm_files),
+                ),
+        )
+        .await;
+
+        let uri =
+            format!("/oxen/Testing-Namespace/Testing-Workspace-Rm/workspaces/{workspace_id}/files");
+        let req = actix_web::test::TestRequest::delete()
+            .uri(&uri)
+            .insert_header((header::CONTENT_TYPE, "application/json"))
+            .set_payload(r#"["hello.txt"]"#)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
 
     #[actix_web::test]
     async fn test_get_nonexistent_file_returns_404() -> Result<(), OxenError> {
