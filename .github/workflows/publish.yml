@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Update oxen formula on homebrew-core
-        uses: dawidd6/action-homebrew-bump-formula@1446dca236b0440c6f02723a3f14f13be2c04ab0 # v7
+        uses: dawidd6/action-homebrew-bump-formula@b12d2bc99c46444125e606142f28200ec71a1214 # v10
         with:
           # Personal access token with fork + PR scopes; the action forks
           # homebrew-core, runs `brew bump-formula-pr`, and opens the PR.
