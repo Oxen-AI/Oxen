@@ -146,3 +146,20 @@ pub fn request_with_payload_and_entry(
         .set_payload(data)
         .to_http_parts()
 }
+
+/// A sync dir holding `namespace/name` with `hello.txt` committed, plus an editable workspace
+/// pinned to that commit. Returns the sync dir, the repo, and the workspace id.
+pub async fn repo_with_workspace(
+    namespace: &str,
+    name: &str,
+) -> Result<(PathBuf, LocalRepository, String), OxenError> {
+    let sync_dir = get_sync_dir()?;
+    let repo = create_local_repo(&sync_dir, namespace, name)?;
+    let hello_file = repo.path.join("hello.txt");
+    util::fs::write_to_path(&hello_file, "Hello")?;
+    repositories::add(&repo, &hello_file).await?;
+    let commit = repositories::commit(&repo, "First commit")?;
+    let workspace_id = uuid::Uuid::new_v4().to_string();
+    repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
+    Ok((sync_dir, repo, workspace_id))
+}

@@ -55,13 +55,11 @@ pub async fn rm(
     workspace: &Workspace,
     filepath: impl AsRef<Path>,
 ) -> Result<Vec<ErrorFileInfo>, OxenError> {
-    let filepath = filepath.as_ref();
-
-    // Stage the file using the repositories::rm method
-    let err_files = p_rm(workspace, filepath).await?;
-
-    // Return the Err files
-    Ok(err_files)
+    let workspace = workspace.clone();
+    let filepath = filepath.as_ref().to_path_buf();
+    // Staging a removal reads the committed tree -- for a directory, the whole subtree -- and
+    // writes the staged db, all synchronously. Keep it to one blocking hop off the worker.
+    tokio::task::spawn_blocking(move || p_rm(&workspace, &filepath)).await?
 }
 
 pub async fn add_version_file(
@@ -957,7 +955,7 @@ async fn p_add_file(
     .await?
 }
 
-async fn p_rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
+fn p_rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
     log::debug!("p_rm: deleting file {path:?}");
     let base_repo = &workspace.base_repo;
     let workspace_repo = &workspace.workspace_repo;
@@ -1084,14 +1082,15 @@ fn has_dir_node(
 
 /// Move or rename a file within a workspace.
 /// This stages the old path as "Removed" and the new path as "Added".
-pub fn mv(
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    let path = path.as_ref();
-    let new_path = new_path.as_ref();
+pub async fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
+    let workspace = workspace.clone();
+    let path = path.to_path_buf();
+    let new_path = new_path.to_path_buf();
+    tokio::task::spawn_blocking(move || mv_sync(&workspace, &path, &new_path)).await?
+}
 
+/// The sync core of [`mv`]: Merkle reads and staged-db writes, all under one blocking hop.
+fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
     if path == new_path {
         return Err(OxenError::basic_str(format!(
             "Source and destination are the same: {path:?}"

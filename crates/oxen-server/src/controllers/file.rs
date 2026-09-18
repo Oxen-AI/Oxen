@@ -504,13 +504,20 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     // Validate and normalize new_path
     let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
-    // Verify source file exists
-    if repositories::entries::get_file(&repo, &commit, &source_path)?.is_none() {
+    // Verify source file exists. Both this and the collision check below walk the Merkle tree
+    // synchronously, so they go off the worker the same way the move itself does.
+    if repositories::tree::get_file_by_path_async(&repo, &commit, &source_path)
+        .await?
+        .is_none()
+    {
         return Err(OxenHttpError::NotFound);
     }
 
     // Check if new_path already exists (file OR directory)
-    if repositories::tree::get_node_by_path(&repo, &commit, &new_path)?.is_some() {
+    if repositories::tree::get_node_by_path_async(&repo, &commit, &new_path)
+        .await?
+        .is_some()
+    {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));
@@ -521,7 +528,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
 
     // Stage the move
     log::debug!("file::mv moving {source_path:?} to {new_path:?}");
-    repositories::workspaces::files::mv(&workspace, &source_path, &new_path)?;
+    repositories::workspaces::files::mv(&workspace, &source_path, &new_path).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {

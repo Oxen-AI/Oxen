@@ -48,6 +48,56 @@ mod tests {
     use crate::test;
     use crate::util::fs;
 
+    /// `mv` reads the Merkle tree and writes the staged db, all synchronously. oxen-server calls
+    /// it from an actix handler, and an actix worker runs every connection assigned to it on one
+    /// current-thread runtime, so running that work inline would park every one of those
+    /// connections for the length of the move.
+    #[tokio::test]
+    async fn test_mv_runs_off_the_calling_thread() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello = repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&hello, "hello")?;
+            repositories::add(&repo, &hello).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "mv-yield-workspace", true)?;
+
+            let (result, yielded) = test::run_and_report_yield(workspaces::files::mv(
+                &workspace,
+                Path::new("hello.txt"),
+                Path::new("renamed.txt"),
+            ))
+            .await;
+            result?;
+            assert!(yielded, "mv held the thread it was called on");
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// `rm` reads the committed tree, the whole subtree for a directory, and writes the staged db.
+    /// Same reason as the move above: none of it belongs on the thread the caller runs on.
+    #[tokio::test]
+    async fn test_rm_runs_off_the_calling_thread() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let hello = repo.path.join("hello.txt");
+            crate::util::fs::write_to_path(&hello, "hello")?;
+            repositories::add(&repo, &hello).await?;
+            let commit = repositories::commit(&repo, "Add hello.txt")?;
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "rm-yield-workspace", true)?;
+
+            let (result, yielded) =
+                test::run_and_report_yield(workspaces::files::rm(&workspace, &hello)).await;
+            result?;
+            assert!(yielded, "rm held the thread it was called on");
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
         // Skip workspace ops on windows
@@ -69,7 +119,7 @@ mod tests {
             let new_path = Path::new("renamed").join("data").join("bbox_renamed.csv");
 
             // Move the file
-            workspaces::files::mv(&workspace, &original_path, &new_path)?;
+            workspaces::files::mv(&workspace, &original_path, &new_path).await?;
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
@@ -280,8 +330,8 @@ mod tests {
             let first = Path::new("first.txt");
             let second = Path::new("second.txt");
             let third = Path::new("third.txt");
-            workspaces::files::mv(&workspace, first, second)?;
-            workspaces::files::mv(&workspace, second, third)?;
+            workspaces::files::mv(&workspace, first, second).await?;
+            workspaces::files::mv(&workspace, second, third).await?;
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(
