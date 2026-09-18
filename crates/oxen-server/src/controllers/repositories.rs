@@ -242,7 +242,6 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    let _write = repo_locks::begin_write(&repository)?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -269,10 +268,11 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    // `size::get_size` records a pending figure on a miss (a GET that mutates — tech-debt
-    // ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
+    // `size::get_size` starts a recalculation when nothing is recorded (a GET that mutates —
+    // tech-debt ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck)
+    // blocks it.
     let _write = repo_locks::begin_write(&repository)?;
-    let size = repositories::size::get_size(&repository)?;
+    let size = repositories::size::get_size(&repository);
     Ok(HttpResponse::Ok().json(size))
 }
 
