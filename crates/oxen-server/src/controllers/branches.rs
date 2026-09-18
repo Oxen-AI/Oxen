@@ -149,7 +149,7 @@ pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
 
     let repo = get_repo(app_data, namespace, repo_name)?;
 
-    // Hold the repo write guard for the whole write so a maintenance op (migration/prune) drains
+    // Keep the write in flight until it finishes so a maintenance op (migration/prune) drains
     // against it; returns 429 while an exclusive op holds the repo.
     let _write = repo_locks::begin_write(&repo)?;
 

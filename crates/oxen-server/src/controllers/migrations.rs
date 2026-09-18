@@ -205,7 +205,7 @@ mod tests {
         let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
         std::fs::create_dir_all(&workspaces_dir)?;
 
-        // Reserve a write on the same lock gate the handler targets (gates are keyed by repo path,
+        // Begin a write on the same lock gate the handler targets (gates are keyed by repo path,
         // so resolve the repo exactly as `get_repo` does), giving the exclusive acquire something
         // to drain.
         let handler_repo = liboxen::repositories::get_by_namespace_and_name(

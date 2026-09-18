@@ -572,8 +572,8 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
-    // Taken only where the repository opened, since an unreadable one has no lock to contend for.
-    let write_guard = repository
+    // Begun only where the repository opened, since an unreadable one has no gate to register on.
+    let write_in_flight = repository
         .as_ref()
         .map(repo_locks::begin_write)
         .transpose()?;
@@ -581,9 +581,10 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
-        // Hold the write guard across the deferred removal (the handler has already returned), so
-        // a maintenance operation waits instead of running against a directory that is going away.
-        let _write = write_guard;
+        // Keep the write in flight across the deferred removal (the handler has already returned),
+        // so a maintenance operation waits instead of running against a directory that is going
+        // away.
+        let _write = write_in_flight;
 
         let result = match repository {
             Some(repository) => repositories::delete(repository).await,

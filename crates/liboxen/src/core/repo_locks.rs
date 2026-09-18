@@ -123,7 +123,7 @@ fn lock_timeout() -> OxenError {
 
 /// One write in progress on a repo, holding off any exclusive operation on it until this drops.
 /// Other writes on the same repo are unaffected.
-#[must_use = "the write ends the moment this guard drops; bind it \
+#[must_use = "the write ends the moment this drops; bind it \
               (e.g. `let _write = begin_write(repo)?;`) so it lives for the whole write"]
 pub struct WriteInFlight {
     gate: Arc<RepoGate>,
@@ -257,7 +257,7 @@ mod tests {
         .await
     }
 
-    // An exclusive acquire waits for an outstanding write guard to drop before it proceeds.
+    // An exclusive acquire waits for an in-flight write to drain before it proceeds.
     #[tokio::test]
     async fn test_exclusive_waits_for_in_flight_writes_to_drain() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
