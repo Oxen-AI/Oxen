@@ -1,3 +1,4 @@
+use liboxen::core::db::key_val::opts::set_table_format;
 use liboxen::error::OxenError;
 use liboxen::model::User;
 use liboxen::util;
@@ -47,6 +48,7 @@ impl AccessKeyManager {
 
         let db_dir = hidden_dir.join("keys");
         let mut opts = Options::default();
+        set_table_format(&mut opts);
         opts.set_log_level(LogLevel::Fatal);
         opts.create_if_missing(true);
 
