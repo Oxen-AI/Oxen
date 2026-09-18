@@ -26,12 +26,13 @@ pub struct RepoSizeFile {
     pub size: u64,
 }
 
-/// What only this process knows about a repository's size: how many passes are walking it, and
-/// whether the last one to finish failed. Neither survives the process, so a read after a restart
-/// reports the last figure a walk completed.
+/// What only this process knows about a repository's size: how many passes are walking it, how many
+/// have completed, and whether a failure is left to report. None of it survives the process, so a
+/// read after a restart reports the last figure a walk completed.
 #[derive(Default)]
 struct PassState {
     walking: usize,
+    completed: u64,
     last_failed: bool,
 }
 
@@ -42,18 +43,26 @@ static PASSES: LazyLock<Mutex<HashMap<PathBuf, PassState>>> =
 
 /// Counts a repository as walking until it drops, reporting a failure unless
 /// [`PassMarker::finish`] says otherwise, so a walk killed mid-pass both frees the repository and
-/// is reported as one that did not land.
+/// is reported as one that did not land. A failure goes unreported when another pass completed
+/// while this one ran.
 struct PassMarker {
     repo_path: PathBuf,
     failed: bool,
+    completed_at_start: u64,
 }
 
 impl PassMarker {
     fn new(repo_path: PathBuf) -> Self {
-        PASSES.lock().entry(repo_path.clone()).or_default().walking += 1;
+        let completed_at_start = {
+            let mut passes = PASSES.lock();
+            let state = passes.entry(repo_path.clone()).or_default();
+            state.walking += 1;
+            state.completed
+        };
         Self {
             repo_path,
             failed: true,
+            completed_at_start,
         }
     }
 
@@ -70,7 +79,15 @@ impl Drop for PassMarker {
             return;
         };
         state.walking = state.walking.saturating_sub(1);
-        state.last_failed = self.failed;
+        if self.failed {
+            // Equal only while no pass completed since this one started.
+            if state.completed == self.completed_at_start {
+                state.last_failed = true;
+            }
+        } else {
+            state.completed += 1;
+            state.last_failed = false;
+        }
         if state.walking == 0 && !state.last_failed {
             passes.remove(&self.repo_path);
         }
@@ -231,5 +248,39 @@ pub(crate) fn wait_for_recorded_size(repo: &LocalRepository) -> Result<u64, Oxen
             "the size stayed pending past the deadline"
         );
         std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Concurrent passes report a failure only when none of them completed, so a walk that fails
+    // alongside one that lands leaves the repository reported as sized.
+    #[test]
+    fn test_a_failed_pass_reports_a_failure_only_when_no_pass_completed() {
+        let landed = PathBuf::from("/test/size/a-pass-landed-alongside-a-failure");
+        let completed = PassMarker::new(landed.clone());
+        let failed = PassMarker::new(landed.clone());
+        completed.finish(false);
+        failed.finish(true);
+        assert!(
+            !PASSES.lock().contains_key(&landed),
+            "a pass completing alongside a failed one leaves no failure to report"
+        );
+
+        let none_landed = PathBuf::from("/test/size/every-pass-failed");
+        let first = PassMarker::new(none_landed.clone());
+        let second = PassMarker::new(none_landed.clone());
+        first.finish(true);
+        second.finish(true);
+        assert!(
+            PASSES
+                .lock()
+                .get(&none_landed)
+                .is_some_and(|state| state.last_failed),
+            "a repository whose every pass failed has a failure left to report"
+        );
+        PASSES.lock().remove(&none_landed);
     }
 }
