@@ -33,6 +33,21 @@ struct Slot<V> {
     handle: Mutex<Weak<V>>,
 }
 
+impl<V> Slot<V> {
+    /// Whether a caller holds this slot or the handle it points at. Call while holding the slot
+    /// map's write lock.
+    fn is_held(slot: &Arc<Self>) -> bool {
+        // A caller holds its slot across the whole open, so the extra reference covers the window
+        // before the handle goes live. `try_lock` never waits, so a path being opened right now
+        // counts as held rather than stalling the map's write lock behind that open.
+        Arc::strong_count(slot) > 1
+            || slot
+                .handle
+                .try_lock()
+                .is_none_or(|handle| handle.strong_count() > 0)
+    }
+}
+
 impl<V> Default for Slot<V> {
     fn default() -> Self {
         Self {
@@ -99,20 +114,14 @@ impl<V> WeakDbCache<V> {
         drop(forgotten);
     }
 
-    /// Drops `path`'s warm handle, and its registry entry once no caller holds one, reporting
-    /// whether the handle is closed. A caller still holding it keeps the entry, so callers after
-    /// it go on sharing that handle.
+    /// Drops `path`'s warm handle, and its registry entry once no caller holds or is opening
+    /// one, reporting whether the handle is closed. A caller still holding it keeps the entry, so
+    /// callers after it go on sharing that handle.
     pub(crate) fn close(&self, path: &Path) -> bool {
         let forgotten = self.warm.lock().pop(path);
         drop(forgotten);
         let mut slots = self.slots.write();
-        // `try_lock` never waits, so a path being opened right now reports as open rather than
-        // stalling this write behind that open.
-        let held = slots.get(path).is_some_and(|slot| {
-            slot.handle
-                .try_lock()
-                .is_none_or(|handle| handle.strong_count() > 0)
-        });
+        let held = slots.get(path).is_some_and(Slot::is_held);
         if !held {
             slots.remove(path);
         }
@@ -146,15 +155,8 @@ impl<V> WeakDbCache<V> {
             return Arc::clone(slot);
         }
         let mut slots = self.slots.write();
-        // Sweep entries no caller can be using. `try_lock` never waits, so a path being opened
-        // right now is kept rather than stalling this write behind that open.
-        slots.retain(|_, slot| {
-            Arc::strong_count(slot) > 1
-                || slot
-                    .handle
-                    .try_lock()
-                    .is_none_or(|handle| handle.strong_count() > 0)
-        });
+        // Sweep entries no caller can be using.
+        slots.retain(|_, slot| Slot::is_held(slot));
         Arc::clone(slots.entry(path.to_path_buf()).or_default())
     }
 }
