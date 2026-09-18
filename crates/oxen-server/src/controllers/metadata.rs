@@ -118,7 +118,7 @@ pub async fn update_metadata(req: HttpRequest) -> actix_web::Result<HttpResponse
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     let resource = parse_resource(&req, &repo)?;
 
     let version_str = resource

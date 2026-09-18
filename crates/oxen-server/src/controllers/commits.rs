@@ -686,7 +686,7 @@ pub async fn create(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repository)?;
+    let _write = repo_locks::begin_write(&repository)?;
 
     let new_commit: Commit = match serde_json::from_str(&body) {
         Ok(commit) => commit,
@@ -749,7 +749,7 @@ pub async fn upload_chunk(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
     let id = query.hash.clone();
@@ -987,7 +987,7 @@ pub async fn upload(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, &namespace, &name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     // Read bytes from body
     let mut bytes = Vec::new();

@@ -157,7 +157,7 @@ pub async fn download(
     let repo = get_repo(app_data, &namespace, &repo_name)?;
     // This GET writes a resized derived blob on a cache miss (tech-debt ENG-1373); guard the whole
     // handler so a stop-the-world op (migration/prune/fsck) blocks it.
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     let version_store = repo.version_store();
     let resource = parse_resource(&req, &repo)?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
@@ -575,7 +575,7 @@ pub async fn batch_upload(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repo = get_repo(app_data, namespace, &repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     let err_files = save_multiparts(payload, &repo).await?;
     log::debug!("batch upload complete with err_files: {}", err_files.len());
 
