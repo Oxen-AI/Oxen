@@ -86,6 +86,9 @@ pub use push::PushCmd;
 pub mod remote;
 pub use remote::RemoteCmd;
 
+pub mod reset;
+pub use reset::ResetCmd;
+
 pub mod restore;
 pub use restore::RestoreCmd;
 
