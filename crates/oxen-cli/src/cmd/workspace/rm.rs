@@ -23,10 +23,16 @@ impl RunCmd for WorkspaceRmCmd {
         };
 
         Command::new(NAME)
-            .about("Removes the specified files from the index")
+            .about("Stage the removal of committed files in a workspace")
+            .long_about(
+                "Stage the removal of committed files in a workspace.\n\n\
+                 Committing the workspace records the files as removed. In a \
+                 remote-mode repository the local copies are deleted as well.",
+            )
             .arg(
                 Arg::new("files")
                     .required(true)
+                    .help("Files or directories to remove from the workspace.")
                     .action(clap::ArgAction::Append),
             )
             .arg(

@@ -136,8 +136,11 @@ class Repo:
 
     def rm(self, path: str, recursive=False, staged=False):
         """
-        Remove a file or directory from being tracked.
-        This will not delete the file or directory.
+        Delete a file or directory from the working tree and stage the removal.
+
+        The next commit records the path as removed. The path must already be
+        committed. To undo, use `oxen restore --staged <path>` to unstage the
+        removal and then `oxen restore <path>` to bring the file back.
 
         Args:
             path: `str`
@@ -146,9 +149,6 @@ class Repo:
                 Whether to remove the file or directory recursively. Default: False
             staged: `bool`
                 Whether to remove the file or directory from the staging area.
-                Default: False
-            remote: `bool`
-                Whether to remove the file or directory from a remote workspace.
                 Default: False
         """
         self._repo.rm(path, recursive, staged)
