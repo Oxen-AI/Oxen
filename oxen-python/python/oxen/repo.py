@@ -139,8 +139,12 @@ class Repo:
         Delete a file or directory from the working tree and stage the removal.
 
         The next commit records the path as removed. The path must already be
-        committed. To undo, use `oxen restore --staged <path>` to unstage the
-        removal and then `oxen restore <path>` to bring the file back.
+        committed. To bring the file back, use `oxen restore --staged <path>` to
+        unstage the removal and then `oxen restore <path>`.
+
+        With `staged=True` the path is removed from the staging area and the
+        working-tree copy is left in place. This unstages an earlier add or
+        removal, and the path need not be committed.
 
         Args:
             path: `str`
@@ -148,8 +152,8 @@ class Repo:
             recursive: `bool`
                 Whether to remove the file or directory recursively. Default: False
             staged: `bool`
-                Whether to remove the file or directory from the staging area.
-                Default: False
+                Whether to remove the path from the staging area without
+                deleting the working-tree copy. Default: False
         """
         self._repo.rm(path, recursive, staged)
 

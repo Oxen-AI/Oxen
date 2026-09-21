@@ -22,8 +22,11 @@ pub fn rm_args() -> Command {
              The next commit records the files as removed. Paths must already be \
              committed. Delete a file that has never been committed with your shell \
              instead.\n\n\
-             To undo, run `oxen restore --staged <file>` to unstage the removal, then \
-             `oxen restore <file>` to bring the file back.",
+             To bring a deleted file back, run `oxen restore --staged <file>` to \
+             unstage the removal, then `oxen restore <file>`.\n\n\
+             With `--staged`, the paths are removed from the staging area and the \
+             working-tree copies are left in place. This unstages an earlier `oxen add` \
+             or `oxen rm`, and the paths need not be committed.",
         )
         .arg(
             Arg::new("files")
@@ -34,7 +37,7 @@ pub fn rm_args() -> Command {
         .arg(
             Arg::new("staged")
                 .long("staged")
-                .help("Removes the file from the staging area.")
+                .help("Removes the paths from the staging area without deleting them.")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
