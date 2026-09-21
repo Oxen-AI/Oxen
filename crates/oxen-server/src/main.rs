@@ -911,7 +911,8 @@ async fn start(
             .wrap(TracingLogger::<OxenRootSpanBuilder>::new())
             // RequestId must stay outer of the TracingLogger/Logger/RequestStartLog above (actix
             // runs the last .wrap outermost) so the request-id extension those three read is
-            // populated before them.
+            // populated before them, and inner of the Sentry wrap below, whose per-request scope
+            // it tags.
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
             // Outermost: a per-request Sentry hub so a captured panic carries request context.
