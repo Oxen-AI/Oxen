@@ -4,16 +4,18 @@
 use liboxen::error::OxenError;
 use liboxen::model::Branch;
 use liboxen::model::LocalRepository;
-use liboxen::opts::{CleanOpts, CloneOpts, PushOpts, RmOpts};
+use liboxen::opts::{CleanOpts, CloneOpts, PushOpts, RestoreOpts, RmOpts};
 use pyo3::prelude::*;
 
 use liboxen::api;
 use liboxen::command::config;
 use liboxen::opts::FetchOpts;
 use liboxen::repositories;
+use liboxen::repositories::restore;
 
 use liboxen::core::refs::with_ref_manager;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::error::PyOxenError;
@@ -123,6 +125,27 @@ impl PyRepo {
 
         pyo3_async_runtimes::tokio::get_runtime()
             .block_on(async { repositories::rm(&repo, &rm_opts).await })?;
+
+        Ok(())
+    }
+
+    #[pyo3(signature = (path, staged = false, source = None))]
+    pub fn restore(
+        &self,
+        path: PathBuf,
+        staged: bool,
+        source: Option<String>,
+    ) -> Result<(), PyOxenError> {
+        let repo = LocalRepository::from_dir(&self.path)?;
+        let restore_opts = RestoreOpts {
+            paths: HashSet::from([path]),
+            staged,
+            is_remote: false,
+            source_ref: source,
+        };
+
+        pyo3_async_runtimes::tokio::get_runtime()
+            .block_on(async { restore::restore(&repo, restore_opts).await })?;
 
         Ok(())
     }
