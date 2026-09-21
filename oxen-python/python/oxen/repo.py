@@ -168,8 +168,9 @@ class Repo:
                 Discard the staged entry rather than the working copy.
                 Default: False
             source: `str`
-                Commit id or branch name to take the contents from. Defaults to
-                HEAD.
+                Commit id or branch name to take the contents from, when
+                restoring the working copy. Defaults to HEAD, and has no effect
+                with `staged=True`.
         """
         self._repo.restore(path, staged, source)
 
