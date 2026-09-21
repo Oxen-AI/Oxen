@@ -139,6 +139,14 @@ impl StagedData {
             && self.moved_files.is_empty()
     }
 
+    /// Paths in the staged set whose entry carries this status.
+    pub fn paths_with_status(&self, status: StagedEntryStatus) -> impl Iterator<Item = &PathBuf> {
+        self.staged_files
+            .iter()
+            .filter(move |(_, entry)| entry.status == status)
+            .map(|(path, _)| path)
+    }
+
     pub fn has_modified_entries(&self) -> bool {
         !self.modified_files.is_empty() || !self.unrestorable_files.is_empty()
     }

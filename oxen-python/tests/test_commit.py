@@ -17,6 +17,13 @@ def test_commit_one_file(celeba_local_repo_no_commits):
     history = repo.log()
     assert len(history) == 1
 
+    # oxen rm
+    repo.rm(full_path)
+    status = repo.status()
+    assert repr(status) == "PyStagedData(added=0, removed=1, modified=0)"
+    assert status.removed_files() == [image_file]
+    assert status.added_files() == []
+
 
 def test_commit_all(celeba_local_repo_no_commits):
     repo = celeba_local_repo_no_commits

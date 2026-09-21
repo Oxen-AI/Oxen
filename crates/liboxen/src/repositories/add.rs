@@ -744,29 +744,23 @@ A: Oxen.ai
             status.staged_files
         );
 
-        let count_type = |s: StagedEntryStatus| -> usize {
-            status
-                .staged_files
-                .iter()
-                .filter(|(_, entry)| entry.status == s)
-                .count()
-        };
-
-        let n_rm = count_type(StagedEntryStatus::Removed);
+        let n_rm = status.paths_with_status(StagedEntryStatus::Removed).count();
         assert_eq!(
             n_rm, n_expect_rm,
             "Expecting {n_expect_rm} staged file(s) for removal but found ({n_rm}): {:?}",
             status.staged_files
         );
 
-        let n_add = count_type(StagedEntryStatus::Added);
+        let n_add = status.paths_with_status(StagedEntryStatus::Added).count();
         assert_eq!(
             n_add, n_expect_add,
             "Expecting {n_expect_add} staged file(s) for addition but found ({n_add}): {:?}",
             status.staged_files
         );
 
-        let n_mod = count_type(StagedEntryStatus::Modified);
+        let n_mod = status
+            .paths_with_status(StagedEntryStatus::Modified)
+            .count();
         assert_eq!(
             n_mod, n_expect_mod,
             "Expecting {n_expect_mod} staged file(s) for modification but found ({n_mod}): {:?}",
