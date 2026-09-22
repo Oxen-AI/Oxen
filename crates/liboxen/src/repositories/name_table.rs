@@ -17,6 +17,8 @@ use crate::lmdb::store::LmdbStore;
 use crate::lmdb::{LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env};
 use crate::sync_dir::NAME_TABLE_DIR;
 
+pub mod seed;
+
 /// The one database in the env, mapping a repository's name to its UUID.
 const NAMES_DB_NAME: &str = "names";
 /// Single database, so a `max_dbs` of 1 is sufficient.

@@ -180,6 +180,8 @@ Repositories created before `oxen-server` recorded identity have no `[identity]`
 
 `oxen-server` refuses to create a repository under a name another repository already holds, matching without regard to case, so `my-namespace/My-Repo` and `my-namespace/my-repo` cannot both be created.
 
+The name in each `[identity]` section is indexed when the server starts, so that refusal covers every repository whose config records one. Stop the server and run `oxen-server seed-name-table` to index the names the table is missing after restoring or otherwise changing the sync directory behind the server's back. It only adds names, so a repository directory removed by hand keeps its name taken, and the command reports those names as `unclaimed`.
+
 ## Pushing the Changes
 
 Once you have committed data locally and are ready to share them with colleagues (or the world) you will have to push them to a remote.

@@ -79,6 +79,7 @@ use std::time::Duration;
 
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
+use liboxen::repositories::name_table::seed;
 use liboxen::sync_dir;
 
 use crate::config::Config;
@@ -388,6 +389,11 @@ enum ServerCommand {
         output: PathBuf,
     },
 
+    /// Record the name every repository holds in the server's name table. Run with the server
+    /// stopped
+    #[command(name = "seed-name-table")]
+    SeedNameTable,
+
     /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
     #[command(name = "scan-node-format")]
     ScanNodeFormat {
@@ -587,10 +593,29 @@ async fn server() -> Result<(), ServerError> {
             Ok(())
         }
 
+        ServerCommand::SeedNameTable => seed_name_table(&sync_dir),
+
         ServerCommand::ScanNodeFormat { namespace, limit } => {
             scan_node_format(&sync_dir, namespace.as_deref(), limit)
         }
     }
+}
+
+/// Record the name every repository under `sync_dir` holds in the server's name table, reporting
+/// what the table answers for once the walk is done.
+fn seed_name_table(sync_dir: &Path) -> Result<(), ServerError> {
+    let seeded = seed::run(sync_dir)?;
+    // KEEP as println! -- do not log!
+    println!(
+        "covered={} recorded={} uncovered={} unlistable={} unclaimed={} covers_every_repository={}",
+        seeded.covered,
+        seeded.recorded,
+        seeded.uncovered,
+        seeded.unlistable,
+        seeded.unclaimed,
+        seeded.complete()
+    );
+    Ok(())
 }
 
 /// Walk repositories under `sync_dir` and report which hold pre-v0.25.0 Merkle nodes.
@@ -813,6 +838,15 @@ async fn start(
     match liboxen::core::df::duckdb_setup::preload_extensions() {
         Ok(()) => log::info!("DuckDB extensions preloaded"),
         Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
+    }
+
+    // A repository no create, delete, or transfer has passed through holds no entry, so walking
+    // the configs is where the table's entry for it comes from. A table already covering every
+    // repository is not walked again.
+    match seed::run_if_incomplete(sync_dir) {
+        Ok(Some(seeded)) => log::info!("Seeded the name table: {seeded:?}"),
+        Ok(None) => {}
+        Err(err) => tracing::error!(%err, "Failed to seed the name table"),
     }
 
     let data = app_data::OxenAppData {
