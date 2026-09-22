@@ -133,10 +133,6 @@ mod tests {
                 "File should not exist at original path after commit"
             );
 
-            assert!(
-                size::repo_size_path(&repo).exists(),
-                "committing a workspace must leave a recorded size behind"
-            );
             assert_eq!(
                 size::wait_for_recorded_size(&repo)?,
                 repo.version_bytes()?,
@@ -145,6 +141,22 @@ mod tests {
             assert!(
                 !legacy_size.exists(),
                 "recording a size drops what an older format left under a .toml name"
+            );
+            assert_eq!(
+                fs::read_from_path(size::repo_size_path(&repo))?.trim(),
+                repo.version_bytes()?.to_string(),
+                "the figure is recorded on its own, with no status beside it"
+            );
+
+            // A record claiming a calculation is under way, with nothing running to finish it.
+            fs::write_to_path(
+                size::repo_size_path(&repo),
+                r#"{"status":"pending","size":7}"#,
+            )?;
+            assert_eq!(
+                size::wait_for_recorded_size(&repo)?,
+                repo.version_bytes()?,
+                "a record no pass stands behind is recalculated rather than believed"
             );
 
             Ok(())

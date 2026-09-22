@@ -5,20 +5,21 @@
 //!
 //! Each repo has one gate with two sides:
 //!
-//! - **Writers** take a *shared* [`RepoWriteGuard`] via [`acquire_write`]. Any number of writers
-//!   can hold one at once; they exist so an exclusive operation has something to wait for.
+//! - **Writers** register with [`begin_write`], which excludes no other writer. Any number of
+//!   [`WriteInFlight`] guards can be held at once, and they exist only so an exclusive operation
+//!   has something to wait for.
 //! - **One exclusive operation at a time** runs inside [`with_repo_exclusive`]. It blocks new
 //!   writers, waits for the in-flight ones to finish, then runs with the repo to itself.
 //!
-//! While an exclusive operation holds a repo, [`acquire_write`] returns [`OxenError::LockTimeout`]
+//! While an exclusive operation holds a repo, [`begin_write`] returns [`OxenError::LockTimeout`]
 //! (oxen-server maps it to HTTP 429 + `Retry-After`, so clients back off and retry). If in-flight
 //! writes don't drain within the timeout, the exclusive acquire itself fails with `LockTimeout`
 //! rather than blocking forever.
 //!
 //! # Wiring a write entry point
 //!
-//! Acquire the guard at the start of a write and hold it until the write finishes — dropping the
-//! guard is what signals the write is done:
+//! Begin the write at the start of the handler and hold the guard until the write finishes.
+//! Dropping the guard is what signals the write is done:
 //!
 //! ```
 //! use liboxen::core::repo_locks;
@@ -26,8 +27,8 @@
 //!
 //! test::run_empty_dir_test(|dir| {
 //!     let repo = repositories::init(dir)?;
-//!     let _write = repo_locks::acquire_write(&repo)?; // 429 if a maintenance op holds the repo
-//!     // ... perform the write; `_write` drops at end of scope, releasing the reservation ...
+//!     let _write = repo_locks::begin_write(&repo)?; // 429 if a maintenance op holds the repo
+//!     // ... perform the write. `_write` drops at end of scope, ending it ...
 //!     Ok(())
 //! })?;
 //! # Ok::<(), liboxen::error::OxenError>(())
@@ -59,7 +60,7 @@
 //!
 //! # Invariant (deadlock avoidance)
 //!
-//! Never call [`with_repo_exclusive`] while holding a [`RepoWriteGuard`], and never take a guard
+//! Never call [`with_repo_exclusive`] while holding a [`WriteInFlight`], and never take a guard
 //! from inside the exclusive future: the exclusive side waits for guards to drop, so a guard held
 //! across it can never drain (and a guard taken inside it self-rejects with `LockTimeout`). Today
 //! the exclusive consumers call no write ops, so the invariant holds; keep it that way.
@@ -120,15 +121,15 @@ fn lock_timeout() -> OxenError {
     OxenError::LockTimeout("The repository is locked for maintenance. Try again later.".into())
 }
 
-/// A held write reservation on a repo. An exclusive acquire on the same repo waits for every
-/// outstanding guard to drop. Acquire it at a write entry point and hold it for the whole write.
-#[must_use = "the write reservation is released the moment this guard drops; bind it \
-              (e.g. `let _write = acquire_write(repo)?;`) so it lives for the whole write"]
-pub struct RepoWriteGuard {
+/// One write in progress on a repo, holding off any exclusive operation on it until this drops.
+/// Other writes on the same repo are unaffected.
+#[must_use = "the write ends the moment this drops; bind it \
+              (e.g. `let _write = begin_write(repo)?;`) so it lives for the whole write"]
+pub struct WriteInFlight {
     gate: Arc<RepoGate>,
 }
 
-impl Drop for RepoWriteGuard {
+impl Drop for WriteInFlight {
     fn drop(&mut self) {
         let mut state = self.gate.state.lock();
         state.active_writes -= 1;
@@ -138,8 +139,9 @@ impl Drop for RepoWriteGuard {
     }
 }
 
-/// Reserve a write on `repo`, or `LockTimeout` if an exclusive operation currently holds it.
-pub fn acquire_write(repo: &LocalRepository) -> Result<RepoWriteGuard, OxenError> {
+/// Record a write in progress on `repo`, or `LockTimeout` if an exclusive operation holds it.
+/// Never waits, and never excludes another writer.
+pub fn begin_write(repo: &LocalRepository) -> Result<WriteInFlight, OxenError> {
     let gate = gate_for(repo);
     let mut state = gate.state.lock();
     if state.exclusive {
@@ -147,7 +149,7 @@ pub fn acquire_write(repo: &LocalRepository) -> Result<RepoWriteGuard, OxenError
     }
     state.active_writes += 1;
     drop(state);
-    Ok(RepoWriteGuard { gate })
+    Ok(WriteInFlight { gate })
 }
 
 /// Sets the exclusive marker on construction and clears it on drop, so an early return or panic in
@@ -212,7 +214,7 @@ async fn drain(gate: &RepoGate) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::size;
+    use crate::repositories::size::{self, SizeStatus};
     use crate::test;
     use tokio::sync::oneshot;
 
@@ -236,30 +238,37 @@ mod tests {
 
             held_rx.await.expect("exclusive should be held");
             assert!(
-                matches!(acquire_write(&repo), Err(OxenError::LockTimeout(_))),
+                matches!(begin_write(&repo), Err(OxenError::LockTimeout(_))),
                 "a write must be rejected while the exclusive lock is held"
             );
-            size::update_size(&repo)?;
+            assert!(
+                matches!(size::update_size(&repo), Err(OxenError::LockTimeout(_))),
+                "a size recalculation must be rejected while the exclusive lock is held"
+            );
             assert!(
                 !size::repo_size_path(&repo).exists(),
                 "a rejected size recalculation records nothing at all"
+            );
+            assert!(
+                matches!(size::get_size(&repo).status, SizeStatus::Error),
+                "a repository whose recalculation was refused is not reported as sized"
             );
 
             release_tx.send(()).expect("release the exclusive op");
             handle.await.expect("join exclusive task")?;
 
             // Released: writes succeed again.
-            let _guard = acquire_write(&repo)?;
+            let _guard = begin_write(&repo)?;
             Ok(())
         })
         .await
     }
 
-    // An exclusive acquire waits for an outstanding write guard to drop before it proceeds.
+    // An exclusive acquire waits for an in-flight write to drain before it proceeds.
     #[tokio::test]
     async fn test_exclusive_waits_for_in_flight_writes_to_drain() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let guard = acquire_write(&repo)?;
+            let guard = begin_write(&repo)?;
 
             let repo_excl = repo.clone();
             let (done_tx, mut done_rx) = oneshot::channel();
@@ -288,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn test_exclusive_times_out_when_writes_never_drain() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let guard = acquire_write(&repo)?;
+            let guard = begin_write(&repo)?;
             let result =
                 with_repo_exclusive_with_timeout(&repo, Duration::from_millis(100), async {
                     Ok::<(), OxenError>(())
@@ -303,7 +312,7 @@ mod tests {
             // The timed-out acquire must clear the exclusive marker on its way out (via
             // ExclusiveMarker's Drop), leaving the repo writable again rather than wedged.
             assert!(
-                acquire_write(&repo).is_ok(),
+                begin_write(&repo).is_ok(),
                 "a drain timeout must leave the repo unwedged (exclusive marker cleared)"
             );
             Ok(())

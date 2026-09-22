@@ -242,7 +242,6 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    let _write = repo_locks::acquire_write(&repository)?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -269,10 +268,11 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo(app_data, &namespace, &name)?;
-    // `size::get_size` records a pending figure on a miss (a GET that mutates — tech-debt
-    // ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck) blocks it.
-    let _write = repo_locks::acquire_write(&repository)?;
-    let size = repositories::size::get_size(&repository)?;
+    // `size::get_size` starts a recalculation when nothing is recorded (a GET that mutates —
+    // tech-debt ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck)
+    // blocks it.
+    let _write = repo_locks::begin_write(&repository)?;
+    let size = repositories::size::get_size(&repository);
     Ok(HttpResponse::Ok().json(size))
 }
 
@@ -572,18 +572,19 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
-    // Taken only where the repository opened, since an unreadable one has no lock to contend for.
-    let write_guard = repository
+    // Begun only where the repository opened, since an unreadable one has no gate to register on.
+    let write_in_flight = repository
         .as_ref()
-        .map(repo_locks::acquire_write)
+        .map(repo_locks::begin_write)
         .transpose()?;
 
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
-        // Hold the write guard across the deferred removal (the handler has already returned), so
-        // a maintenance operation waits instead of running against a directory that is going away.
-        let _write = write_guard;
+        // Keep the write in flight across the deferred removal (the handler has already returned),
+        // so a maintenance operation waits instead of running against a directory that is going
+        // away.
+        let _write = write_in_flight;
 
         let result = match repository {
             Some(repository) => repositories::delete(repository).await,

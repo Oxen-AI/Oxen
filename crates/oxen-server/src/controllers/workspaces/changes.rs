@@ -164,7 +164,7 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -206,7 +206,7 @@ pub async fn unstage_many(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace, &repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {

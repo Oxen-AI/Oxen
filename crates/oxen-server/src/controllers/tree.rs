@@ -156,7 +156,7 @@ pub async fn mark_nodes_as_synced(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repository)?;
+    let _write = repo_locks::begin_write(&repository)?;
 
     let mut bytes = web::BytesMut::new();
     while let Some(item) = body.next().await {
@@ -187,9 +187,10 @@ pub async fn create_nodes(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let repository = get_repo(app_data, namespace, repo_name)?;
-    // Acquire before streaming so a contended write is rejected with 429 up front; the guard is
-    // moved into the work future below to stay held across the deferred unpack.
-    let write_guard = repo_locks::acquire_write(&repository)?;
+    // Begin the write before streaming so a request landing while a maintenance op holds the repo
+    // is rejected with 429 up front; it moves into the work future below to stay in flight across
+    // the deferred unpack.
+    let write_in_flight = repo_locks::begin_write(&repository)?;
 
     // Spool the uploaded node tarball to a temp file instead of buffering the whole compressed
     // archive in memory. The archive carries every dir/vnode/commit node for the pushed commits,
@@ -239,8 +240,8 @@ pub async fn create_nodes(
     // reading the spooled file incrementally. The connection is silent for the whole unpack, so
     // stream heartbeats to hold idle timers off.
     Ok(stream_with_heartbeat(async move {
-        // Hold the write guard across the deferred unpack (the handler has already returned).
-        let _write = write_guard;
+        // Keep the write in flight across the deferred unpack (the handler has already returned).
+        let _write = write_in_flight;
         tasks::spawn_blocking(move || {
             let file = std::fs::File::open(&temp_path)?;
             let reader = std::io::BufReader::with_capacity(TREE_UNPACK_SPOOL_BUFFER_SIZE, file);

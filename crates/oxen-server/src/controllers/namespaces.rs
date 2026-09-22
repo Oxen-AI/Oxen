@@ -54,18 +54,14 @@ pub async fn show(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
 
     if let Some(namespace) = namespace {
         match namespaces::get(&app_data.path, namespace) {
-            Ok(Some(namespace)) => Ok(HttpResponse::Ok().json(NamespaceResponse {
+            Some(namespace) => Ok(HttpResponse::Ok().json(NamespaceResponse {
                 status: StatusMessage::resource_found(),
                 namespace,
             })),
 
-            Ok(None) => {
+            None => {
                 log::debug!("404 Could not find namespace: {namespace}");
                 Err(OxenHttpError::NotFound)
-            }
-            Err(_) => {
-                // `get_storage_for_repo` reports the failure; it holds the repo that failed.
-                Err(OxenHttpError::InternalServerError)
             }
         }
     } else {

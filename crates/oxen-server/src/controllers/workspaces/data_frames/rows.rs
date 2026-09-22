@@ -25,7 +25,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
     let data = String::from_utf8(bytes.to_vec()).expect("Could not parse bytes as utf8");
@@ -136,7 +136,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let row_id = path_param(&req, "row_id")?.to_string();
 
     let repo = get_repo(app_data, &namespace, &repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Ok(data) = String::from_utf8(bytes.to_vec()) else {
@@ -201,7 +201,7 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     let row_id = path_param(&req, "row_id")?.to_string();
 
     let repo = get_repo(app_data, namespace, repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
@@ -242,7 +242,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
     let repo = get_repo(app_data, &namespace, &repo_name)?;
-    let _write = repo_locks::acquire_write(&repo)?;
+    let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
     let Ok(data) = String::from_utf8(bytes.to_vec()) else {

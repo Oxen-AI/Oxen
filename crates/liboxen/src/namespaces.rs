@@ -1,9 +1,9 @@
 use rayon::prelude::*;
 use std::path::Path;
 
-use crate::error::OxenError;
 use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
+use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
 use crate::util;
 
 pub fn list(path: &Path) -> Vec<String> {
@@ -26,92 +26,100 @@ pub fn list(path: &Path) -> Vec<String> {
     results
 }
 
-// return the named namespace object
-pub fn get(data_dir: &Path, name: &str) -> Result<Option<Namespace>, OxenError> {
+/// The named namespace, or `None` when it has no directory on disk. Starts a size recalculation for
+/// every repository that has no figure to count, so the total is a lower bound that later reads
+/// converge on, and a warning names how many repositories are counted at an unfinished figure.
+pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
 
     if !namespace_path.is_dir() {
-        return Ok(None);
+        return None;
     }
-
-    let mut namespace = Namespace {
-        name: name.to_string(),
-        storage_usage_gb: 0.0,
-    };
 
     let repos: Vec<LocalRepository> =
         repositories::list_repos_in_namespace(&namespace_path).collect();
     // Get storage per repo in parallel and sum up
-    namespace.storage_usage_gb = repos
-        .par_iter()
-        .map(get_storage_for_repo)
-        .sum::<Result<u64, OxenError>>()? as f64
-        / bytesize::GB as f64;
+    let figures: Vec<RepoSizeFile> = repos.par_iter().map(size::get_size).collect();
 
-    Ok(Some(namespace))
-}
-
-fn get_storage_for_repo(repo: &LocalRepository) -> Result<u64, OxenError> {
-    log::debug!(
-        "repositories::namespaces::get_storage_for_repo for repo {:?}",
-        repo.path
-    );
-
-    match repositories::size::get_size(repo) {
-        Ok(size_file) => match size_file.status {
-            repositories::size::SizeStatus::Done => {
-                log::debug!("Got repo size: {} bytes", size_file.size);
-                Ok(size_file.size)
-            }
-            repositories::size::SizeStatus::Pending => {
-                log::info!("Size calculation is still pending, returning previous size");
-                Ok(size_file.size)
-            }
-            repositories::size::SizeStatus::Error => {
-                tracing::error!(repo = ?repo.path, "Repo size calculation failed");
-                Err(OxenError::basic_str("Size calculation failed"))
-            }
-        },
-        Err(e) => {
-            tracing::error!(repo = ?repo.path, cause = ?e, "Error getting repo size");
-            Err(e)
+    // A read reports a failed pass rather than starting another, so a repository left with no
+    // figure would count as nothing on every later read. Start one here for those.
+    for (repo, figure) in repos.iter().zip(&figures) {
+        if matches!(figure.status, SizeStatus::Error)
+            && figure.size == 0
+            && let Err(cause) = size::update_size(repo)
+        {
+            tracing::warn!(
+                repo = ?repo.path,
+                ?cause,
+                "Could not start a size recalculation for a repository counted as nothing"
+            );
         }
     }
+
+    let outstanding = figures
+        .iter()
+        .filter(|figure| !matches!(figure.status, SizeStatus::Done))
+        .count();
+    if outstanding > 0 {
+        tracing::warn!(
+            namespace = name,
+            outstanding,
+            repositories = figures.len(),
+            "Reporting a storage total that counts some repositories at a figure no pass completed"
+        );
+    }
+
+    Some(Namespace {
+        name: name.to_string(),
+        storage_usage_gb: figures.iter().map(|figure| figure.size).sum::<u64>() as f64
+            / bytesize::GB as f64,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::size::{RepoSizeFile, SizeStatus, repo_size_path};
+    use crate::error::OxenError;
+    use crate::repositories::size::repo_size_path;
     use crate::test;
     use crate::util::fs::AtomicFile;
 
-    /// Record `size` for a repo at `path` without going through a commit, since what is under test
-    /// is the summation rather than how a figure gets computed.
-    fn repo_recording(path: &Path, size: u64) -> Result<(), OxenError> {
+    /// Leave `record` as the size a repo at `path` has recorded, without going through a commit,
+    /// since what is under test is the summation rather than how a figure gets computed.
+    fn repo_recording(path: &Path, record: &str) -> Result<LocalRepository, OxenError> {
         let repo = repositories::init(path)?;
-        let recorded = RepoSizeFile {
-            status: SizeStatus::Done,
-            size,
-        };
-        AtomicFile::new(repo_size_path(&repo)).write(recorded.to_string().as_bytes())
+        AtomicFile::new(repo_size_path(&repo)).write(record.as_bytes())?;
+        Ok(repo)
     }
 
     #[test]
     fn test_get_sums_the_recorded_size_of_every_repo() -> Result<(), OxenError> {
         test::run_empty_dir_test(|dir| {
             assert!(
-                get(dir, "ox")?.is_none(),
+                get(dir, "ox").is_none(),
                 "a namespace with no directory on disk is reported as absent"
             );
 
             let namespace_path = dir.join("ox");
-            repo_recording(&namespace_path.join("first"), 1500)?;
-            repo_recording(&namespace_path.join("second"), 2500)?;
+            repo_recording(&namespace_path.join("first"), "1500")?;
+            let second = repo_recording(&namespace_path.join("second"), "2500")?;
 
-            let namespace = get(dir, "ox")?.expect("namespace exists");
+            let namespace = get(dir, "ox").expect("namespace exists");
             assert_eq!(namespace.storage_usage_gb, 4000.0 / bytesize::GB as f64);
+
+            util::fs::write_to_path(repo_size_path(&second), "not a size record")?;
+            let namespace = get(dir, "ox").expect("namespace exists");
+            assert_eq!(
+                namespace.storage_usage_gb,
+                1500.0 / bytesize::GB as f64,
+                "a repository with no readable figure leaves the rest of the total intact"
+            );
+            assert_eq!(
+                size::wait_for_recorded_size(&second)?,
+                second.version_bytes()?,
+                "reading a namespace starts a recalculation for a repository with no figure"
+            );
             Ok(())
         })
     }
