@@ -3,6 +3,7 @@ use crate::{error::OxenError, model::Schema};
 pub mod columns;
 pub mod df_db;
 pub mod rows;
+pub(crate) mod weak_duck_cache;
 pub mod workspace_df_db;
 
 #[derive(Debug, thiserror::Error)]
@@ -22,9 +23,6 @@ pub enum DataFrameError {
     /// internal use (see [`crate::constants::OXEN_COLS`]), so it cannot be indexed.
     #[error("Column name is reserved for Oxen's internal use: {0}")]
     ReservedColumnName(String),
-
-    #[error("Failed to create df db directory: {0}")]
-    FailCreateDfDbDir(std::io::Error),
 
     #[error("Failed to open df db: {0}")]
     FailOpenDfDb(Box<Self>),

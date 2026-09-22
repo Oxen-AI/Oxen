@@ -556,7 +556,7 @@ mod tests {
                     let mut i = 0;
                     while !stop.load(Ordering::Relaxed) {
                         let filler =
-                            filler_dir.join((i % (df_db::DF_DB_CACHE_SIZE + 1)).to_string());
+                            filler_dir.join((i % (df_db::DF_DB_CACHE_SIZE.get() + 1)).to_string());
                         df_db::with_db_closed(&filler, || {});
                         i += 1;
                     }

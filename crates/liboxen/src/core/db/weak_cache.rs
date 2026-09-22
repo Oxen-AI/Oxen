@@ -150,6 +150,28 @@ impl<V> WeakDbCache<V> {
         drop(forgotten);
     }
 
+    /// Every handle keep-warm holds, with its path, taken out of keep-warm. A handle a caller
+    /// still holds stays live for that caller, and its registry entry with it.
+    pub(crate) fn drain_warm(&self) -> Vec<(PathBuf, Arc<V>)> {
+        let mut warm = self.warm.lock();
+        let mut drained = Vec::with_capacity(warm.len());
+        while let Some(entry) = warm.pop_lru() {
+            drained.push(entry);
+        }
+        drained
+    }
+
+    /// The live handle for `path`, or `None` when neither a caller nor keep-warm holds one.
+    #[cfg(test)]
+    pub(crate) fn live_handle(&self, path: &Path) -> Option<Arc<V>> {
+        let slot = {
+            let slots = self.slots.read();
+            slots.get(path).map(Arc::clone)
+        }?;
+        let handle = slot.handle.lock();
+        handle.upgrade()
+    }
+
     fn slot(&self, path: &Path) -> Arc<Slot<V>> {
         if let Some(slot) = self.slots.read().get(path) {
             return Arc::clone(slot);
