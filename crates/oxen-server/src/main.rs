@@ -16,7 +16,6 @@ use oxen_server::{app_data, auth, config, controllers, crash_diagnostics, metric
 
 extern crate liboxen;
 extern crate log;
-extern crate lru;
 
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};

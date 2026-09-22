@@ -34,7 +34,7 @@ actix-web-httpauth = "0.8.0"
 anyhow = "1.0.102"
 approx = "0.5.1"
 arrow = "=58.1.0"
-astral-tokio-tar = "0.6"
+astral-tokio-tar = "0.7"
 async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
 async-recursion = "1.1.1"
 async-std = { version = "1.12.0", features = ["unstable"] }

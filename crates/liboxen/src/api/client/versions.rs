@@ -284,7 +284,7 @@ pub async fn try_download_data_from_version_paths(
                 .to_string();
 
             // Get file size from tar entry header
-            let file_size = file.header().size()?;
+            let file_size = file.header().raw_file_size()?;
             size += file_size;
 
             // Stream the file content directly to version store without loading into memory

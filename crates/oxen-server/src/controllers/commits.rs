@@ -1128,7 +1128,7 @@ async fn unpack_entry_tarball_async(
         if path.starts_with("versions") && path.to_string_lossy().contains("files") {
             // Handle version files with streaming
             let hash = extract_hash_from_path(&path)?;
-            let entry_size = file.header().size()?;
+            let entry_size = file.header().raw_file_size()?;
 
             version_store
                 .store_version_from_reader(&hash, Box::new(file), entry_size)
