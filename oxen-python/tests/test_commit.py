@@ -24,6 +24,18 @@ def test_commit_one_file(celeba_local_repo_no_commits):
     assert status.removed_files() == [image_file]
     assert status.added_files() == []
 
+    # oxen restore --staged
+    repo.restore(full_path, staged=True)
+    status = repo.status()
+    assert status.removed_files() == [], "the staged removal is discarded"
+    assert status.unstaged_removed_files() == [image_file], "the file is still gone"
+
+    # oxen restore
+    repo.restore(full_path)
+    status = repo.status()
+    assert os.path.exists(full_path), "the working copy is back"
+    assert status.unstaged_removed_files() == [], "nothing is left pending"
+
 
 def test_commit_all(celeba_local_repo_no_commits):
     repo = celeba_local_repo_no_commits

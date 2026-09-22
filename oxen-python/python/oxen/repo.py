@@ -157,6 +157,27 @@ class Repo:
         """
         self._repo.rm(path, recursive, staged)
 
+    def restore(self, path: str, staged=False, source=None):
+        """
+        Restore a file or directory to a previous state.
+
+        By default the working copy is written back from the commit. With
+        `staged=True` the staged entry is discarded instead and the working copy
+        is left alone, so undoing an `rm` takes both, staged first.
+
+        Args:
+            path: `str`
+                The path to the file or directory to restore.
+            staged: `bool`
+                Discard the staged entry rather than the working copy.
+                Default: False
+            source: `str`
+                Commit id or branch name to take the contents from, when
+                restoring the working copy. Defaults to HEAD, and has no effect
+                with `staged=True`.
+        """
+        self._repo.restore(path, staged, source)
+
     def clean(self, paths=None, force=False):
         """
         Remove untracked files and directories from the working tree.
