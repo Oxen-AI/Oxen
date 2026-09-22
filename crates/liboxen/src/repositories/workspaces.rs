@@ -578,10 +578,10 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
     df_db::remove_df_db_from_cache_with_children(&workspaces_dir)?;
 
-    util::fs::remove_dir_all(&workspaces_dir)?;
+    let removed = util::fs::remove_dir_all(&workspaces_dir);
     // Again after the removal, so no handle opened during it survives.
     workspace_name_index::remove_from_cache(repo);
-    Ok(())
+    removed
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {

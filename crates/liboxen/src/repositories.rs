@@ -333,7 +333,10 @@ pub fn transfer_namespace(
         give_back_the_name();
         return Err(err.into());
     }
-    util::fs::rename(&from_dir, &to_dir)?;
+    let moved = util::fs::rename(&from_dir, &to_dir);
+    // Again after the move, so no name index handle opened during it answers for `from_dir`.
+    workspace_name_index::remove_from_cache_with_children(&from_dir);
+    moved?;
 
     let updated_repo =
         get_by_namespace_and_name(sync_dir, to_namespace, repo_name, server_s3_opts)?;
@@ -599,8 +602,10 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
         core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&path)?;
 
         log::debug!("Deleting repo directory: {path:?}");
-        util::fs::remove_dir_all(&path)?;
-        Ok(())
+        let removed = util::fs::remove_dir_all(&path);
+        // Again after the removal, so no name index handle opened during it survives.
+        workspace_name_index::remove_from_cache_with_children(&path);
+        removed
     })
     .await??;
     Ok(())
