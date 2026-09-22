@@ -1,12 +1,11 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::{
     model::{
-        LocalRepository, MetadataEntry, StagedData, StagedEntry, StagedEntryStatus,
-        SummarizedStagedDirStats,
+        LocalRepository, MetadataEntry, StagedData, StagedEntryStatus, SummarizedStagedDirStats,
     },
     util,
 };
@@ -36,20 +35,17 @@ impl RemoteStagedStatus {
         page_num: usize,
         page_size: usize,
     ) -> RemoteStagedStatus {
-        let added_entries = RemoteStagedStatus::filter_to_meta_entry(
+        let added_entries = RemoteStagedStatus::iter_to_meta_entry(
             repo,
-            &staged.staged_files,
-            StagedEntryStatus::Added,
+            staged.paths_with_status(StagedEntryStatus::Added),
         );
-        let modified_entries = RemoteStagedStatus::filter_to_meta_entry(
+        let modified_entries = RemoteStagedStatus::iter_to_meta_entry(
             repo,
-            &staged.staged_files,
-            StagedEntryStatus::Modified,
+            staged.paths_with_status(StagedEntryStatus::Modified),
         );
-        let removed_entries = RemoteStagedStatus::filter_to_meta_entry(
+        let removed_entries = RemoteStagedStatus::iter_to_meta_entry(
             repo,
-            &staged.staged_files,
-            StagedEntryStatus::Removed,
+            staged.paths_with_status(StagedEntryStatus::Removed),
         );
 
         let added_paginated =
@@ -65,18 +61,6 @@ impl RemoteStagedStatus {
             modified_files: modified_paginated,
             removed_files: removed_paginated,
         }
-    }
-
-    fn filter_to_meta_entry(
-        repo: &LocalRepository,
-        entries: &HashMap<PathBuf, StagedEntry>,
-        status: StagedEntryStatus,
-    ) -> Vec<MetadataEntry> {
-        let paths = entries
-            .iter()
-            .filter(|(_, entry)| entry.status == status)
-            .map(|(path, _)| path);
-        RemoteStagedStatus::iter_to_meta_entry(repo, paths)
     }
 
     fn iter_to_meta_entry<'a, I: Iterator<Item = &'a PathBuf>>(
