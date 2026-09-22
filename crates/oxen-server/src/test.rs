@@ -2,6 +2,7 @@ use crate::app_data::OxenAppData;
 
 use liboxen::core::db::data_frames::df_db;
 use liboxen::core::db::dir_hashes::dir_hashes_db;
+use liboxen::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use liboxen::core::workspaces::workspace_name_index;
 use liboxen::core::{refs, staged};
 use liboxen::error::OxenError;
@@ -29,6 +30,7 @@ pub fn cleanup_sync_dir(sync_dir: &Path) -> Result<(), OxenError> {
     df_db::remove_df_db_from_cache_with_children(sync_dir)?;
     dir_hashes_db::remove_from_cache_with_children(sync_dir)?;
     workspace_name_index::remove_from_cache_with_children(sync_dir);
+    remove_commit_count_db_from_cache_with_children(sync_dir);
     liboxen::test::assert_no_live_lmdb_envs(sync_dir);
     std::fs::remove_dir_all(sync_dir)?;
     Ok(())
