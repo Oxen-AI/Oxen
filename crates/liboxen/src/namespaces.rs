@@ -3,8 +3,19 @@ use std::path::Path;
 
 use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
+use crate::repositories::name_table::NAME_TABLE_DIR;
 use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
 use crate::util;
+
+/// Entries at the top of the sync dir holding the server's own state rather than a namespace's
+/// repositories. A directory named for one of these is not reported as a namespace, so a namespace
+/// could not be seen under that name either.
+const SERVER_OWNED_DIRS: &[&str] = &[NAME_TABLE_DIR];
+
+/// Whether the entry named `name` at the top of the sync dir is the server's own state.
+fn is_server_owned(name: &str) -> bool {
+    SERVER_OWNED_DIRS.contains(&name)
+}
 
 pub fn list(path: &Path) -> Vec<String> {
     log::debug!("repositories::namespaces::list",);
@@ -17,7 +28,12 @@ pub fn list(path: &Path) -> Vec<String> {
 
             log::debug!("repositories::namespaces::list checking path {path:?}");
 
-            if path.is_dir() && !util::fs::is_in_oxen_hidden_dir(&path) {
+            let server_owned = util::fs::is_in_oxen_hidden_dir(&path)
+                || path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(is_server_owned);
+            if path.is_dir() && !server_owned {
                 results.push(path.file_name().unwrap().to_str().unwrap().to_string())
             }
         }
@@ -33,7 +49,7 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
 
-    if !namespace_path.is_dir() {
+    if is_server_owned(name) || !namespace_path.is_dir() {
         return None;
     }
 

@@ -37,9 +37,6 @@ pub type LmdbEnv = Env<WithoutTls>;
 const DEFAULT_MAX_READERS: u32 = 1024;
 
 /// The name LMDB gives the data file inside an env directory.
-// Used only by `copy_lmdb_env_to_dir`; drop this `allow` together with the one on that function
-// once a non-test `LmdbStore` implementor exists.
-#[allow(dead_code)]
 const LMDB_DATA_FILE: &str = "data.mdb";
 
 /// Tunables for opening one LMDB env. Field meanings are backend-shaped so future stores reuse the
@@ -130,10 +127,8 @@ pub(in crate::lmdb) fn open_lmdb_env(
 /// needs no `force_sync`. Compaction is hard-wired off (`CompactionOption::Disabled`) rather than
 /// exposed as a parameter: the compacting path runs a page-size-dependent free-page check that
 /// fails `MDB_INCOMPATIBLE` on multi-sub-DB envs, and no store wants it.
-// `pub(crate)`: an internal layer primitive backing `LmdbStore::snapshot_to`. Until a non-test
-// store implements `LmdbStore`, its only callers are that trait's default method and tests, so drop
-// this `#[allow(dead_code)]` (and the one on `LMDB_DATA_FILE`) once an implementor lands.
-#[allow(dead_code)]
+// `pub(crate)`: an internal layer primitive behind every store's snapshot, whether it reaches this
+// through `LmdbStore::snapshot_to` or calls it directly.
 pub(crate) fn copy_lmdb_env_to_dir(
     lmdb_env: &LmdbEnv,
     dst_dir: &Path,
