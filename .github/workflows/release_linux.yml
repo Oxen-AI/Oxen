@@ -24,6 +24,12 @@ on:
         description: "Release version"
         required: true
         type: string
+      # Removal is scheduled for 2029-05-31, RHEL 8 end of maintenance. See docs/deprecations.md.
+      RHEL8:
+        description: "Build in the manylinux_2_28 container, for artifacts that run on glibc 2.28"
+        required: false
+        default: false
+        type: boolean
     secrets:
       GH_PERSONAL_ACCESS_TOKEN:
         description: "GitHub personal access token"
@@ -93,6 +99,9 @@ jobs:
       SCCACHE_BUCKET: oxen-release-build-cache
       SCCACHE_REGION: us-west-1
       CARGO_INCREMENTAL: "0"
+      # Empty on the glibc 2.34 build, whose artifact names are the ones the install
+      # instructions and the OxenHub and oxen-infra CI jobs download.
+      ARTIFACT_SUFFIX: ${{ inputs.RHEL8 && '-rhel8' || '' }}
 
     steps:
       - name: Checkout
@@ -104,11 +113,13 @@ jobs:
         run: mkdir ${{ github.workspace }}/release
 
       - name: Install rustup
+        if: ${{ !inputs.RHEL8 }}
         run: |
           echo "export HOME=/root" >> /root/.bashrc
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
       - name: Install system dependencies
+        if: ${{ !inputs.RHEL8 }}
         run: |
           dnf group install "Development Tools" -y
           dnf install -y \
@@ -122,41 +133,74 @@ jobs:
         run: grep -E '^[A-Z0-9_]+=' tool-versions.env >> "$GITHUB_ENV"
 
       - name: Install uv
+        if: ${{ !inputs.RHEL8 }}
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           version: ${{ env.UV_VERSION }}
 
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
 
       - name: Build oxen binaries
+        if: ${{ !inputs.RHEL8 }}
         run: |
           cargo build --workspace --exclude oxen-py --release
 
       - name: Build Python wheels
+        if: ${{ !inputs.RHEL8 }}
         run: |
           uv python install ${{ inputs.PYTHON_VERSIONS }}
 
           cd ${{ github.workspace }}/oxen-python
 
           for version in ${{ inputs.PYTHON_VERSIONS }}; do
-            uvx --from 'maturin[patchelf]' maturin build --release --interpreter /root/.local/bin/python${version}
+            uvx --from "maturin[patchelf]==${{ env.MATURIN_VERSION }}" maturin build --release --interpreter /root/.local/bin/python${version}
           done
 
       - name: sccache stats
-        if: always()
+        if: ${{ always() && !inputs.RHEL8 }}
         run: sccache --show-stats
+
+      - name: Build oxen binaries and Python wheels against glibc 2.28
+        if: ${{ inputs.RHEL8 }}
+        env:
+          MANYLINUX_ARCH: ${{ inputs.ARCHITECTURE == 'arm64' && 'aarch64' || 'x86_64' }}
+        run: |
+          # sccache is a static musl binary, so the runner's copy also runs under the container's
+          # older glibc. It reads the credentials for its S3 bucket from the instance metadata
+          # service, which the container reaches only on the host network. That network also shares
+          # the runner's loopback, so the container's sccache takes a port of its own instead of
+          # attaching to a server outside the container. Its cache entries live under their own
+          # key prefix, apart from those of the glibc 2.34 build.
+          sccache_bin="$(command -v sccache)"
+          docker run --rm \
+            --network host \
+            --workdir /io \
+            --volume "${{ github.workspace }}:/io" \
+            --volume "$sccache_bin:/usr/local/bin/sccache:ro" \
+            --env PYTHON_VERSIONS="${{ inputs.PYTHON_VERSIONS }}" \
+            --env RUSTC_WRAPPER \
+            --env CMAKE_C_COMPILER_LAUNCHER \
+            --env CMAKE_CXX_COMPILER_LAUNCHER \
+            --env SCCACHE_BUCKET \
+            --env SCCACHE_REGION \
+            --env SCCACHE_SERVER_PORT=4227 \
+            --env SCCACHE_S3_KEY_PREFIX=rhel8/ \
+            --env CARGO_INCREMENTAL \
+            "quay.io/pypa/manylinux_2_28_${MANYLINUX_ARCH}:${{ env.MANYLINUX_VERSION }}" \
+            bin/build-rhel8-release
 
       - name: Create tarballs with oxen binaries
         run: |
-          tar -czvf ${{ github.workspace }}/release/oxen-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen
-          tar -czvf ${{ github.workspace }}/release/oxen-server-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen-server
+          tar -czvf ${{ github.workspace }}/release/oxen-linux-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen
+          tar -czvf ${{ github.workspace }}/release/oxen-server-linux-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}.tar.gz -C ${{ github.workspace }}/target/release/ oxen-server
 
       - name: Create tarballs with Python wheels
         run: |
-          tar -czvf ${{ github.workspace }}/release/oxen-wheels-linux-${{ inputs.ARCHITECTURE }}.tar.gz -C ${{ github.workspace }}/target/wheels/ .
+          tar -czvf ${{ github.workspace }}/release/oxen-wheels-linux-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}.tar.gz -C ${{ github.workspace }}/target/wheels/ .
 
       - name: Create deb packages
+        if: ${{ !inputs.RHEL8 }}
         run: |
           gem install fpm
 
@@ -186,13 +230,13 @@ jobs:
 
       - name: Create tarball with all artifacts
         run: |
-          tar -czvf ${{ github.workspace }}/oxen-linux-${{ inputs.ARCHITECTURE }}-release.tar.gz -C ${{ github.workspace }}/release/ .
+          tar -czvf ${{ github.workspace }}/oxen-linux-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}-release.tar.gz -C ${{ github.workspace }}/release/ .
 
       - name: Upload all artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: oxen-linux-release-${{ inputs.ARCHITECTURE }}.tar.gz
-          path: ${{ github.workspace }}/oxen-linux-${{ inputs.ARCHITECTURE }}-release.tar.gz
+          name: oxen-linux-release-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}.tar.gz
+          path: ${{ github.workspace }}/oxen-linux-${{ inputs.ARCHITECTURE }}${{ env.ARTIFACT_SUFFIX }}-release.tar.gz
           retention-days: 1
 
   stop-self-hosted-runner:

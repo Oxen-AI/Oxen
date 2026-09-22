@@ -32,6 +32,7 @@ It then creates a commit on `main` with the message `Bump v{VERSION}`, tags it `
 Pushing the `v*` tag automatically triggers the **Release** workflow ([`release.yml`](.github/workflows/release.yml)). This fans out into parallel builds across all supported platforms:
 
 - **Linux arm64 and x86_64** ([`release_linux.yml`](.github/workflows/release_linux.yml)) — EC2 runners
+- **Linux arm64 and x86_64 for RHEL 8** ([`release_linux.yml`](.github/workflows/release_linux.yml)) — EC2 runners, building inside the manylinux_2_28 container so the artifacts run on glibc 2.28. These run in parallel with the two jobs above, each on its own runner.
 - **macOS arm64 and x86_64** ([`release_macos.yml`](.github/workflows/release_macos.yml)) — GitHub-hosted runner, cross-compiled
 - **Windows x86_64** ([`release_windows.yml`](.github/workflows/release_windows.yml)) — EC2 runner
 - **Docker arm64 and x86_64** ([`release_docker.yml`](.github/workflows/release_docker.yml)) — EC2 runners
@@ -48,6 +49,8 @@ Monitor the workflow run in the **Actions** tab. If any platform build fails, th
 |---|---|
 | Linux arm64 | `oxen-linux-arm64.tar.gz`, `oxen-server-linux-arm64.tar.gz`, `oxen-linux-arm64.deb`, `oxen-server-linux-arm64.deb`, `oxen-wheels-linux-arm64.tar.gz` |
 | Linux x86_64 | `oxen-linux-x86_64.tar.gz`, `oxen-server-linux-x86_64.tar.gz`, `oxen-linux-x86_64.deb`, `oxen-server-linux-x86_64.deb`, `oxen-wheels-linux-x86_64.tar.gz` |
+| Linux arm64 (RHEL 8) | `oxen-linux-arm64-rhel8.tar.gz`, `oxen-server-linux-arm64-rhel8.tar.gz`, `oxen-wheels-linux-arm64-rhel8.tar.gz` (no `.deb` — RHEL 8 and its rebuilds are RPM distributions) |
+| Linux x86_64 (RHEL 8) | `oxen-linux-x86_64-rhel8.tar.gz`, `oxen-server-linux-x86_64-rhel8.tar.gz`, `oxen-wheels-linux-x86_64-rhel8.tar.gz` (no `.deb` — RHEL 8 and its rebuilds are RPM distributions) |
 | macOS arm64 | `oxen-macos-arm64.tar.gz`, `oxen-server-macos-arm64.tar.gz`, `oxen-wheels-macos-arm64.tar.gz` |
 | macOS x86_64 | `oxen-macos-x86_64.tar.gz`, `oxen-server-macos-x86_64.tar.gz`, `oxen-wheels-macos-x86_64.tar.gz` |
 | Windows x86_64 | `oxen-windows-x86_64.exe.zip`, `oxen-wheels-windows-x86_64.zip` (no server — oxen-server is not supported on Windows) |
@@ -86,7 +89,7 @@ Publishing the release automatically triggers the **Publish** workflow ([`publis
 
 Monitor the **Publish** workflow in the **Actions** tab and verify:
 
-- [ ] ✅ The `oxenai` package appears on PyPI at the new version.
+- [ ] ✅ The `oxenai` package appears on PyPI at the new version, carrying both a `manylinux_2_34` and a `manylinux_2_28` wheel for each Linux architecture.
 - [ ] ✅ The `liboxen` crate appears on crates.io at the new version.
 - [ ] ✅ A PR has been opened (or merged) on `Homebrew/homebrew-core` for the `oxen` formula.
 - [ ] ✅ The `oxen-server` formula in `Oxen-AI/homebrew-oxen-server` has been updated.
