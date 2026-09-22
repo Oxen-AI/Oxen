@@ -1,30 +1,28 @@
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str::{self, Utf8Error};
-use std::sync::{Arc, LazyLock, Weak};
-use std::thread::sleep;
+use std::sync::{Arc, LazyLock};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use rocksdb::{DB, IteratorMode};
 
 use crate::constants::{OXEN_HIDDEN_DIR, WORKSPACE_NAME_INDEX_DIR, WORKSPACES_DIR};
 use crate::core::db;
+use crate::core::db::weak_cache::WeakDbCache;
 use crate::error::OxenError;
 use crate::model::workspace::WorkspaceConfig;
 use crate::model::{LocalRepository, Workspace};
 use crate::util;
 
-// Weak-ref registry of open DB handles, keyed by index dir. The strong `Arc<RwLock<DB>>`
-// lives only as long as some caller (a `WorkspaceNameIndex`) holds it; when the last caller
-// drops, RocksDB closes and the entry becomes a tombstone that the next `get_index`/insert
-// prunes. There is no capacity cap, so an entry can never be evicted while it is still in
-// use — the shared-Arc invariant `put_if_absent` relies on for atomicity holds unconditionally.
-// A brief LOCK collision is still possible when an open races the tail of a concurrent close
-// (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero); see
-// [`get_index`] for the bounded-retry that waits it out. The inner `RwLock<DB>` still
-// serializes compound read-modify-write sequences; never hold its guard across `.await`.
-static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// How many repositories keep their workspace name index open after their last caller drops it.
+const WARM_NAME_INDEX_DBS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
+
+// Registry of open name index handles, keyed by index dir. An in-use handle is never evicted, so
+// the shared-Arc invariant `put_if_absent` relies on for atomicity holds unconditionally. The
+// inner `RwLock<DB>` serializes compound read-modify-write sequences, and its guard must never be
+// held across `.await`.
+static NAME_INDEX_DBS: LazyLock<WeakDbCache<RwLock<DB>>> =
+    LazyLock::new(|| WeakDbCache::new(WARM_NAME_INDEX_DBS));
 
 #[derive(Debug, thiserror::Error)]
 pub enum WsError {
@@ -65,19 +63,19 @@ pub fn index_exists(repo: &LocalRepository) -> bool {
     index_dir(repo).exists()
 }
 
-/// Removes this repository's tombstone entry from the registry. Live entries (someone still
-/// holds the `Arc`) are unaffected; the DB closes when the last strong reference drops.
+/// Drops this repository's registry entry and its warm handle. A handle a caller still holds
+/// stays open and closes on its last drop.
+///
+/// Call this after removing the index directory as well as before, since a handle opened while
+/// the removal ran answers [`get_index`] for a directory that no longer exists.
 pub fn remove_from_cache(repo: &LocalRepository) {
-    let dir = index_dir(repo);
-    let mut instances = DB_INSTANCES.lock();
-    instances.remove(&dir);
+    NAME_INDEX_DBS.forget(&index_dir(repo));
 }
 
-/// Removes tombstone entries under `repository_path` from the registry. Live entries are
-/// unaffected; the DB closes when the last strong reference drops.
+/// Drops the registry entries and warm handles under `repository_path`, with the same effect on
+/// open handles as [`remove_from_cache`].
 pub fn remove_from_cache_with_children(repository_path: &Path) {
-    let mut instances = DB_INSTANCES.lock();
-    instances.retain(|key, _| !key.starts_with(repository_path));
+    NAME_INDEX_DBS.forget_prefix(repository_path);
 }
 
 pub struct WorkspaceNameIndex {
@@ -86,56 +84,19 @@ pub struct WorkspaceNameIndex {
 
 /// Returns a [`WorkspaceNameIndex`] handle for the given repository.
 ///
-/// Every concurrent caller for the same repo path receives the same `Arc<RwLock<DB>>` for
-/// as long as at least one handle stays alive. Drop the returned handle when done so the
-/// underlying RocksDB can close.
-///
-/// Waits out a concurrent close: when another thread drops the last strong `Arc`, its
-/// `strong_count` hits zero *before* RocksDB's `Drop` releases the OS `LOCK` file, so
-/// a follow-up open here can briefly race the tail of that close. If `DB::open` fails
-/// with a LOCK-collision error we retry a bounded number of times, re-checking the
-/// registry each round in case another opener won the race.
+/// Every concurrent caller for one repository receives the same handle, so a compound
+/// read-modify-write sequence runs against one lock. A caller whose repository is mid-open waits
+/// for that open, and callers for other repositories do not.
 pub fn get_index(repo: &LocalRepository) -> Result<WorkspaceNameIndex, WsError> {
     let dir = index_dir(repo);
-    // Fast path: cache hit does no filesystem work.
-    if let Some(strong) = lookup_live(&dir) {
-        return Ok(WorkspaceNameIndex { db: strong });
-    }
-    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
-    // then open with bounded LOCK-collision retry.
-    util::fs::create_dir_all(&dir).map_err(|e| WsError::CreateDirErr(Box::new(e)))?;
-    let opts = db::key_val::opts::default();
-    let mut attempts = 0;
-    loop {
-        let mut instances = DB_INSTANCES.lock();
-        if let Some(weak) = instances.get(&dir)
-            && let Some(strong) = weak.upgrade()
-        {
-            return Ok(WorkspaceNameIndex { db: strong });
-        }
-        match DB::open(&opts, dunce::simplified(&dir)) {
-            Ok(db) => {
-                let arc_db = Arc::new(RwLock::new(db));
-                instances.insert(dir, Arc::downgrade(&arc_db));
-                instances.retain(|_, weak| weak.strong_count() > 0);
-                return Ok(WorkspaceNameIndex { db: arc_db });
-            }
-            Err(err) if db::is_lock_collision(&err) => {
-                drop(instances);
-                attempts += 1;
-                if attempts >= db::OPEN_RETRIES {
-                    return Err(WsError::OpenError(err));
-                }
-                sleep(db::OPEN_RETRY_INTERVAL);
-            }
-            Err(err) => return Err(WsError::OpenError(err)),
-        }
-    }
-}
-
-fn lookup_live(dir: &Path) -> Option<Arc<RwLock<DB>>> {
-    let instances = DB_INSTANCES.lock();
-    instances.get(dir)?.upgrade()
+    let db = NAME_INDEX_DBS.get_or_open(&dir, || {
+        util::fs::create_dir_all(&dir).map_err(|err| WsError::CreateDirErr(Box::new(err)))?;
+        let opts = db::key_val::opts::default();
+        db::open_with_lock_retry(|| DB::open(&opts, dunce::simplified(&dir)))
+            .map(RwLock::new)
+            .map_err(WsError::OpenError)
+    })?;
+    Ok(WorkspaceNameIndex { db })
 }
 
 impl WorkspaceNameIndex {
