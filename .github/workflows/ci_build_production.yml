@@ -48,8 +48,8 @@ jobs:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11"
 
-      - name: Install FFmpeg 8
-        # Install FFmpeg 8 (the `production` feature enables `ffmpeg`) and point pkg-config
+      - name: Install FFmpeg 9
+        # Install FFmpeg 9 (the `production` feature enables `ffmpeg`) and point pkg-config
         # at it for the build and clippy steps below.
         run: |
           sudo apt-get update

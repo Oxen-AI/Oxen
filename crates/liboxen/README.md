@@ -366,7 +366,7 @@ Which would then store the benchmark under `target/criterion/add`
 
 ## Enable ffmpeg
 
-To enable thumbnailing for videos, you will have to build with ffmpeg enabled. This needs FFmpeg 8
+To enable thumbnailing for videos, you will have to build with ffmpeg enabled. This needs FFmpeg 9
 libraries on the host.
 
 On macOS, install them with Homebrew:
@@ -376,7 +376,7 @@ brew install ffmpeg
 cargo build --workspace --all-features
 ```
 
-On Linux, run `bin/install-prereqs` — apt ships an older FFmpeg, so it installs a pinned FFmpeg 8
+On Linux, run `bin/install-prereqs` — apt ships an older FFmpeg, so it installs a pinned FFmpeg 9
 build under `/opt/ffmpeg`. Build the feature through `bin/test-rust --ffmpeg` (which points
 pkg-config at that prefix), or set `PKG_CONFIG_PATH` yourself:
 

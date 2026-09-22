@@ -2,7 +2,7 @@
 #
 # install-ffmpeg
 #
-# Install a pinned FFmpeg 8 (LGPL shared build) under a prefix and register its libraries with
+# Install a pinned FFmpeg 9 (LGPL shared build) under a prefix and register its libraries with
 # ldconfig. Shared by bin/install-prereqs, the production-build CI workflow, and the Dockerfiles,
 # which all provision FFmpeg from this one place. Pins live in tool-versions.env.
 #
