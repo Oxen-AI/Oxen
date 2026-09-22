@@ -904,12 +904,14 @@ mod tests {
                 "the entry moves to the namespace the repo now records"
             );
 
-            // A second move onto an occupied destination, so the rename fails once the config and
-            // the entry have both taken the new namespace.
+            // A second move onto an occupied destination, so the move fails once the config and
+            // the entry have both taken the new namespace. The occupant sits where the moved
+            // repository needs its `.oxen` directory, so every platform refuses it: a rename will
+            // not replace a non-empty directory, and a directory copy cannot descend into a file.
             drop(moved);
-            util::fs::write_to_path(sync_dir.join("zoo").join("cats").join("occupant"), "taken")?;
+            util::fs::write_to_path(sync_dir.join("zoo").join("cats").join(".oxen"), "taken")?;
             repositories::transfer_namespace(&sync_dir, "cats", "bessie", "zoo", Some("zoo"), None)
-                .expect_err("a rename onto a non-empty directory fails");
+                .expect_err("a move onto an occupied destination fails");
             let identity = RepositoryConfig::from_file(util::fs::config_filepath(
                 &sync_dir.join("bessie").join("cats"),
             ))?
