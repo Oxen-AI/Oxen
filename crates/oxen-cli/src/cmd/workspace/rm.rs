@@ -23,16 +23,24 @@ impl RunCmd for WorkspaceRmCmd {
         };
 
         Command::new(NAME)
-            .about("Removes the specified files from the index")
+            .about("Stage the removal of committed files in a workspace")
+            .long_about(
+                "Stage the removal of committed files in a workspace.\n\n\
+                 Committing the workspace records the files as removed. In a \
+                 remote-mode repository the local copies are deleted as well.\n\n\
+                 With `--staged`, the paths are removed from the workspace's staging \
+                 area and no local copies are deleted.",
+            )
             .arg(
                 Arg::new("files")
                     .required(true)
+                    .help("Files or directories to remove from the workspace.")
                     .action(clap::ArgAction::Append),
             )
             .arg(
                 Arg::new("staged")
                     .long("staged")
-                    .help("Removes the file from the staging area.")
+                    .help("Removes the paths from the staging area without deleting local copies.")
                     .action(clap::ArgAction::SetTrue),
             )
             .arg(
