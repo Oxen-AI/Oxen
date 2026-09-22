@@ -3,43 +3,16 @@ use std::path::Path;
 
 use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
-use crate::repositories::name_table::NAME_TABLE_DIR;
 use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
-use crate::util;
-
-/// Entries at the top of the sync dir holding the server's own state rather than a namespace's
-/// repositories. A directory named for one of these is not reported as a namespace, so a namespace
-/// could not be seen under that name either.
-const SERVER_OWNED_DIRS: &[&str] = &[NAME_TABLE_DIR];
-
-/// Whether the entry named `name` at the top of the sync dir is the server's own state.
-fn is_server_owned(name: &str) -> bool {
-    SERVER_OWNED_DIRS.contains(&name)
-}
+use crate::sync_dir::{is_namespace, namespace_dirs};
 
 pub fn list(path: &Path) -> Vec<String> {
     log::debug!("repositories::namespaces::list",);
-    let mut results: Vec<String> = vec![];
-
-    if let Ok(dir) = std::fs::read_dir(path) {
-        for entry in dir.into_iter().filter_map(|e| e.ok()) {
-            // if the directory has a .oxen dir, let's add it, otherwise ignore
-            let path = entry.path();
-
-            log::debug!("repositories::namespaces::list checking path {path:?}");
-
-            let server_owned = util::fs::is_in_oxen_hidden_dir(&path)
-                || path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(is_server_owned);
-            if path.is_dir() && !server_owned {
-                results.push(path.file_name().unwrap().to_str().unwrap().to_string())
-            }
-        }
-    }
-
-    results
+    namespace_dirs(path)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|dir| dir.file_name()?.to_str().map(str::to_string))
+        .collect()
 }
 
 /// The named namespace, or `None` when it has no directory on disk. Starts a size recalculation for
@@ -49,7 +22,7 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
 
-    if is_server_owned(name) || !namespace_path.is_dir() {
+    if !is_namespace(name) || !namespace_path.is_dir() {
         return None;
     }
 
@@ -99,6 +72,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories::size::repo_size_path;
     use crate::test;
+    use crate::util;
     use crate::util::fs::AtomicFile;
 
     /// Leave `record` as the size a repo at `path` has recorded, without going through a commit,

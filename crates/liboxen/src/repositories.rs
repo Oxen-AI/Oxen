@@ -616,7 +616,8 @@ mod tests {
     use crate::model::{Commit, LocalRepository, RepoIdentity};
     use crate::namespaces;
     use crate::repositories;
-    use crate::repositories::name_table::{NAME_TABLE_DIR, NameTable};
+    use crate::repositories::name_table::NameTable;
+    use crate::sync_dir::NAME_TABLE_DIR;
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};

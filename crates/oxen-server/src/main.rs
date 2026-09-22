@@ -77,9 +77,9 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use liboxen::constants;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
+use liboxen::sync_dir;
 
 use crate::config::Config;
 use crate::config::storage_policy::StoragePolicyError;
@@ -593,17 +593,6 @@ async fn server() -> Result<(), ServerError> {
     }
 }
 
-/// Whether `path` is a directory and not a symlink to one.
-///
-/// Uses `metadata.is_dir()` rather than `path.is_dir()` to avoid following symlinks — Oxen does
-/// not track them, and a symlinked namespace or repo would otherwise be walked as though it were
-/// a second copy, counting the same repository twice.
-fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|metadata| metadata.is_dir())
-        .unwrap_or(false)
-}
-
 /// Walk repositories under `sync_dir` and report which hold pre-v0.25.0 Merkle nodes.
 ///
 /// Read-only. Repositories the current build refuses to open at all are counted separately from
@@ -620,7 +609,7 @@ fn scan_node_format(
         // — the one output a caller must be able to trust.
         Some(one) => {
             let namespace_dir = sync_dir.join(one);
-            if !is_real_dir(&namespace_dir) {
+            if !namespace_dir.is_dir() {
                 return Err(ServerError::NamespaceNotFound {
                     namespace: one.to_string(),
                     sync_dir: sync_dir.to_path_buf(),
@@ -628,14 +617,7 @@ fn scan_node_format(
             }
             vec![namespace_dir]
         }
-        None => {
-            let mut dirs: Vec<PathBuf> = std::fs::read_dir(sync_dir)?
-                .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|path| is_real_dir(path))
-                .collect();
-            dirs.sort();
-            dirs
-        }
+        None => sync_dir::namespace_dirs(sync_dir)?,
     };
 
     // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
@@ -651,8 +633,8 @@ fn scan_node_format(
         // it quietly would understate every total below with nothing to say so. Reported and
         // counted rather than fatal: unlike the explicit-namespace case, which is a caller
         // mistake with nothing left to do, one bad namespace should not cost the whole run.
-        let entries = match std::fs::read_dir(&namespace_dir) {
-            Ok(entries) => entries,
+        let repo_dirs = match sync_dir::repo_dirs(&namespace_dir) {
+            Ok(repo_dirs) => repo_dirs,
             Err(err) => {
                 unlistable += 1;
                 let label = namespace_dir
@@ -664,11 +646,6 @@ fn scan_node_format(
                 continue;
             }
         };
-        let mut repo_dirs: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|path| is_real_dir(path) && is_real_dir(&path.join(constants::OXEN_HIDDEN_DIR)))
-            .collect();
-        repo_dirs.sort();
 
         for repo_dir in repo_dirs {
             if limit.is_some_and(|max| scanned >= max) {
