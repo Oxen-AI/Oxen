@@ -15,9 +15,8 @@ use crate::api::requests::RepoNew;
 use crate::error::OxenError;
 use crate::lmdb::store::LmdbStore;
 use crate::lmdb::{LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env};
+use crate::sync_dir::NAME_TABLE_DIR;
 
-/// Directory at the top of the server's sync dir holding the table's env.
-pub(crate) const NAME_TABLE_DIR: &str = "name_table";
 /// The one database in the env, mapping a repository's name to its UUID.
 const NAMES_DB_NAME: &str = "names";
 /// Single database, so a `max_dbs` of 1 is sufficient.
