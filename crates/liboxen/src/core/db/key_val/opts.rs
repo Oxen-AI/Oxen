@@ -4,6 +4,15 @@ use rocksdb::{BlockBasedOptions, LogLevel, Options};
 /// databases unreadable to oxen releases built against an older RocksDB.
 pub const TABLE_FORMAT_VERSION: i32 = 6;
 
+/// Memtable size for every oxen database. On Linux a database reserves 1.1x this in disk blocks
+/// for its write-ahead log from the moment it opens until it closes, so a registry of warm
+/// handles ties up that much per handle whether or not it ever writes.
+const WRITE_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+
+/// Disk blocks a database reserves for its MANIFEST while it is open. [`default`] rolls the
+/// MANIFEST over at a single byte, so oxen's manifests stay far below this.
+const MANIFEST_PREALLOCATION_SIZE: usize = 64 * 1024;
+
 pub fn default() -> Options {
     let mut opts = Options::default();
     set_table_format(&mut opts);
@@ -12,6 +21,8 @@ pub fn default() -> Options {
     opts.set_max_log_file_size(0);
     opts.set_keep_log_file_num(1);
     opts.set_max_manifest_file_size(1);
+    opts.set_write_buffer_size(WRITE_BUFFER_SIZE);
+    opts.set_manifest_preallocation_size(MANIFEST_PREALLOCATION_SIZE);
     // We use a single db file per rocksdb instance, so don't launch multiple opening threads.
     opts.set_max_file_opening_threads(1);
     opts.set_skip_stats_update_on_db_open(true);
@@ -23,7 +34,7 @@ pub fn default() -> Options {
 }
 
 /// Writes tables in [`TABLE_FORMAT_VERSION`] for databases opened with `opts`.
-pub fn set_table_format(opts: &mut Options) {
+fn set_table_format(opts: &mut Options) {
     let mut table_opts = BlockBasedOptions::default();
     table_opts.set_format_version(TABLE_FORMAT_VERSION);
     opts.set_block_based_table_factory(&table_opts);
@@ -50,6 +61,24 @@ mod tests {
                 for i in 0..1000 {
                     db.put(format!("key{i:05}"), format!("value{i}"))?;
                 }
+
+                // An open database reserves blocks for its write-ahead log and MANIFEST, and a
+                // warm registry multiplies that by the handles it holds. Only a filesystem
+                // honoring fallocate reserves them, so elsewhere this holds trivially.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let mut reserved = 0;
+                    for entry in std::fs::read_dir(&db_path)? {
+                        reserved += entry?.metadata()?.blocks() * 512;
+                    }
+                    assert!(
+                        reserved < 4 * WRITE_BUFFER_SIZE as u64,
+                        "an open database reserves {reserved} bytes, which should track its \
+                         {WRITE_BUFFER_SIZE} byte write buffer"
+                    );
+                }
+
                 db.flush()?;
             }
 
