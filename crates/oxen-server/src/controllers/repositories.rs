@@ -5,6 +5,7 @@ use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{
     app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name,
 };
+use crate::tasks;
 
 use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt;
@@ -462,6 +463,7 @@ async fn create_repo_response(
     if identity.is_none() {
         log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
     }
+
     match repositories::create(&app_data.path, data, identity, app_data.config.storage.s3()).await {
         Ok(repo) => {
             // The repository exists by this point, so a failed lookup only degrades the
@@ -578,6 +580,10 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         .map(repo_locks::begin_write)
         .transpose()?;
 
+    // Released before the removal is backgrounded, since the handler returns before the
+    // repository is gone.
+    repositories::release_recorded_name(&app_data.path, &repo_dir).await?;
+
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
     tokio::spawn(async move {
@@ -653,14 +659,22 @@ pub async fn transfer_namespace(
     } else {
         data.namespace_name
     };
-    let repo = repositories::transfer_namespace(
-        &app_data.path,
-        &name,
-        &from_namespace,
-        &to_namespace,
-        namespace_hint.as_deref(),
-        app_data.config.storage.s3(),
-    )?;
+    let sync_dir = app_data.path.clone();
+    let repo_name = name.clone();
+    let to = to_namespace.clone();
+    let s3_opts = app_data.config.storage.s3().cloned();
+    let repo = tasks::spawn_blocking(move || {
+        repositories::transfer_namespace(
+            &sync_dir,
+            &repo_name,
+            &from_namespace,
+            &to,
+            namespace_hint.as_deref(),
+            s3_opts.as_ref(),
+        )
+    })
+    .await
+    .map_err(OxenError::from)??;
 
     // Return repository view under new namespace
     Ok(HttpResponse::Ok().json(RepositoryResponse {
@@ -691,6 +705,7 @@ mod tests {
     use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
     use liboxen::model::RepoIdentity;
+    use liboxen::repositories::name_table::NameTable;
     use liboxen::util;
     use std::path::Path;
     use std::time::{Duration, Instant};
@@ -723,7 +738,19 @@ mod tests {
         let config_path = util::fs::config_filepath(&repo_dir);
         let mut config = RepositoryConfig::from_file(&config_path)?;
         config.min_version = Some("0.19.0".to_string());
+        let repo_uuid = Uuid::new_v4();
+        config.identity = Some(RepoIdentity {
+            repo_uuid,
+            namespace: Some("bessie".to_string()),
+            name: Some("cats".to_string()),
+        });
         config.save(&config_path)?;
+
+        // The repository records a name of its own, and the position it is addressed by holds the
+        // entry of an unrelated repository, so the two cannot both be freed.
+        let table = NameTable::open(&sync_dir)?;
+        table.claim("bessie", "cats", repo_uuid)?;
+        table.claim(namespace, repo_name, Uuid::new_v4())?;
 
         let req = test::repo_request(&sync_dir, "/", namespace, repo_name);
         let resp = super::delete(req)
@@ -734,6 +761,38 @@ mod tests {
         assert!(
             wait_until_gone(&repo_dir).await,
             "repo dir should be deleted: {repo_dir:?}"
+        );
+        assert_eq!(
+            table.get("bessie", "cats")?,
+            None,
+            "deleting a repository frees the name it records, read from a config it cannot load"
+        );
+        assert!(
+            table.get(namespace, repo_name)?.is_some(),
+            "the position a repository is addressed by is not a name it holds"
+        );
+
+        // A config that will not parse offers neither a name nor the UUID holding it. The entry at
+        // the position the request addresses then stays with the repository that does hold it.
+        let unreadable = "Unreadable-Repo";
+        let unreadable_dir = sync_dir.join(namespace).join(unreadable);
+        util::fs::write_to_path(util::fs::config_filepath(&unreadable_dir), "not a config")?;
+        let squatter = Uuid::new_v4();
+        table.claim(namespace, unreadable, squatter)?;
+
+        let resp = super::delete(test::repo_request(&sync_dir, "/", namespace, unreadable))
+            .await
+            .expect("delete handler should succeed");
+
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert!(
+            wait_until_gone(&unreadable_dir).await,
+            "repo dir should be deleted: {unreadable_dir:?}"
+        );
+        assert_eq!(
+            table.get(namespace, unreadable)?,
+            Some(squatter),
+            "a repository recording no name the server can read frees none"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
@@ -865,6 +924,44 @@ mod tests {
         assert_eq!(identity.repo_uuid, repo_uuid);
         assert_eq!(identity.namespace.as_deref(), Some("bessie"));
         assert_eq!(identity.name.as_deref(), Some("cats"));
+        assert_eq!(
+            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            Some(repo_uuid),
+            "the name a repository records is what resolves to it"
+        );
+
+        // The names are what is unique, not the addressed positions: this second create is
+        // addressed by a UUID of its own and still collides.
+        let mut duplicate =
+            RepoNew::from_namespace_name(&namespace, Uuid::new_v4().to_string(), None);
+        duplicate.repo_uuid = Some(Uuid::new_v4());
+        duplicate.namespace_name = Some("bessie".to_string());
+        duplicate.repo_name = Some("cats".to_string());
+        let resp = super::create_repo_response(&app_data, duplicate)
+            .await
+            .expect("the handler reports the conflict rather than failing");
+        assert_eq!(resp.status(), http::StatusCode::CONFLICT);
+        assert_eq!(
+            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            Some(repo_uuid),
+            "a refused create leaves the name with the repository that holds it"
+        );
+
+        // The first create over again, UUID and names alike, which is what a control plane sends
+        // when it repeats one whose outcome it did not see.
+        let mut repeated = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
+        repeated.repo_uuid = Some(repo_uuid);
+        repeated.namespace_name = Some("bessie".to_string());
+        repeated.repo_name = Some("cats".to_string());
+        let resp = super::create_repo_response(&app_data, repeated)
+            .await
+            .expect("the handler reports the conflict rather than failing");
+        assert_eq!(resp.status(), http::StatusCode::CONFLICT);
+        assert_eq!(
+            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            Some(repo_uuid),
+            "a create refused to the repository already holding the name leaves it holding it"
+        );
 
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
@@ -916,25 +1013,31 @@ mod tests {
 
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
         let config_path = util::fs::config_filepath(&repo.path);
+        let identity = RepoIdentity::minted(namespace, repo_name);
+        let repo_uuid = identity.repo_uuid;
         let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = Some(RepoIdentity::minted(namespace, repo_name));
+        config.identity = Some(identity);
         config.save(&config_path)?;
+        let table = NameTable::open(&sync_dir)?;
+        table.claim(namespace, repo_name, repo_uuid)?;
 
-        let req = TestRequest::with_uri("/")
-            .app_data(OxenAppData {
-                path: sync_dir.clone(),
-                config: Config {
-                    identity: toml::from_str(r#"repo_uuids_assigned_by = "auth-provider""#)
-                        .expect("a known source parses"),
-                    ..Default::default()
-                },
-                test_mode: false,
-            })
-            .param("namespace", namespace)
-            .param("repo_name", repo_name)
-            .to_http_request();
+        let transfer_request = |from_namespace: &'static str| {
+            TestRequest::with_uri("/")
+                .app_data(OxenAppData {
+                    path: sync_dir.clone(),
+                    config: Config {
+                        identity: toml::from_str(r#"repo_uuids_assigned_by = "auth-provider""#)
+                            .expect("a known source parses"),
+                        ..Default::default()
+                    },
+                    test_mode: false,
+                })
+                .param("namespace", from_namespace)
+                .param("repo_name", repo_name)
+                .to_http_request()
+        };
         let body = r#"{"namespace":"Other-Namespace","namespace_name":"bessie"}"#.to_string();
-        let resp = super::transfer_namespace(req, body)
+        let resp = super::transfer_namespace(transfer_request(namespace), body)
             .await
             .expect("transfer should succeed");
         assert_eq!(resp.status(), http::StatusCode::OK);
@@ -947,6 +1050,37 @@ mod tests {
             identity.namespace.as_deref(),
             Some("bessie"),
             "the body's name wins over the addressed position"
+        );
+        assert_eq!(
+            (
+                table.get(namespace, repo_name)?,
+                table.get("bessie", repo_name)?
+            ),
+            (None, Some(repo_uuid)),
+            "the repository resolves under the name it now records and not the one it left"
+        );
+
+        // A second move, into a namespace whose name another repository already holds under this
+        // repository's own name. The addressed destination is free, so only the recorded name
+        // collides, and nothing may move.
+        table.claim("occupied", repo_name, Uuid::new_v4())?;
+        let body = r#"{"namespace":"Third-Namespace","namespace_name":"occupied"}"#.to_string();
+        let err = super::transfer_namespace(transfer_request("Other-Namespace"), body)
+            .await
+            .expect_err("a recorded name the destination holds refuses the transfer");
+        assert_eq!(err.error_response().status(), http::StatusCode::CONFLICT);
+        assert!(
+            moved.exists(),
+            "a refused transfer leaves the repository where it was: {moved:?}"
+        );
+        assert_eq!(
+            table.get("bessie", repo_name)?,
+            Some(repo_uuid),
+            "a refused transfer leaves the repository resolving under the name it had"
+        );
+        assert!(
+            !sync_dir.join("Third-Namespace").exists(),
+            "a refused transfer creates nothing at the destination it was refused from"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;

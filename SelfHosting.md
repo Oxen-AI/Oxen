@@ -178,6 +178,8 @@ name = "my-repo"
 
 Repositories created before `oxen-server` recorded identity have no `[identity]` section and continue to work normally.
 
+`oxen-server` refuses to create a repository under a name another repository already holds, matching without regard to case, so `my-namespace/My-Repo` and `my-namespace/my-repo` cannot both be created.
+
 ## Pushing the Changes
 
 Once you have committed data locally and are ready to share them with colleagues (or the world) you will have to push them to a remote.
