@@ -65,7 +65,13 @@ pub fn request_id(req: &HttpRequest) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
-/// Middleware factory for request ID injection
+/// Assigns every request an id (the inbound `x-oxen-request-id` header when the caller sent a
+/// usable one, otherwise a fresh uuid) and publishes it to the request extensions, the
+/// [`REQUEST_ID`] task-local, the Sentry scope as the `request_id` tag, and the response's own
+/// `x-oxen-request-id` header.
+///
+/// `request_id` is also the tag key OxenHub sets on its own events, making one value enough to
+/// find an event in either service.
 pub struct RequestIdMiddleware;
 
 impl<S, B> Transform<S, ServiceRequest> for RequestIdMiddleware
@@ -107,6 +113,9 @@ where
 
         // Store in request extensions for later retrieval if needed
         req.extensions_mut().insert(RequestId(request_id.clone()));
+
+        // Reaches every event the request reports, including from tasks that inherit the hub.
+        sentry::configure_scope(|scope| scope.set_tag("request_id", &request_id));
 
         let fut = self.service.call(req);
 

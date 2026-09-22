@@ -112,12 +112,15 @@ mod tests {
     use sentry::{ClientOptions, Level, capture_message};
 
     use crate::helpers::stream_with_heartbeat;
+    use crate::middleware::{OXEN_REQUEST_ID, RequestIdMiddleware};
 
     /// The route actix matches, the URI that matches it, and the transaction name `sentry-actix`
     /// derives from the two — what a task spawned anywhere under this request must report against.
     const ROUTE_PATTERN: &str = "/api/repos/{namespace}/{repo_name}";
     const REQUEST_URI: &str = "/api/repos/ox/Cat-Dog-Classifier";
     const ROUTE: &str = "GET /api/repos/{namespace}/{repo_name}";
+    /// The id the caller sends, which `RequestIdMiddleware` adopts in place of generating one.
+    const CALLER_REQUEST_ID: &str = "3f2d9c14-0b6a-4e77-9a21-5c8e7d40b1f3";
 
     /// Drives one GET through the same Sentry middleware configuration as `main` and returns the
     /// events `handler`'s tasks reported. The response body is read to the end, so work deferred
@@ -146,6 +149,7 @@ mod tests {
         let app = init_service(
             App::new()
                 .route(ROUTE_PATTERN, web::get().to(handler))
+                .wrap(RequestIdMiddleware)
                 .wrap(
                     sentry_actix::Sentry::builder()
                         .capture_server_errors(false)
@@ -154,7 +158,11 @@ mod tests {
                 ),
         )
         .await;
-        let response = call_service(&app, TestRequest::get().uri(REQUEST_URI).to_request()).await;
+        let request = TestRequest::get()
+            .uri(REQUEST_URI)
+            .insert_header((OXEN_REQUEST_ID, CALLER_REQUEST_ID))
+            .to_request();
+        let response = call_service(&app, request).await;
         assert!(response.status().is_success());
         to_bytes(response.into_body())
             .await
@@ -184,6 +192,11 @@ mod tests {
             .map(ToString::to_string);
         let expected_url = format!("http://localhost:8080{REQUEST_URI}");
         assert_eq!(url.as_deref(), Some(expected_url.as_str()));
+        assert_eq!(
+            events[0].tags.get("request_id").map(String::as_str),
+            Some(CALLER_REQUEST_ID),
+            "the caller's request id tags an event reported from the blocking pool"
+        );
     }
 
     /// How `create_nodes` spawns, and the hardest case: the handler returns at once and the work
