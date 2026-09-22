@@ -21,8 +21,9 @@ use crate::repositories;
 use crate::util;
 use crate::util::fs::AtomicFile;
 
-// How many repositories keep their refs database open after their last caller drops it.
-const WARM_REFS_DBS: NonZeroUsize = NonZeroUsize::new(256).unwrap();
+// How many repositories keep their refs database open after their last caller drops it. Each
+// warm handle holds its database's block reservation, so this bounds what the registry ties up.
+const WARM_REFS_DBS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
 // Registry of open refs DB handles, keyed by `.oxen/refs` dir. An in-use handle is never
 // evicted, so the shared-Arc invariant that compound read-modify-write sequences
