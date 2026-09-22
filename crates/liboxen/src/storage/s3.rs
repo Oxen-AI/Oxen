@@ -1130,6 +1130,7 @@ mod tests {
     use super::*;
     use crate::storage::version_store::VersionStore;
 
+    use aws_sdk_s3::config::retry::RetryConfig;
     use std::net::SocketAddr;
     use tokio::net::TcpListener;
 
@@ -1215,8 +1216,11 @@ mod tests {
                 "test", "test", None, None, "test",
             ))
             .force_path_style(true)
-            // Production's client comes from aws_config and retries 5xx; a direct config must opt in.
-            .retry_config(aws_sdk_s3::config::retry::RetryConfig::standard())
+            // Production's client comes from aws_config and retries 5xx; a direct config must opt
+            // in. `s3s-fs` serves a listing by walking the bucket directory and stat-ing every
+            // entry, and answers 500 InternalError when an entry is unlinked between the two, so
+            // any listing that overlaps a delete needs a retry budget outlasting that delete.
+            .retry_config(RetryConfig::standard().with_max_attempts(6))
             .build();
         Client::from_conf(config)
     }
