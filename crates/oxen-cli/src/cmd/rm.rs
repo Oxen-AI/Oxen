@@ -16,16 +16,28 @@ pub struct RmCmd;
 
 pub fn rm_args() -> Command {
     Command::new(NAME)
-        .about("Removes the specified files from the index")
+        .about("Delete files from the working tree and stage the removal")
+        .long_about(
+            "Delete files from the working tree and stage the removal.\n\n\
+             The next commit records the files as removed. Paths must already be \
+             committed. Delete a file that has never been committed with your shell \
+             instead.\n\n\
+             To bring a deleted file back, run `oxen restore --staged <file>` to \
+             unstage the removal, then `oxen restore <file>`.\n\n\
+             With `--staged`, the paths are removed from the staging area and the \
+             working-tree copies are left in place. This unstages an earlier `oxen add` \
+             or `oxen rm`, and the paths need not be committed.",
+        )
         .arg(
             Arg::new("files")
                 .required(true)
+                .help("Files or directories to remove. Directories require `-r`.")
                 .action(clap::ArgAction::Append),
         )
         .arg(
             Arg::new("staged")
                 .long("staged")
-                .help("Removes the file from the staging area.")
+                .help("Removes the paths from the staging area without deleting them.")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str;
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, LazyLock};
 use std::thread::sleep;
 
 use indicatif::ProgressBar;
@@ -15,6 +16,7 @@ use serde::Serialize;
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::db::key_val::kv_db;
+use crate::core::db::weak_cache::WeakDbCache;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::StagedEntryStatus;
@@ -23,19 +25,17 @@ use crate::model::merkle_tree::node::{
 };
 use crate::util;
 
-// Weak-ref registry of open staged DB handles, keyed by `.oxen/staged` dir. The strong
-// `Arc<RwLock<DB>>` lives only as long as some [`StagedDBManager`] holds it; when the last
-// caller drops, RocksDB closes and the entry becomes a tombstone that the next opener prunes.
-// There is no capacity cap, so nothing evicts an in-use entry on its own and every caller for one
-// directory shares the handle that compound read-modify-write sequences rely on.
-// [`remove_from_cache_with_children`] is the one way to drop a live entry: the caller still holding
-// it keeps RocksDB's per-directory `LOCK`, and the next opener collides with it for as long as that
-// caller lives. [`close_staged_db`] waits for the handle to drain rather than orphaning it.
-// A brief LOCK collision is still possible when an open races the tail of a concurrent
-// close (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero);
-// see [`get_staged_db_manager`] for the bounded-retry that waits it out.
-static DB_INSTANCES: LazyLock<Mutex<HashMap<PathBuf, Weak<RwLock<DB>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// How many repositories keep their staged database open after their last caller drops it.
+const WARM_STAGED_DBS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
+
+// Registry of open staged DB handles, keyed by `.oxen/staged` dir. An in-use handle is never
+// evicted, so every caller for one directory shares the handle that compound read-modify-write
+// sequences rely on. [`remove_from_cache_with_children`] drops entries whatever their state: a
+// caller still holding one keeps RocksDB's per-directory `LOCK`, and the next opener collides with
+// it for as long as that caller lives. [`close_staged_db`] waits for the handle to drain rather
+// than orphaning it.
+static STAGED_DBS: LazyLock<WeakDbCache<RwLock<DB>>> =
+    LazyLock::new(|| WeakDbCache::new(WARM_STAGED_DBS));
 
 /// Closes this repository's staged DB so its directory can be removed, blocking briefly while
 /// other callers drop their handles. Callers that only want the entries gone want
@@ -47,33 +47,24 @@ pub(crate) fn close_staged_db(repository_path: impl AsRef<Path>) -> Result<(), O
     let staged_dir = util::fs::oxen_hidden_dir(repository_path).join(STAGED_DIR);
     let mut attempts = 0;
     loop {
-        let mut instances = DB_INSTANCES.lock();
-        match instances.get(&staged_dir) {
-            Some(weak) if weak.strong_count() > 0 => {
-                drop(instances);
-                attempts += 1;
-                if attempts >= db::OPEN_RETRIES {
-                    return Err(OxenError::internal_error(format!(
-                        "Staged db {} is still open elsewhere after waiting to close it",
-                        staged_dir.display()
-                    )));
-                }
-                sleep(db::OPEN_RETRY_INTERVAL);
-            }
-            _ => {
-                instances.remove(&staged_dir);
-                return Ok(());
-            }
+        if STAGED_DBS.close(&staged_dir) {
+            return Ok(());
         }
+        attempts += 1;
+        if attempts >= db::OPEN_RETRIES {
+            return Err(OxenError::internal_error(format!(
+                "Staged db {} is still open elsewhere after waiting to close it",
+                staged_dir.display()
+            )));
+        }
+        sleep(db::OPEN_RETRY_INTERVAL);
     }
 }
 
-/// Removes tombstone entries under `repository_path` from the registry. Live entries are
-/// unaffected; the DB closes when the last strong reference drops.
+/// Drops the registry entries and warm handles under `repository_path`. A handle a caller still
+/// holds stays open and closes on its last drop.
 pub fn remove_from_cache_with_children(repository_path: impl AsRef<Path>) -> Result<(), OxenError> {
-    let repository_path = repository_path.as_ref();
-    let mut instances = DB_INSTANCES.lock();
-    instances.retain(|key, _| !key.starts_with(repository_path));
+    STAGED_DBS.forget_prefix(repository_path.as_ref());
     Ok(())
 }
 
@@ -142,48 +133,16 @@ pub fn get_staged_db_manager(repository: &LocalRepository) -> Result<StagedDBMan
     })
 }
 
-/// Return the shared staged-DB handle for `staged_db_dir`, retrying briefly on a
-/// LOCK-collision race with a concurrent close (see module doc).
+/// Return the shared staged-DB handle for `staged_db_dir`, opening it when no live handle exists.
+/// A cache hit does no filesystem work.
 fn open_staged_db(staged_db_dir: &Path) -> Result<Arc<RwLock<DB>>, OxenError> {
-    // Fast path: cache hit does no filesystem work.
-    if let Some(strong) = lookup_live(staged_db_dir) {
-        return Ok(strong);
-    }
-    // Miss path: ensure the dir exists once (idempotent, but no reason to repeat under retry),
-    // then open with bounded LOCK-collision retry.
-    util::fs::create_dir_all(staged_db_dir)?;
-    let opts = db::key_val::opts::default();
-    let mut attempts = 0;
-    loop {
-        let mut instances = DB_INSTANCES.lock();
-        if let Some(weak) = instances.get(staged_db_dir)
-            && let Some(strong) = weak.upgrade()
-        {
-            return Ok(strong);
-        }
-        match DB::open(&opts, dunce::simplified(staged_db_dir)) {
-            Ok(db) => {
-                let arc_db = Arc::new(RwLock::new(db));
-                instances.insert(staged_db_dir.to_path_buf(), Arc::downgrade(&arc_db));
-                instances.retain(|_, weak| weak.strong_count() > 0);
-                return Ok(arc_db);
-            }
-            Err(err) if db::is_lock_collision(&err) => {
-                drop(instances);
-                attempts += 1;
-                if attempts >= db::OPEN_RETRIES {
-                    return Err(staged_db_open_failed(err));
-                }
-                sleep(db::OPEN_RETRY_INTERVAL);
-            }
-            Err(err) => return Err(staged_db_open_failed(err)),
-        }
-    }
-}
-
-fn lookup_live(staged_db_dir: &Path) -> Option<Arc<RwLock<DB>>> {
-    let instances = DB_INSTANCES.lock();
-    instances.get(staged_db_dir)?.upgrade()
+    STAGED_DBS.get_or_open(staged_db_dir, || {
+        util::fs::create_dir_all(staged_db_dir)?;
+        let opts = db::key_val::opts::default();
+        db::open_with_lock_retry(|| DB::open(&opts, dunce::simplified(staged_db_dir)))
+            .map(RwLock::new)
+            .map_err(staged_db_open_failed)
+    })
 }
 
 fn staged_db_open_failed(source: rocksdb::Error) -> OxenError {

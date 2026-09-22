@@ -1,11 +1,11 @@
-use liboxen::core::db::key_val::opts::set_table_format;
+use liboxen::core::db::key_val::opts;
 use liboxen::error::OxenError;
 use liboxen::model::User;
 use liboxen::util;
 use liboxen::util::fs::AtomicFile;
 
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use rocksdb::{DBWithThreadMode, LogLevel, MultiThreaded, Options};
+use rocksdb::{DBWithThreadMode, MultiThreaded};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::str;
@@ -47,10 +47,7 @@ impl AccessKeyManager {
         }
 
         let db_dir = hidden_dir.join("keys");
-        let mut opts = Options::default();
-        set_table_format(&mut opts);
-        opts.set_log_level(LogLevel::Fatal);
-        opts.create_if_missing(true);
+        let db_opts = opts::default();
 
         let secret_file = AccessKeyManager::secret_key_path(sync_dir);
         if !secret_file.exists() {
@@ -61,9 +58,9 @@ impl AccessKeyManager {
         }
 
         let db = if read_only {
-            DBWithThreadMode::open_for_read_only(&opts, dunce::simplified(&db_dir), false)?
+            DBWithThreadMode::open_for_read_only(&db_opts, dunce::simplified(&db_dir), false)?
         } else {
-            DBWithThreadMode::open(&opts, dunce::simplified(&db_dir))?
+            DBWithThreadMode::open(&db_opts, dunce::simplified(&db_dir))?
         };
 
         Ok(AccessKeyManager {
