@@ -502,6 +502,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::UnsupportedMediaType().json(error_json)
                     }
+                    OxenError::RepoAlreadyExists(repo) => {
+                        log::warn!("Refused, a repository already holds the name {repo}");
+                        let error_json = json!({
+                            "error": {
+                                "type": MSG_CONFLICT,
+                                "title": "Repository already exists",
+                                "detail": format!("'{repo}' already names a repository. Choose another name."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::PathStagedForRemoval(path) => {
                         log::warn!("Edit refused, path staged for removal: {path}");
                         let error_json = json!({

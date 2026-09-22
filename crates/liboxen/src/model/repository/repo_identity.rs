@@ -36,6 +36,15 @@ impl RepoIdentity {
         }
     }
 
+    /// The name recorded here, with the UUID holding it, or `None` where only one half of the name
+    /// is recorded.
+    ///
+    /// Both halves together are what a repository is known by, so a repository recording one of
+    /// them is known by neither.
+    pub fn held_name(&self) -> Option<(String, String, Uuid)> {
+        Some((self.namespace.clone()?, self.name.clone()?, self.repo_uuid))
+    }
+
     /// The identity for a repository a control plane placed and addresses by UUID, whose names
     /// this server has not been told.
     pub fn hintless(repo_uuid: Uuid) -> Self {

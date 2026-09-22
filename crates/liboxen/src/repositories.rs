@@ -25,6 +25,7 @@ use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use tokio::task::spawn_blocking;
+use uuid::Uuid;
 
 pub mod add;
 pub mod branches;
@@ -207,7 +208,10 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
 ///
 /// # Errors
 /// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
+/// [`OxenError::RepoAlreadyExists`] when filling a hint would complete a name another repository
+/// already holds.
 pub fn record_name_hints(
+    sync_dir: &Path,
     repo: &LocalRepository,
     namespace: Option<&str>,
     name: Option<&str>,
@@ -237,7 +241,24 @@ pub fn record_name_hints(
     if !changed {
         return Ok(());
     }
-    config.save(&path)?;
+
+    let Some((namespace, name, repo_uuid)) = identity.held_name() else {
+        config.save(&path)?;
+        return Ok(());
+    };
+
+    // Filling the second half gives the repository a name it can be looked up by, so the entry is
+    // claimed ahead of the config write and given back where that write does not land.
+    let table = name_table::NameTable::open(sync_dir)?;
+    table.claim(&namespace, &name, repo_uuid)?;
+    if let Err(err) = config.save(&path) {
+        if let Err(undo) = table.release(&namespace, &name, repo_uuid) {
+            log::error!(
+                "Failed to give back {namespace}/{name} after its hint write failed: {undo}"
+            );
+        }
+        return Err(err.into());
+    }
     Ok(())
 }
 
@@ -271,6 +292,12 @@ pub fn transfer_namespace(
 
     // A repo carrying no identity keeps none.
     let mut config = RepositoryConfig::from_file(util::fs::config_filepath(&from_dir))?;
+    // Read before the change below. A move rewrites the namespace half of a recorded name, so a
+    // repo recording a name of its own is the one with a name-table entry to move.
+    let recorded = config.identity.as_ref().and_then(|identity| {
+        let name = identity.name.clone()?;
+        Some((identity.namespace.clone(), name, identity.repo_uuid))
+    });
     if let Some(identity) = config.identity.as_mut() {
         identity.namespace = namespace_hint.map(str::to_string);
     }
@@ -279,11 +306,31 @@ pub fn transfer_namespace(
     core::staged::remove_from_cache_with_children(&from_dir)?;
     core::refs::remove_from_cache(&from_dir)?;
 
-    util::fs::create_dir_all(&to_dir)?;
+    // Moved ahead of everything the transfer writes, so a name the destination already holds
+    // refuses it with no directory created and no config rewritten.
+    if let Some((from, name, repo_uuid)) = &recorded {
+        move_recorded_name(sync_dir, from.as_deref(), namespace_hint, name, *repo_uuid)?;
+    }
+    let give_back_the_name = || {
+        if let Some((from, name, repo_uuid)) = &recorded
+            && let Err(undo) =
+                move_recorded_name(sync_dir, namespace_hint, from.as_deref(), name, *repo_uuid)
+        {
+            log::error!("Failed to move the name table entry for {name} back: {undo}");
+        }
+    };
 
-    // Written once nothing else can fail, and before the move, so the rename is the only step
-    // whose failure leaves the repo describing a namespace it is not in.
-    config.save(util::fs::config_filepath(&from_dir))?;
+    if let Err(err) = util::fs::create_dir_all(&to_dir) {
+        give_back_the_name();
+        return Err(err);
+    }
+
+    // Written once nothing but the rename can fail, so the rename is the only step whose failure
+    // leaves the repo describing a namespace it is not in, with the entry naming the same one.
+    if let Err(err) = config.save(util::fs::config_filepath(&from_dir)) {
+        give_back_the_name();
+        return Err(err.into());
+    }
     util::fs::rename(&from_dir, &to_dir)?;
 
     let updated_repo =
@@ -291,6 +338,28 @@ pub fn transfer_namespace(
     match updated_repo {
         Some(new_repo) => Ok(new_repo),
         None => Err(OxenError::FailedTransfer),
+    }
+}
+
+/// Record `name` as sitting in `to` rather than `from` in the server's name table. Swapping `from`
+/// and `to` undoes the move. Writes nothing where a repository other than `repo_uuid` holds the
+/// name.
+///
+/// # Errors
+/// [`OxenError::RepoAlreadyExists`] when a repository in `to` already holds `name`.
+fn move_recorded_name(
+    sync_dir: &Path,
+    from: Option<&str>,
+    to: Option<&str>,
+    name: &str,
+    repo_uuid: Uuid,
+) -> Result<(), OxenError> {
+    let table = || name_table::NameTable::open(sync_dir);
+    match (from, to) {
+        (Some(from), Some(to)) => table()?.move_to_namespace(from, name, to, repo_uuid),
+        (Some(from), None) => table()?.release(from, name, repo_uuid),
+        (None, Some(to)) => table()?.claim(to, name, repo_uuid).map(|_| ()),
+        (None, None) => Ok(()),
     }
 }
 
@@ -316,36 +385,88 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
 }
 
 /// Create a repository under `root_dir`, recording `identity` as who it is.
+///
+/// # Errors
+/// [`OxenError::RepoAlreadyExists`] when `root_dir` already holds the repository, or when another
+/// repository holds the name `identity` records.
 pub async fn create(
     root_dir: &Path,
+    new_repo: RepoNew,
+    identity: Option<RepoIdentity>,
+    server_s3_opts: Option<&S3Opts>,
+) -> Result<LocalRepository, OxenError> {
+    if !is_valid_repo_name(&new_repo.name) {
+        return Err(OxenError::InvalidRepoName(new_repo.name.into()));
+    }
+    if !is_valid_namespace_name(&new_repo.namespace) {
+        return Err(OxenError::InvalidNamespaceName(new_repo.namespace.into()));
+    }
+    let dir = repo_dir(root_dir, &new_repo.namespace, &new_repo.name)?;
+    // Refused ahead of the claim, so a create the occupied directory turns away records no name.
+    if dir.exists() {
+        log::error!("Repository already exists {dir:?}");
+        return Err(OxenError::RepoAlreadyExists(Box::new(new_repo)));
+    }
+
+    // Claimed before the repository is created, so of two creates of one name exactly one
+    // proceeds. Only a name this call records is given back when the creation fails: one the
+    // repository already held is its own either way.
+    let held = identity.as_ref().and_then(RepoIdentity::held_name);
+    let claimed = match held.clone() {
+        Some((namespace, name, repo_uuid)) => {
+            edit_name_table(root_dir, move |table| {
+                table.claim(&namespace, &name, repo_uuid)
+            })
+            .await?
+        }
+        None => false,
+    };
+    let give_back = held.filter(|_| claimed);
+
+    let created = create_unclaimed(&dir, new_repo, identity, server_s3_opts).await;
+    if created.is_err()
+        && let Some((namespace, name, repo_uuid)) = give_back
+    {
+        let given_back = format!("{namespace}/{name}");
+        if let Err(err) = edit_name_table(root_dir, move |table| {
+            table.release(&namespace, &name, repo_uuid)
+        })
+        .await
+        {
+            log::error!("Failed to give back {given_back} after its create failed: {err}");
+        }
+    }
+    created
+}
+
+/// Run `edit` against the server's name table under `sync_dir`, off the async worker.
+///
+/// The table is opened and `edit`'s transaction commits inside one blocking task.
+async fn edit_name_table<R, F>(sync_dir: &Path, edit: F) -> Result<R, OxenError>
+where
+    F: FnOnce(&name_table::NameTable) -> Result<R, OxenError> + Send + 'static,
+    R: Send + 'static,
+{
+    let sync_dir = sync_dir.to_path_buf();
+    spawn_blocking(move || edit(&name_table::NameTable::open(&sync_dir)?)).await?
+}
+
+/// Create the repository at `repo_dir`, recording `identity` as who it is, leaving the server's
+/// name table alone.
+///
+/// `repo_dir` must not exist, and `new_repo`'s namespace and name are the caller's to validate.
+async fn create_unclaimed(
+    repo_dir: &Path,
     mut new_repo: RepoNew,
     identity: Option<RepoIdentity>,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
-    // Validate repo name
-    if !is_valid_repo_name(&new_repo.name) {
-        return Err(OxenError::InvalidRepoName(new_repo.name.into()));
-    }
-
-    // Validate namespace
-    if !is_valid_namespace_name(&new_repo.namespace) {
-        return Err(OxenError::InvalidNamespaceName(new_repo.namespace.into()));
-    }
-
-    let repo_dir = root_dir
-        .join(&new_repo.namespace)
-        .join(Path::new(&new_repo.name));
-    if repo_dir.exists() {
-        log::error!("Repository already exists {repo_dir:?}");
-        return Err(OxenError::RepoAlreadyExists(Box::new(new_repo)));
-    }
-
     // Create the repo dir
     log::debug!("repositories::create repo dir: {repo_dir:?}");
-    util::fs::create_dir_all(&repo_dir)?;
+    util::fs::create_dir_all(repo_dir)?;
 
     // Create oxen hidden dir
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo_dir);
+    let hidden_dir = util::fs::oxen_hidden_dir(repo_dir);
     log::debug!("repositories::create hidden dir: {hidden_dir:?}");
     util::fs::create_dir_all(&hidden_dir)?;
 
@@ -365,7 +486,7 @@ pub async fn create(
         identity,
         ..Default::default()
     };
-    let local_repo = LocalRepository::new_with_server_opts(&repo_dir, config, server_s3_opts)?;
+    let local_repo = LocalRepository::new_with_server_opts(repo_dir, config, server_s3_opts)?;
     local_repo.save()?;
 
     // Initialize version store
@@ -373,7 +494,7 @@ pub async fn create(
     version_store.init().await?;
 
     // Create history dir
-    let history_dir = util::fs::oxen_hidden_dir(&repo_dir).join(constants::HISTORY_DIR);
+    let history_dir = util::fs::oxen_hidden_dir(repo_dir).join(constants::HISTORY_DIR);
     util::fs::create_dir_all(history_dir)?;
 
     // Create HEAD file and point it to DEFAULT_BRANCH_NAME
@@ -411,6 +532,32 @@ pub async fn create(
     }
 
     Ok(local_repo)
+}
+
+/// Give back the name the repository at `repo_dir` records, so another repository may take it.
+///
+/// Writes nothing where the config cannot be read, or records no name of its own, since a
+/// repository the server can read no name for holds no entry that can be shown to be its.
+pub async fn release_recorded_name(sync_dir: &Path, repo_dir: &Path) -> Result<(), OxenError> {
+    let sync_dir = sync_dir.to_path_buf();
+    let repo_dir = repo_dir.to_path_buf();
+    spawn_blocking(move || {
+        let Some((namespace, name, repo_uuid)) = held_name_in_config(&repo_dir) else {
+            return Ok(());
+        };
+        name_table::NameTable::open(&sync_dir)?.release(&namespace, &name, repo_uuid)
+    })
+    .await?
+}
+
+/// The name recorded in the config at `repo_dir`, with the UUID holding it.
+///
+/// `None` where the config cannot be read, or records no name of its own.
+fn held_name_in_config(repo_dir: &Path) -> Option<(String, String, Uuid)> {
+    let config = RepositoryConfig::from_file(util::fs::config_filepath(repo_dir))
+        .inspect_err(|err| log::warn!("Cannot read the name recorded at {repo_dir:?}: {err}"))
+        .ok()?;
+    config.identity.as_ref().and_then(RepoIdentity::held_name)
 }
 
 /// Removes a repository: its version blobs, then its directory.
@@ -537,6 +684,11 @@ mod tests {
 
             let identity = repo.identity.clone().expect("create records identity");
             assert_eq!(identity.name.as_deref(), Some("cats"));
+            assert_eq!(
+                NameTable::open(&sync_dir)?.get("ox", "cats")?,
+                Some(identity.repo_uuid),
+                "creating a repository claims the name it records"
+            );
 
             // The config on disk is the authoritative record, so it has to hold the same thing.
             drop(repo);
@@ -562,7 +714,7 @@ mod tests {
             config.identity = Some(RepoIdentity::hintless(Uuid::new_v4()));
             config.save(&path)?;
 
-            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
+            repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), Some("kittens"))?;
 
             let identity = RepositoryConfig::from_file(&path)?
                 .identity
@@ -579,21 +731,58 @@ mod tests {
     async fn test_record_name_hints_fills_hints_a_repo_does_not_hold() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
+            let repo_uuid = Uuid::new_v4();
             let repo = repositories::create(
                 &sync_dir,
                 repo_new,
-                Some(RepoIdentity::hintless(Uuid::new_v4())),
+                Some(RepoIdentity::hintless(repo_uuid)),
                 None,
             )
             .await?;
+            let path = util::fs::config_filepath(&repo.path);
 
-            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
+            repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), None)?;
+            assert!(
+                !sync_dir.join(NAME_TABLE_DIR).exists(),
+                "half a name is no name, so nothing is claimed and no table is opened"
+            );
 
-            let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?
+            repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), Some("kittens"))?;
+
+            let identity = RepositoryConfig::from_file(&path)?
                 .identity
                 .expect("identity is intact");
             assert_eq!(identity.namespace.as_deref(), Some("bessie"));
             assert_eq!(identity.name.as_deref(), Some("kittens"));
+            let table = NameTable::open(&sync_dir)?;
+            assert_eq!(
+                table.get("bessie", "kittens")?,
+                Some(repo_uuid),
+                "completing a name records the repository under it"
+            );
+
+            // Back to holding no name, with the next one it would be given already taken, so two
+            // repositories cannot come to record one name.
+            let mut config = RepositoryConfig::from_file(&path)?;
+            config.identity = Some(RepoIdentity::hintless(repo_uuid));
+            config.save(&path)?;
+            table.claim("bessie", "mittens", Uuid::new_v4())?;
+
+            let err =
+                repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), Some("mittens"))
+                    .expect_err("a name another repository holds cannot be recorded");
+            assert!(
+                matches!(err, OxenError::RepoAlreadyExists(_)),
+                "expected a name conflict, got {err:?}"
+            );
+            let identity = RepositoryConfig::from_file(&path)?
+                .identity
+                .expect("identity is intact");
+            assert_eq!(
+                (identity.namespace, identity.name),
+                (None, None),
+                "a refused claim leaves the repository recording no name"
+            );
 
             Ok(())
         })
@@ -612,7 +801,7 @@ mod tests {
             let path = util::fs::config_filepath(&repo.path);
             let before = std::fs::metadata(&path)?.modified()?;
 
-            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
+            repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), Some("kittens"))?;
 
             let identity = RepositoryConfig::from_file(&path)?
                 .identity
@@ -638,7 +827,7 @@ mod tests {
             let repo_new = RepoNew::from_namespace_name("ox", "cats", None);
             let repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
-            repositories::record_name_hints(&repo, Some("bessie"), Some("kittens"))?;
+            repositories::record_name_hints(&sync_dir, &repo, Some("bessie"), Some("kittens"))?;
 
             let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo.path))?;
             assert_eq!(config.identity, None);
@@ -665,7 +854,7 @@ mod tests {
 
             repo_locks::with_repo_exclusive(&repo, async {
                 assert!(matches!(
-                    repositories::record_name_hints(&repo, None, Some("kittens")),
+                    repositories::record_name_hints(&sync_dir, &repo, None, Some("kittens")),
                     Err(OxenError::LockTimeout(_))
                 ));
                 Ok::<(), OxenError>(())
@@ -708,6 +897,29 @@ mod tests {
                 repo_uuid,
                 "a namespace move must not change the repo's identity"
             );
+            let table = NameTable::open(&sync_dir)?;
+            assert_eq!(
+                (table.get("ox", "cats")?, table.get("bessie", "cats")?),
+                (None, repo_uuid),
+                "the entry moves to the namespace the repo now records"
+            );
+
+            // A second move onto an occupied destination, so the rename fails once the config and
+            // the entry have both taken the new namespace.
+            drop(moved);
+            util::fs::write_to_path(sync_dir.join("zoo").join("cats").join("occupant"), "taken")?;
+            repositories::transfer_namespace(&sync_dir, "cats", "bessie", "zoo", Some("zoo"), None)
+                .expect_err("a rename onto a non-empty directory fails");
+            let identity = RepositoryConfig::from_file(util::fs::config_filepath(
+                &sync_dir.join("bessie").join("cats"),
+            ))?
+            .identity
+            .expect("identity is intact");
+            assert_eq!(
+                (identity.namespace.as_deref(), table.get("zoo", "cats")?),
+                (Some("zoo"), repo_uuid),
+                "a failed rename leaves the entry naming the namespace the repo records"
+            );
 
             Ok(())
         })
@@ -730,7 +942,8 @@ mod tests {
     }
 
     /// The hint is written only once nothing else can fail, so a transfer that cannot even start
-    /// leaves the repo describing the namespace it is still in.
+    /// leaves the repo describing the namespace it is still in, and its name-table entry where it
+    /// was.
     #[tokio::test]
     async fn test_transfer_namespace_leaves_the_hint_alone_when_the_move_cannot_start()
     -> Result<(), OxenError> {
@@ -739,6 +952,7 @@ mod tests {
             let repo =
                 repositories::create(&sync_dir, repo_new, server_identity("ox", "cats"), None)
                     .await?;
+            let repo_uuid = repo.repo_uuid().expect("a server identity carries a UUID");
             let repo_path = repo.path.clone();
             drop(repo);
 
@@ -763,6 +977,12 @@ mod tests {
                 identity.namespace.as_deref(),
                 Some("ox"),
                 "a transfer that never moved anything must not have rewritten the hint"
+            );
+            let table = NameTable::open(&sync_dir)?;
+            assert_eq!(
+                (table.get("ox", "cats")?, table.get("bessie", "cats")?),
+                (Some(repo_uuid), None),
+                "a transfer that never moved anything must not have moved the entry either"
             );
 
             Ok(())
