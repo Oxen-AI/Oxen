@@ -42,6 +42,7 @@ pub mod init;
 pub mod load;
 pub mod merge;
 pub mod metadata;
+pub mod name_table;
 pub mod prune;
 pub mod pull;
 pub mod push;
@@ -466,7 +467,9 @@ mod tests {
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoIdentity};
+    use crate::namespaces;
     use crate::repositories;
+    use crate::repositories::name_table::{NAME_TABLE_DIR, NameTable};
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};
@@ -1018,9 +1021,18 @@ mod tests {
             let repo_dir = namespace_dir.join(name);
             repositories::init(&repo_dir)?;
 
+            // The server's own state sits beside the namespaces, so neither listing may report it
+            // as one.
+            drop(NameTable::open(sync_dir)?);
+
             let namespaces = repositories::list_namespaces(sync_dir)?;
             assert_eq!(namespaces.len(), 1);
             assert_eq!(namespaces[0], namespace);
+            assert_eq!(namespaces::list(sync_dir), vec![namespace]);
+            assert!(
+                namespaces::get(sync_dir, NAME_TABLE_DIR).is_none(),
+                "the server's own directory is not a namespace to look up either"
+            );
 
             Ok(())
         })

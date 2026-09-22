@@ -24,10 +24,6 @@ use super::txn::{with_read_txn, with_write_txn};
 ///
 /// An implementor provides only [`LmdbStore::lmdb_env`] and [`LmdbStore::lmdb_db`]; it then calls
 /// `self.read` / `self.write` from its own inherent domain methods.
-// `pub(crate)` + `#[allow(dead_code)]`: consumer-less until the first real implementor lands — a
-// test impl exercises the defaults meanwhile. Drop the `allow` (and the ones on
-// `copy_lmdb_env_to_dir` / `LMDB_DATA_FILE`) once an implementor exists.
-#[allow(dead_code)]
 pub(crate) trait LmdbStore {
     /// The store's environment (one logical store per env).
     fn lmdb_env(&self) -> &LmdbEnv;
@@ -59,6 +55,9 @@ pub(crate) trait LmdbStore {
 
     /// Snapshot the store's env into `dst_dir` (point-in-time consistent), returning the copied
     /// data file's path. See `copy_lmdb_env_to_dir` for the snapshot/compaction semantics.
+    // The one default with no caller yet: the stores that exist read and write in place. Drop this
+    // `allow` once something snapshots an env.
+    #[allow(dead_code)]
     fn snapshot_to(&self, dst_dir: &Path) -> Result<PathBuf, LmdbLayerError> {
         copy_lmdb_env_to_dir(self.lmdb_env(), dst_dir)
     }
