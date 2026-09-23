@@ -10,6 +10,7 @@ use crate::core;
 use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::refs::with_ref_manager;
 use crate::core::repo_locks;
+use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
@@ -305,6 +306,7 @@ pub fn transfer_namespace(
     // ensure DB instance is closed before we move the repo
     core::staged::remove_from_cache_with_children(&from_dir)?;
     core::refs::remove_from_cache(&from_dir)?;
+    workspace_name_index::remove_from_cache_with_children(&from_dir);
 
     // Moved ahead of everything the transfer writes, so a name the destination already holds
     // refuses it with no directory created and no config rewritten.
@@ -331,7 +333,10 @@ pub fn transfer_namespace(
         give_back_the_name();
         return Err(err.into());
     }
-    util::fs::rename(&from_dir, &to_dir)?;
+    let moved = util::fs::rename(&from_dir, &to_dir);
+    // Again after the move, so no name index handle opened during it answers for `from_dir`.
+    workspace_name_index::remove_from_cache_with_children(&from_dir);
+    moved?;
 
     let updated_repo =
         get_by_namespace_and_name(sync_dir, to_namespace, repo_name, server_s3_opts)?;
@@ -590,14 +595,17 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
         // Close DB instances before trying to delete the directory
         core::staged::remove_from_cache_with_children(&path)?;
         core::refs::ref_manager::remove_from_cache(&path)?;
+        workspace_name_index::remove_from_cache_with_children(&path);
 
         // Drop cached DuckDB connections too. On NFS, unlinking a still-open file leaves a hidden
         // .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
         core::db::data_frames::df_db::remove_df_db_from_cache_with_children(&path)?;
 
         log::debug!("Deleting repo directory: {path:?}");
-        util::fs::remove_dir_all(&path)?;
-        Ok(())
+        let removed = util::fs::remove_dir_all(&path);
+        // Again after the removal, so no name index handle opened during it survives.
+        workspace_name_index::remove_from_cache_with_children(&path);
+        removed
     })
     .await??;
     Ok(())
@@ -612,6 +620,7 @@ mod tests {
     use crate::constants::OXEN_HIDDEN_DIR;
     use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::core::repo_locks;
+    use crate::core::workspaces::workspace_name_index;
     use crate::error::OxenError;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoIdentity};
@@ -664,6 +673,10 @@ mod tests {
             assert!(store.version_exists(&hash).await?);
             assert!(custom_root.exists());
 
+            let index = workspace_name_index::get_index(&repo)?;
+            index.put("a-workspace", "a-workspace-id")?;
+            drop(index);
+
             repositories::delete(repo).await?;
 
             assert!(
@@ -671,6 +684,14 @@ mod tests {
                 "custom versions root must be removed"
             );
             assert!(!repo_path.exists(), "repo directory must be removed");
+
+            util::fs::create_dir_all(util::fs::oxen_hidden_dir(&repo_path))?;
+            let recreated = LocalRepository::new(&repo_path, RepositoryConfig::default())?;
+            assert_eq!(
+                workspace_name_index::get_index(&recreated)?.get_id_by_name("a-workspace")?,
+                None,
+                "a repository created at a deleted one's path starts with an empty name index"
+            );
             Ok(())
         })
         .await
