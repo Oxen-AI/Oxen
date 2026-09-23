@@ -35,11 +35,12 @@ export PATH="/root/.local/bin:$CARGO_HOME/bin:$PATH"
 # They are diagnostic, so a failure to read them leaves a good build passing.
 trap 'sccache --show-stats || true' EXIT
 
-# The default toolchain is the channel rust-toolchain.toml pins. maturin's host-target probe runs
+# The default toolchain is the one rust-toolchain.toml pins. maturin's host-target probe runs
 # rustc through sccache, where the toolchain file does not reach, and fails with no default set.
-rust_channel=$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"\(.*\)"/\1/')
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-    sh -s -- -y --no-modify-path --default-toolchain "$rust_channel"
+    sh -s -- -y --no-modify-path --default-toolchain none
+rustup toolchain install
+rustup default "$(rustup show active-toolchain | cut -d' ' -f1)"
 curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | sh
 
 # Reject an artifact needing a symbol version RHEL 8 cannot resolve, which installs and then fails
