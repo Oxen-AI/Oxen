@@ -1,21 +1,21 @@
-//! An LMDB "environment", `LmdbEnv` is one file on disk that holds one or more LMDB databases.
+//! An LMDB "environment", `LmdbEnv` is one file on disk that holds an LMDB database.
 //! Opening and sizing LMDB envs, and the `LmdbEnv` type. Map size is page-aligned and
 //! `max_readers` is set explicitly.
 //!
 //! FIXED SIZE SPARSE MAP, NO RUNTIME RESIZE. Each store opens its env with a single generous
-//! `map_size` (see `LmdbEnvConfig`) and never resizes at runtime. The map is a sparse
-//! virtual-address reservation, not committed RAM — resident memory tracks the working set, not
-//! `map_size` — so the size is chosen per store to be comfortably above any realistic on-disk size
-//! with headroom to spare. There is therefore no `MapFull → resize → retry` machinery: if a store
-//! ever exhausts its fixed map, that is `LmdbLayerError::MapFull`, whose remedy is to raise the
-//! store's compile-time `map_size` constant and rebuild — deliberately a code change, not a runtime
-//! path. Map sizes are decided PER STORE / case-by-case: the merkle store reserves a generous size,
-//! while a store with a small, known bound (e.g. a refs index) sets a much more conservative value.
+//! `map_size` and never resizes at runtime. The map is a sparse virtual-address reservation, not
+//! committed RAM — resident memory tracks the working set, not `map_size` — so the size is chosen
+//! per store to be comfortably above any realistic on-disk size with headroom to spare. There is
+//! therefore no `MapFull → resize → retry` machinery: if a store ever exhausts its fixed map, that
+//! is `LmdbLayerError::MapFull`, whose remedy is to raise the store's compile-time `map_size`
+//! constant and rebuild — deliberately a code change, not a runtime path. Map sizes are decided PER
+//! STORE / case-by-case: the merkle store reserves a generous size, while a store with a small,
+//! known bound (e.g. a refs index) sets a much more conservative value.
 //!
-//! ONE LOGICAL STORE PER ENV. Each env hosts the databases of a SINGLE logical store; `max_dbs` is
-//! sized to that store's database count (a one-database store uses `max_dbs = 1`). The env registry's
-//! "single live handle per canonical path" invariant therefore means "one env per logical store per
-//! repo." This makes the registry's identity model unambiguous.
+//! ONE LOGICAL STORE PER ENV, ONE NAMED DATABASE PER ENV. Each env hosts the single database of a
+//! single logical store. The env registry's "single live handle per canonical path" invariant
+//! therefore means "one env per logical store per repo." This makes the registry's identity model
+//! unambiguous.
 
 use std::fs::create_dir_all;
 use std::path::{Path, PathBuf};
@@ -32,79 +32,52 @@ use super::lmdb_error::LmdbLayerError;
 /// process environment / env vars at a glance.
 pub type LmdbEnv = Env<WithoutTls>;
 
-/// Default reader-lock-table size for `LmdbEnvConfig::new`. Generous because the server can hold
-/// many concurrent readers; stores expecting few readers can set `max_readers` smaller directly.
-const DEFAULT_MAX_READERS: u32 = 1024;
+/// Reader-lock-table size, generous because the server can hold many concurrent readers.
+const MAX_READERS: u32 = 1024;
+
+/// Every env holds exactly one named database.
+const MAX_DBS: u32 = 1;
 
 /// The name LMDB gives the data file inside an env directory.
 const LMDB_DATA_FILE: &str = "data.mdb";
 
-/// Tunables for opening one LMDB env. Field meanings are backend-shaped so future stores reuse the
-/// same surface. This layer deliberately defines **no** default `map_size`: it is a per-store
-/// decision (see the module doc), so each store names its own constant.
-#[derive(Debug, Clone)]
-pub struct LmdbEnvConfig {
-    /// The fixed mmap size (sparse virtual reservation); rounded up to the runtime page size at
-    /// open. Never resized at runtime — exhausting it is `LmdbLayerError::MapFull`, remedied by
-    /// raising the store's constant and rebuilding. Choose generously: it costs address space,
-    /// not RAM.
-    pub map_size: ByteSize,
-    /// Number of named sub-databases (`LmdbDb`s) in THIS env. One logical store per env.
-    pub max_dbs: u32,
-    /// Reader-lock-table size. Set explicitly; the server can hold many concurrent readers.
-    pub max_readers: u32,
-}
-
-impl LmdbEnvConfig {
-    /// Config for a store with `max_dbs` databases and the given fixed `map_size`, using the crate
-    /// default `max_readers` (1024). `map_size` has no default — the caller passes its per-store
-    /// constant.
-    pub fn new(max_dbs: u32, map_size: ByteSize) -> Self {
-        LmdbEnvConfig {
-            map_size,
-            max_dbs,
-            max_readers: DEFAULT_MAX_READERS,
-        }
-    }
-}
-
-/// Build page-aligned `EnvOpenOptions<WithoutTls>` (rounds size up to runtime page size, sets
+/// Build page-aligned `EnvOpenOptions<WithoutTls>` (rounds `map_size` up to runtime page size, sets
 /// max_dbs + max_readers, selects `WithoutTls`). Opens WITHOUT `MDB_NOSYNC`/`MDB_NOMETASYNC`, so
 /// each `RwTxn::commit` fsyncs — commit is the durability boundary; no drop-time `force_sync` is
 /// needed (see `copy_lmdb_env_to_dir`). Errors only if the size doesn't fit in `usize`.
-fn build_options(config: &LmdbEnvConfig) -> Result<EnvOpenOptions<WithoutTls>, LmdbLayerError> {
+fn build_options(map_size: ByteSize) -> Result<EnvOpenOptions<WithoutTls>, LmdbLayerError> {
     // LMDB requires `map_size` to be a multiple of the OS page size; round up rather than
     // surface a confusing `EINVAL` from `mdb_env_set_mapsize`.
-    let map_size = usize::try_from(config.map_size.as_u64())
-        .map_err(|_| LmdbLayerError::MapSizeUnrepresentable(config.map_size))?;
-    let aligned = map_size
+    let size = usize::try_from(map_size.as_u64())
+        .map_err(|_| LmdbLayerError::MapSizeUnrepresentable(map_size))?;
+    let aligned = size
         .checked_next_multiple_of(page_size::get())
-        .ok_or(LmdbLayerError::MapSizeUnrepresentable(config.map_size))?;
+        .ok_or(LmdbLayerError::MapSizeUnrepresentable(map_size))?;
 
     let mut options = EnvOpenOptions::new().read_txn_without_tls();
     options.map_size(aligned);
-    options.max_dbs(config.max_dbs);
-    options.max_readers(config.max_readers);
+    options.max_dbs(MAX_DBS);
+    options.max_readers(MAX_READERS);
     Ok(options)
 }
 
-/// Open (creating the dir first if needed) an LMDB env at `dir`. Dir creation precedes the open so
-/// the caller never has to pre-create it; this also makes the env registry's open-on-miss work for
-/// a brand-new repo (see `env_registry.rs`).
+/// Open (creating the dir first if needed) an LMDB env at `dir`, reserving `map_size`. Dir creation
+/// precedes the open so the caller never has to pre-create it; this also makes the env registry's
+/// open-on-miss work for a brand-new repo (see `env_registry.rs`).
 ///
-/// `LmdbEnvRegistry::get_or_open` is the only way to open an env from outside this module: the
-/// registry deduplicates so overlapping opens of one path share a single env and do not hit
-/// `EnvAlreadyOpened`. This primitive is visible only within the `lmdb` module (it's what the
-/// registry is built on), so out-of-module consumers cannot bypass that dedup.
+/// `open_shared_env`, which `LmdbStore` opens through, is the only way to open an env from outside
+/// this module: its registry deduplicates so overlapping opens of one path share a single env and
+/// do not hit `EnvAlreadyOpened`. This primitive is visible only within the `lmdb` module (it's
+/// what the registry is built on), so out-of-module consumers cannot bypass that dedup.
 pub(in crate::lmdb) fn open_lmdb_env(
     dir: &Path,
-    config: &LmdbEnvConfig,
+    map_size: ByteSize,
 ) -> Result<LmdbEnv, LmdbLayerError> {
     create_dir_all(dir).map_err(|source| LmdbLayerError::CreateDir {
         path: dir.to_path_buf(),
         source,
     })?;
-    let options = build_options(config)?;
+    let options = build_options(map_size)?;
     // SAFETY: heed's `open` is `unsafe` because LMDB mmaps the env's data file; the soundness
     // obligation is that nothing modifies that file out from under the live mmap. Two things
     // discharge it. (1) The env dir is private to this layer — nothing else in the process or
@@ -121,15 +94,18 @@ pub(in crate::lmdb) fn open_lmdb_env(
     Ok(lmdb_env)
 }
 
+/// Whether an env has been created at `dir`, checked without opening (and so creating) one.
+pub(crate) fn lmdb_env_exists(dir: &Path) -> bool {
+    dir.join(LMDB_DATA_FILE).exists()
+}
+
 /// Copy the env's data file to `dst_dir` (fork snapshots), returning the path of the copied data
 /// file. The copy runs under its own read txn, so a live env is copied point-in-time
 /// consistently; LMDB durability is per-`commit`, so a snapshot taken after a committed write
 /// needs no `force_sync`. Compaction is hard-wired off (`CompactionOption::Disabled`) rather than
 /// exposed as a parameter: the compacting path runs a page-size-dependent free-page check that
 /// fails `MDB_INCOMPATIBLE` on multi-sub-DB envs, and no store wants it.
-// `pub(crate)`: an internal layer primitive behind every store's snapshot, whether it reaches this
-// through `LmdbStore::snapshot_to` or calls it directly.
-pub(crate) fn copy_lmdb_env_to_dir(
+pub(in crate::lmdb) fn copy_lmdb_env_to_dir(
     lmdb_env: &LmdbEnv,
     dst_dir: &Path,
 ) -> Result<PathBuf, LmdbLayerError> {
@@ -158,17 +134,14 @@ mod tests {
     #[test]
     fn open_lmdb_env_rounds_unaligned_map_size_up_to_page_size() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let config = LmdbEnvConfig::new(1, ByteSize::kb(100));
-        open_lmdb_env(dir.path(), &config).expect("open env with unaligned map size");
+        open_lmdb_env(dir.path(), ByteSize::kb(100)).expect("open env with unaligned map size");
     }
 
-    /// Exhausting the fixed map surfaces heed's map-full through `is_map_full`, which is what
-    /// a store's write path uses to translate the raw error into `MapFull { capacity }`.
+    /// Exhausting the fixed map surfaces heed's map-full through `is_map_full`.
     #[test]
     fn exhausting_the_fixed_map_is_detectable_as_map_full() {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let config = LmdbEnvConfig::new(1, ByteSize::kib(256));
-        let lmdb_env = open_lmdb_env(dir.path(), &config).expect("open env");
+        let lmdb_env = open_lmdb_env(dir.path(), ByteSize::kib(256)).expect("open env");
 
         let db =
             with_write_txn(&lmdb_env, |txn| LmdbDb::open(&lmdb_env, txn, "data")).expect("open db");
@@ -183,12 +156,5 @@ mod tests {
         });
         let err = result.expect_err("a 256 KiB map should fill within a few 32 KiB writes");
         assert!(err.is_map_full(), "expected map-full, got: {err}");
-
-        let translated = LmdbLayerError::MapFull {
-            capacity: config.map_size,
-        };
-        assert!(
-            matches!(translated, LmdbLayerError::MapFull { capacity } if capacity == config.map_size)
-        );
     }
 }
