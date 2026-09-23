@@ -609,6 +609,7 @@ mod tests {
     use crate::config::RepositoryConfig;
     use crate::config::UserConfig;
     use crate::constants;
+    use crate::constants::OXEN_HIDDEN_DIR;
     use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::core::repo_locks;
     use crate::error::OxenError;
@@ -1245,8 +1246,9 @@ mod tests {
             repositories::init(&repo_dir)?;
 
             // The server's own state sits beside the namespaces, so neither listing may report it
-            // as one.
+            // as one: the name table, and the access-key store `oxen-server add-user` writes.
             drop(NameTable::open(sync_dir)?);
+            util::fs::create_dir_all(sync_dir.join(OXEN_HIDDEN_DIR).join("keys"))?;
 
             let namespaces = repositories::list_namespaces(sync_dir)?;
             assert_eq!(namespaces.len(), 1);

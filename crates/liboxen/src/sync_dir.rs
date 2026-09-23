@@ -13,7 +13,7 @@ pub(crate) const NAME_TABLE_DIR: &str = "name_table";
 /// Entries at the top of the sync dir holding the server's own state rather than a namespace's
 /// repositories. A directory named for one of these is not reported as a namespace, so a namespace
 /// could not be seen under that name either.
-const SERVER_OWNED_DIRS: &[&str] = &[NAME_TABLE_DIR];
+const SERVER_OWNED_DIRS: &[&str] = &[NAME_TABLE_DIR, OXEN_HIDDEN_DIR];
 
 /// Whether the entry named `name` at the top of the sync dir is a namespace rather than the
 /// server's own state.
