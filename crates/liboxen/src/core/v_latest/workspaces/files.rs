@@ -943,14 +943,18 @@ async fn p_add_file(
         file_status.previous_metadata = Some(metadata);
     }
 
-    process_add_file_with_staged_db_manager(
-        workspace_repo,
-        &workspace_repo.path,
-        &file_status,
-        path,
-        &seen_dirs,
-        &conflicts,
-    )
+    let (workspace_repo, path) = (workspace_repo.clone(), path.to_path_buf());
+    tokio::task::spawn_blocking(move || {
+        process_add_file_with_staged_db_manager(
+            &workspace_repo,
+            &workspace_repo.path,
+            &file_status,
+            &path,
+            &seen_dirs,
+            &conflicts,
+        )
+    })
+    .await?
 }
 
 async fn p_rm(workspace: &Workspace, path: &Path) -> Result<Vec<ErrorFileInfo>, OxenError> {
