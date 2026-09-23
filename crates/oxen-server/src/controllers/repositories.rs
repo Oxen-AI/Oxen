@@ -739,6 +739,8 @@ pub async fn rename(
     reject_invalid_repo_name(Some(&data.repo_name))?;
 
     let repo = get_repo_async(app_data, &namespace, &name).await?;
+    // Read ahead of the rename, so a completed rename never answers with an error.
+    let is_empty = repositories::is_empty(&repo).await?;
     let sync_dir = app_data.path.clone();
     let repo = tasks::spawn_blocking(move || {
         repositories::rename(&sync_dir, &repo, &data.repo_name).map(|()| repo)
@@ -753,7 +755,7 @@ pub async fn rename(
             namespace,
             name,
             min_version: Some("0.36.0".to_string()),
-            is_empty: repositories::is_empty(&repo).await?,
+            is_empty,
             storage_kind: repo.storage_config().kind,
             merkle_node_backend: Some(repo.merkle_node_backend()),
             repo_uuid: repo.repo_uuid(),
