@@ -6,42 +6,23 @@ You can either setup an `oxen-server` instance yourself, or use the hosted versi
 
 To setup a local Oxen Server instance, first [install](Installation.md) the `oxen-server` binary.
 
-The server can be run with access token authentication turned on or off. The server runs with no authentication by default:
+Start the server:
 
 ```bash
 $ oxen-server start
 ```
 
-To enable authentication, generate a token to give it to the user to access to the server
-
-```bash
-$ oxen-server add-user --email YOUR_EMAIL --name YOUR_NAME
-
-User access token created:
-
-XXXXXXXX
-
-To give user access have them run the command `oxen config --auth <HOST> <TOKEN>`
-```
-
-You may have different authentication tokens for different hosts. From the client side, you can setup an auth token per host with the `config` command. If you ever need to debug or edit the tokens manually, they are stored in the `~/.config/oxen/user_config.toml` file.
+`oxen-server` does not authenticate requests itself. To require authentication, run it behind a reverse proxy or gateway that checks each request before forwarding it. If the gateway checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
 
 ```bash
 $ oxen config --auth <HOST> <TOKEN>
-$ cat ~/.config/oxen/user_config.toml
-```
-
-To run the server with authentication, use the `-a` flag
-
-```bash
-$ oxen-server start -a
 ```
 
 The default directory that Oxen stores data is `data` (relative to the working directory the server was started from), which is convenient for trying things out but probably not what you want in production. To change it set the `SYNC_DIR` environment variable to an absolute path.
 
 ```
 $ export SYNC_DIR=/Path/To/Data
-$ oxen-server start -a
+$ oxen-server start
 
 Running 🐂 server on 0.0.0.0:3000
 Syncing to directory: /Path/To/Data
