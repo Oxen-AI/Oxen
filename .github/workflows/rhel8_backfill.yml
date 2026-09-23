@@ -1,0 +1,42 @@
+name: 🐧 Backfill v0.58.0 RHEL 8 artifacts
+
+# Throwaway: builds the -rhel8 artifacts the v0.58.0 release run failed to produce. Never merged.
+on:
+  push:
+    branches:
+      - cleancut/rhel8-backfill-v0.58.0
+
+permissions: {}
+
+jobs:
+  release_linux_rhel8_arm64:
+    name: Linux arm64 (RHEL 8)
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/release_linux.yml
+    with:
+      ARCHITECTURE: arm64
+      RHEL8: true
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+      PYTHON_VERSIONS: "3.11"
+      RELEASE_VERSION: "0.58.0"
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  release_linux_rhel8_x86_64:
+    name: Linux x86_64 (RHEL 8)
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/release_linux.yml
+    with:
+      ARCHITECTURE: x86_64
+      RHEL8: true
+      AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+      AWS_REGION: us-west-1
+      PYTHON_VERSIONS: "3.11"
+      RELEASE_VERSION: "0.58.0"
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
