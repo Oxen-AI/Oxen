@@ -9,6 +9,7 @@ use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
 use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::df::duckdb_setup;
+use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use crate::error::OxenError;
 use crate::lmdb;
 use crate::model::Schema;
@@ -1487,6 +1488,7 @@ pub fn maybe_cleanup_repo(repo_dir: &Path) -> Result<(), OxenError> {
     core::db::data_frames::df_db::remove_df_db_from_cache_with_children(repo_dir)?;
     core::db::dir_hashes::dir_hashes_db::remove_from_cache_with_children(repo_dir)?;
     core::workspaces::workspace_name_index::remove_from_cache_with_children(repo_dir);
+    remove_commit_count_db_from_cache_with_children(repo_dir);
 
     if should_cleanup() {
         assert_no_live_lmdb_envs(repo_dir);

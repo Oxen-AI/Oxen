@@ -10,6 +10,7 @@ use crate::core;
 use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
 use crate::core::refs::with_ref_manager;
 use crate::core::repo_locks;
+use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
 use crate::model::Commit;
@@ -307,6 +308,7 @@ pub fn transfer_namespace(
     core::staged::remove_from_cache_with_children(&from_dir)?;
     core::refs::remove_from_cache(&from_dir)?;
     workspace_name_index::remove_from_cache_with_children(&from_dir);
+    remove_commit_count_db_from_cache_with_children(&from_dir);
 
     // Moved ahead of everything the transfer writes, so a name the destination already holds
     // refuses it with no directory created and no config rewritten.
@@ -334,8 +336,10 @@ pub fn transfer_namespace(
         return Err(err.into());
     }
     let moved = util::fs::rename(&from_dir, &to_dir);
-    // Again after the move, so no name index handle opened during it answers for `from_dir`.
+    // Again after the move, so no name index handle opened during it answers for `from_dir` and no
+    // commit count handle keeps the old files open.
     workspace_name_index::remove_from_cache_with_children(&from_dir);
+    remove_commit_count_db_from_cache_with_children(&from_dir);
     moved?;
 
     let updated_repo =
@@ -596,6 +600,7 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
         core::staged::remove_from_cache_with_children(&path)?;
         core::refs::ref_manager::remove_from_cache(&path)?;
         workspace_name_index::remove_from_cache_with_children(&path);
+        remove_commit_count_db_from_cache_with_children(&path);
 
         // Drop cached DuckDB connections too. On NFS, unlinking a still-open file leaves a hidden
         // .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
@@ -603,8 +608,10 @@ pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
 
         log::debug!("Deleting repo directory: {path:?}");
         let removed = util::fs::remove_dir_all(&path);
-        // Again after the removal, so no name index handle opened during it survives.
+        // Again after the removal, so no name index or commit count handle opened during it
+        // survives.
         workspace_name_index::remove_from_cache_with_children(&path);
+        remove_commit_count_db_from_cache_with_children(&path);
         removed
     })
     .await??;
