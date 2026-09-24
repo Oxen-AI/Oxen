@@ -51,13 +51,10 @@ export SYNC_DIR
 # Track which config files we modified so cleanup can restore/remove them
 MODIFIED_HOME_CONFIG=false
 HOME_CONFIG_BACKUP=""
-MODIFIED_AUTH_CONFIG=false
-AUTH_CONFIG_BACKUP=""
 MODIFIED_DATA_CONFIG=false
 DATA_CONFIG_BACKUP=""
 
 HOME_CONFIG="$HOME/.oxen/user_config.toml"
-AUTH_CONFIG="$HOME/.oxen/auth_config.toml"
 
 # Unique temp paths so concurrent runs don't collide and we never touch
 # unrelated /tmp entries. REPO_B_PARENT exists because `oxen clone`
@@ -66,7 +63,8 @@ AUTH_CONFIG="$HOME/.oxen/auth_config.toml"
 REPO_A_DIR="$(mktemp -d)"
 REPO_B_PARENT="$(mktemp -d)"
 REPO_B_DIR="$REPO_B_PARENT/repo-b"
-CI_USER_TOML="$(mktemp -u)"
+CI_USER_DIR="$(mktemp -d)"
+CI_USER_TOML="$CI_USER_DIR/user_config.toml"
 
 # Check if a user_config.toml has non-empty "name" and "email" keys
 has_valid_user_config() {
@@ -98,14 +96,6 @@ cleanup() {
             rm -f "$HOME_CONFIG"
         fi
     fi
-    # Restore/remove ~/.oxen/auth_config.toml
-    if [ "$MODIFIED_AUTH_CONFIG" = true ]; then
-        if [ -n "$AUTH_CONFIG_BACKUP" ]; then
-            mv "$AUTH_CONFIG_BACKUP" "$AUTH_CONFIG"
-        else
-            rm -f "$AUTH_CONFIG"
-        fi
-    fi
     # Restore/remove data/test/config/user_config.toml
     if [ "$MODIFIED_DATA_CONFIG" = true ]; then
         if [ -n "$DATA_CONFIG_BACKUP" ]; then
@@ -115,7 +105,7 @@ cleanup() {
         fi
     fi
     # Remove only the temp paths this run created.
-    rm -rf "$REPO_A_DIR" "$REPO_B_PARENT" "$CI_USER_TOML" "$SYNC_DIR"
+    rm -rf "$REPO_A_DIR" "$REPO_B_PARENT" "$CI_USER_DIR" "$SYNC_DIR"
 }
 trap cleanup EXIT INT TERM
 
@@ -150,13 +140,8 @@ cd "$REPO_ROOT"
 mkdir -p data/test/config ~/.oxen
 DATA_CONFIG="$REPO_ROOT/data/test/config/user_config.toml"
 
-# Always run add-user to register the user and obtain a token
-ADD_USER_OUTPUT=$("$SERVER" add-user \
-  --email ci@test.com --name CI --output "$CI_USER_TOML")
-
-# Token is on the 3rd line of the add-user output
-# (the toml file only contains name/email, not the token)
-TOKEN=$(echo "$ADD_USER_OUTPUT" | sed -n '3p' | tr -d '[:space:]')
+# The user config copied into place below wherever a valid one is missing
+"$OXEN" --config-dir "$CI_USER_DIR" config --name CI --email ci@test.com
 
 # Only overwrite config files if they're missing or invalid.
 # If we do overwrite, mark them for restore/removal in cleanup.
@@ -183,14 +168,6 @@ fi
 if [ "$MODIFIED_HOME_CONFIG" = true ]; then
     "$OXEN" config --name "CI Test" --email "ci@test.com"
 fi
-
-# Configure CLI auth token (mutates AUTH_CONFIG — back up first)
-if [ -f "$AUTH_CONFIG" ]; then
-    AUTH_CONFIG_BACKUP=$(mktemp)
-    cp "$AUTH_CONFIG" "$AUTH_CONFIG_BACKUP"
-fi
-"$OXEN" config --auth "localhost:$OXEN_SERVER_PORT" "$TOKEN"
-MODIFIED_AUTH_CONFIG=true
 
 # ── Start oxen-server with OTel export and Prometheus metrics ──
 # Deliberately no RUST_LOG anywhere in this script. Span export is filtered independently of the
@@ -237,14 +214,13 @@ fi
 TRACEPARENT_TRACE_ID=$(printf '%016x%016x' "$$" "$(date +%s)")
 TRACEPARENT_SPAN_ID="00f067aa0ba902b7"
 curl -sf --max-time 10 \
-  -H "Authorization: Bearer $TOKEN" \
   -H "traceparent: 00-$TRACEPARENT_TRACE_ID-$TRACEPARENT_SPAN_ID-01" \
   "$SERVER_URL/api/version" > /dev/null
 
 # ── oxen client: Full push / clone / modify / push / pull workflow ──
 
 # Create remote repository (namespace "ox", name "otel-metrics-test")
-curl -sf --max-time 30 -H "Authorization: Bearer $TOKEN" \
+curl -sf --max-time 30 \
   -H "Content-Type: application/json" \
   -X POST -d '{"namespace":"ox","name":"otel-metrics-test"}' \
   "$SERVER_URL/api/repos"

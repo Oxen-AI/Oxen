@@ -1325,7 +1325,7 @@ mod tests {
             repositories::init(&repo_dir)?;
 
             // The server's own state sits beside the namespaces, so neither listing may report it
-            // as one: the name table, and the access-key store `oxen-server add-user` writes.
+            // as one: the name table, and the `.oxen` an access-key store from before 0.59.0 left.
             util::fs::create_dir_all(sync_dir.join(NAME_TABLE_DIR))?;
             util::fs::create_dir_all(sync_dir.join(OXEN_HIDDEN_DIR).join("keys"))?;
 
