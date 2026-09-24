@@ -1958,16 +1958,20 @@ mod tests {
             for id in 0..6 {
                 contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
             }
-            contents.push_str(&format!(
-                "{{\"id\":6,\"text\":\"{}\"}}\n",
-                "x".repeat(20_000)
-            ));
+            let long_text = "x".repeat(20_000);
+            contents.push_str(&format!("{{\"id\":6,\"text\":\"{long_text}\"}}\n"));
             fs::write_to_path(&path, contents)?;
 
             let mut opts = DFOpts::empty();
             opts.slice = Some(SliceRange::for_page(1, 100));
             let df = tabular::read_df_with_extension(path.clone(), "jsonl", &opts).await?;
             assert_eq!(df.height(), 7);
+            assert_eq!(df.column("id")?.i64()?.get(6), Some(6));
+            assert_eq!(
+                df.column("text")?.str()?.get(6),
+                Some(long_text.as_str()),
+                "the long last row comes back whole"
+            );
 
             // A row limit is pushed down as the same kind of slice.
             let scanned = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
