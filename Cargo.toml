@@ -137,8 +137,8 @@ regex = "1.10.2"
 reqwest = { version = "0.13.2", features = ["multipart", "json", "gzip", "stream", "query"] }
 rmp-serde = "1.3.0"
 rocksdb = { version = "0.25.0", default-features = false, features = ["bindgen-runtime", "lz4", "snappy", "multi-threaded-cf"] }
-s3s = "0.16"
-s3s-fs = "0.16"
+s3s = "0.17"
+s3s-fs = "0.17"
 sanitize-filename = "0.6.0"
 sentry = { version = "0.49", default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls", "tracing"] }
 sentry-actix = "0.49"
