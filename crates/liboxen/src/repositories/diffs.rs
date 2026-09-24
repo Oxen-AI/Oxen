@@ -1037,7 +1037,7 @@ pub fn compute_new_row_indices(
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, v)| (v.unwrap().to_string(), i as u32))
         .collect();
@@ -1047,7 +1047,7 @@ pub fn compute_new_row_indices(
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, v)| (v.unwrap().to_string(), i as u32))
         .collect();

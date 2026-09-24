@@ -90,7 +90,7 @@ impl JsonDataFrame {
                                 )
                             })
                             .collect::<Vec<Column>>();
-                        DataFrame::new(cols).unwrap()
+                        DataFrame::new_infer_height(cols).unwrap()
                     }
                 }
                 _ => {

@@ -246,15 +246,17 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
+      # maturin builds oxen-py below. Building it here unifies pyo3 into the oxen binary, which on
+      # Windows then fails to start without python3.dll on PATH.
       - name: Build oxen rust project (Linux/macOS)
         if: matrix.platform != 'windows'
-        run: cargo build --workspace
+        run: cargo build --workspace --exclude oxen-py
 
       # oxen-server is unsupported on Windows: build only the client crates
       # (the oxen CLI backs the CLI tests). Server tests skip via each conftest.
       - name: Build oxen rust project (Windows)
         if: matrix.platform == 'windows'
-        run: cargo build --workspace --exclude oxen-server
+        run: cargo build --workspace --exclude oxen-server --exclude oxen-py
 
       - name: Setup oxen-server user (Linux/macOS)
         if: matrix.platform != 'windows'

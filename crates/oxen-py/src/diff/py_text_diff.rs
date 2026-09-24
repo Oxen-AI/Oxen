@@ -4,7 +4,7 @@ use liboxen::model::diff::ChangeType;
 use liboxen::model::diff::TextDiff;
 
 #[derive(Debug, Clone, PartialEq)]
-#[pyclass(eq, eq_int)]
+#[pyclass(eq, eq_int, from_py_object)]
 pub enum PyChangeType {
     Added,
     Removed,
@@ -13,7 +13,7 @@ pub enum PyChangeType {
 }
 
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyLineDiff {
     pub modification: PyChangeType,
     pub text: String,
@@ -50,7 +50,7 @@ impl PyLineDiff {
 }
 
 #[derive(Debug, Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyTextDiff {
     pub lines: Vec<PyLineDiff>,
 }

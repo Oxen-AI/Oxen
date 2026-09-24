@@ -16,7 +16,7 @@ use crate::view::compare::{
 use polars::chunked_array::ops::SortMultipleOptions;
 use polars::datatypes::AnyValue;
 use polars::lazy::dsl::coalesce;
-use polars::lazy::dsl::{GetOutput, all, as_struct, col};
+use polars::lazy::dsl::{all, as_struct, col};
 use polars::lazy::frame::IntoLazy;
 use polars::prelude::ChunkCompareEq;
 use polars::prelude::PlSmallStr;
@@ -387,7 +387,7 @@ fn add_diff_status_column(
     let joined_df = joined_df
         .lazy()
         .select([
-            all(),
+            all().as_expr(),
             as_struct(field_names)
                 .apply(
                     move |s| {
@@ -418,11 +418,11 @@ fn add_diff_status_column(
                                 has_targets,
                             ));
                         }
-                        Ok(Some(Column::Series(
+                        Ok(Column::Series(
                             Series::new(PlSmallStr::from_str(""), results).into(),
-                        )))
+                        ))
                     },
-                    GetOutput::from_type(polars::prelude::DataType::String),
+                    tabular::string_field,
                 )
                 .alias(DIFF_STATUS_COL),
         ])
@@ -440,7 +440,7 @@ fn calculate_compare_mods(joined_df: &DataFrame) -> Result<AddRemoveModifyCounts
     let mut removed_rows = 0;
     let mut modified_rows = 0;
 
-    for row in joined_df.column(DIFF_STATUS_COL)?.str()?.into_iter() {
+    for row in joined_df.column(DIFF_STATUS_COL)?.str()?.iter() {
         match row {
             Some("added") => added_rows += 1,
             Some("removed") => removed_rows += 1,
