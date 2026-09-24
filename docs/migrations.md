@@ -9,6 +9,7 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 | 0.51.4 to TBD | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
 | 0.58.0 to TBD | Server | [Record identity for repositories that predate it](#record-identity-for-repositories-that-predate-it) |
 | 0.58.0 to TBD | Server | [Re-seed the name table after changing the sync directory by hand](#re-seed-the-name-table-after-changing-the-sync-directory-by-hand) |
+| 0.59.0 to TBD | Server, S3 backend | [Copy an S3-backed repository's objects to its UUID prefix](#copy-an-s3-backed-repositorys-objects-to-its-uuid-prefix) |
 
 ## Move a repository's Merkle nodes to LMDB
 
@@ -59,6 +60,14 @@ oxen-server seed-name-table
 ```
 
 It indexes the name every repository records and prints how many it covered. It only adds names, so a repository directory removed by hand keeps its name taken, and the command reports those names as `unclaimed`.
+
+## Copy an S3-backed repository's objects to its UUID prefix
+
+**Versions:** 0.59.0 to TBD. **Applies to:** server, S3 backend only.
+
+> **Warning:** the S3 backend is not yet supported in open source, so do not use it yet. If you do, you use it at your own risk.
+
+The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in its bucket rather than `{namespace}/{name}/`. With the server stopped, [record identity](#record-identity-for-repositories-that-predate-it) for any repository that lacks it, copy each S3-backed repository's objects from its old prefix to `repo/{repo_uuid}/`, using the UUID in its config, then start the server and delete the old prefixes once the repositories read correctly.
 
 ## Maintaining this page
 
