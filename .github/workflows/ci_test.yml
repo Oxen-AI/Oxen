@@ -262,19 +262,25 @@ jobs:
         env:
           PATH: ${{ env.PATH }};${{ github.workspace }}\target\debug
         run: |
+          $stepPath = $env:PATH
+          Write-Host "== step PATH: $stepPath"
+          # Tool setup needs the runner's own PATH; the oxen runs below use the step's.
+          $env:PATH = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User") + ";" + $stepPath
           rustup component add llvm-tools
           $readobj = Join-Path (rustc --print sysroot) "lib\rustlib\x86_64-pc-windows-msvc\bin\llvm-readobj.exe"
           $exe = "${{ github.workspace }}\target\debug\oxen.exe"
           Write-Host "== DLL imports of oxen.exe"
           & $readobj --coff-imports $exe | Select-String "Name: .*\.dll" | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique
+          $uv = (Get-Command uv).Source
+          $env:PATH = $stepPath
           Write-Host "== where.exe python3.dll"
           where.exe python3.dll
           & $exe --version
           Write-Host ("== oxen --version, step PATH: exit 0x{0:X8}" -f $LASTEXITCODE)
           cd ${{ github.workspace }}\cli-test
-          uv sync
-          uv run cmd /c "oxen --version & echo == oxen --version under uv run: exit %ERRORLEVEL%"
-          $pydir = Split-Path (uv python find)
+          & $uv sync
+          & $uv run cmd /c "oxen --version & echo == oxen --version under uv run: exit %ERRORLEVEL%"
+          $pydir = Split-Path (& $uv python find)
           Write-Host "== uv Python dir: $pydir"
           Get-ChildItem $pydir -Filter "python3*.dll" | ForEach-Object { Write-Host $_.Name }
           $env:PATH = "$pydir;$env:PATH"
