@@ -55,7 +55,7 @@ impl Seeded {
 ///
 /// `None` where the table already answers for every repository.
 pub fn run_if_incomplete(sync_dir: &Path) -> Result<Option<Seeded>, OxenError> {
-    if NameTable::open(sync_dir)?.is_seeded()? {
+    if NameTable::new(sync_dir).is_seeded()? {
         return Ok(None);
     }
     run(sync_dir).map(Some)
@@ -104,7 +104,7 @@ pub fn run(sync_dir: &Path) -> Result<Seeded, OxenError> {
         );
     }
 
-    NameTable::open(sync_dir)?.write(|db, txn| {
+    NameTable::new(sync_dir).write(|db, txn| {
         let mut recorded = 0;
         let mut disputed = 0;
         let mut claimed = HashSet::new();
@@ -236,7 +236,7 @@ mod tests {
                 },
                 "a repository holding half a name, and one holding no identity, are left out"
             );
-            let table = NameTable::open(sync_dir)?;
+            let table = NameTable::new(sync_dir);
             assert_eq!(
                 table.get("ox", "cats")?,
                 Some(cats.repo_uuid),

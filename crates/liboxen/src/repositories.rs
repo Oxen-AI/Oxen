@@ -251,7 +251,7 @@ pub fn record_name_hints(
 
     // Filling the second half gives the repository a name it can be looked up by, so the entry is
     // claimed ahead of the config write and given back where that write does not land.
-    let table = name_table::NameTable::open(sync_dir)?;
+    let table = name_table::NameTable::new(sync_dir);
     table.claim(&namespace, &name, repo_uuid)?;
     if let Err(err) = config.save(&path) {
         if let Err(undo) = table.release(&namespace, &name, repo_uuid) {
@@ -414,11 +414,11 @@ fn move_recorded_name(
     name: &str,
     repo_uuid: Uuid,
 ) -> Result<(), OxenError> {
-    let table = || name_table::NameTable::open(sync_dir);
+    let table = name_table::NameTable::new(sync_dir);
     match (from, to) {
-        (Some(from), Some(to)) => table()?.move_to_namespace(from, name, to, repo_uuid),
-        (Some(from), None) => table()?.release(from, name, repo_uuid),
-        (None, Some(to)) => table()?.claim(to, name, repo_uuid).map(|_| ()),
+        (Some(from), Some(to)) => table.move_to_namespace(from, name, to, repo_uuid),
+        (Some(from), None) => table.release(from, name, repo_uuid),
+        (None, Some(to)) => table.claim(to, name, repo_uuid).map(|_| ()),
         (None, None) => Ok(()),
     }
 }
@@ -507,8 +507,8 @@ where
     F: FnOnce(&name_table::NameTable) -> Result<R, OxenError> + Send + 'static,
     R: Send + 'static,
 {
-    let sync_dir = sync_dir.to_path_buf();
-    spawn_blocking(move || edit(&name_table::NameTable::open(&sync_dir)?)).await?
+    let table = name_table::NameTable::new(sync_dir);
+    spawn_blocking(move || edit(&table)).await?
 }
 
 /// Create the repository at `repo_dir`, recording `identity` as who it is, leaving the server's
@@ -605,7 +605,7 @@ pub async fn release_recorded_name(sync_dir: &Path, repo_dir: &Path) -> Result<(
         let Some((namespace, name, repo_uuid)) = held_name_in_config(&repo_dir) else {
             return Ok(());
         };
-        name_table::NameTable::open(&sync_dir)?.release(&namespace, &name, repo_uuid)
+        name_table::NameTable::new(&sync_dir).release(&namespace, &name, repo_uuid)
     })
     .await?
 }
@@ -766,7 +766,7 @@ mod tests {
             let identity = repo.identity.clone().expect("create records identity");
             assert_eq!(identity.name.as_deref(), Some("cats"));
             assert_eq!(
-                NameTable::open(&sync_dir)?.get("ox", "cats")?,
+                NameTable::new(&sync_dir).get("ox", "cats")?,
                 Some(identity.repo_uuid),
                 "creating a repository claims the name it records"
             );
@@ -835,7 +835,7 @@ mod tests {
                 .expect("identity is intact");
             assert_eq!(identity.namespace.as_deref(), Some("bessie"));
             assert_eq!(identity.name.as_deref(), Some("kittens"));
-            let table = NameTable::open(&sync_dir)?;
+            let table = NameTable::new(&sync_dir);
             assert_eq!(
                 table.get("bessie", "kittens")?,
                 Some(repo_uuid),
@@ -978,7 +978,7 @@ mod tests {
                 repo_uuid,
                 "a namespace move must not change the repo's identity"
             );
-            let table = NameTable::open(&sync_dir)?;
+            let table = NameTable::new(&sync_dir);
             assert_eq!(
                 (table.get("ox", "cats")?, table.get("bessie", "cats")?),
                 (None, repo_uuid),
@@ -1061,7 +1061,7 @@ mod tests {
                 Some("ox"),
                 "a transfer that never moved anything must not have rewritten the hint"
             );
-            let table = NameTable::open(&sync_dir)?;
+            let table = NameTable::new(&sync_dir);
             assert_eq!(
                 (table.get("ox", "cats")?, table.get("bessie", "cats")?),
                 (Some(repo_uuid), None),
@@ -1326,7 +1326,7 @@ mod tests {
 
             // The server's own state sits beside the namespaces, so neither listing may report it
             // as one: the name table, and the access-key store `oxen-server add-user` writes.
-            drop(NameTable::open(sync_dir)?);
+            util::fs::create_dir_all(sync_dir.join(NAME_TABLE_DIR))?;
             util::fs::create_dir_all(sync_dir.join(OXEN_HIDDEN_DIR).join("keys"))?;
 
             let namespaces = repositories::list_namespaces(sync_dir)?;

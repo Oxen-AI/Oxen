@@ -87,7 +87,7 @@ mod tests {
 
     use super::*;
     use crate::lmdb::lmdb_db::LmdbDb;
-    use crate::lmdb::lmdb_env::{LmdbEnvConfig, open_lmdb_env};
+    use crate::lmdb::lmdb_env::open_lmdb_env;
 
     /// A domain-style error to show `with_*_txn` works with a closure error type that is not
     /// `LmdbLayerError`, as long as it converts from it (mirrors a wrapper returning `OxenError`).
@@ -102,8 +102,7 @@ mod tests {
 
     fn test_lmdb_env() -> (tempfile::TempDir, LmdbEnv) {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let lmdb_env =
-            open_lmdb_env(dir.path(), &LmdbEnvConfig::new(1, ByteSize::mib(16))).expect("open env");
+        let lmdb_env = open_lmdb_env(dir.path(), ByteSize::mib(16)).expect("open env");
         (dir, lmdb_env)
     }
 

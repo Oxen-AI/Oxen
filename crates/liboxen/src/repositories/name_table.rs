@@ -6,23 +6,19 @@
 //! entry and is reachable by UUID alone.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use bytesize::ByteSize;
 use uuid::Uuid;
 
 use crate::api::requests::RepoNew;
 use crate::error::OxenError;
-use crate::lmdb::store::LmdbStore;
-use crate::lmdb::{LmdbDb, LmdbEnv, LmdbEnvConfig, open_db, open_shared_env};
+use crate::lmdb::store::{LmdbSlot, LmdbStore};
 use crate::sync_dir::NAME_TABLE_DIR;
 
 pub mod seed;
 
 /// The one database in the env, mapping a repository's name to its UUID.
 const NAMES_DB_NAME: &str = "names";
-/// Single database, so a `max_dbs` of 1 is sufficient.
-const MAX_DBS: u32 = 1;
 /// Sparse upper bound on the env's mapped size: address space, not committed memory. One entry
 /// costs its key (a namespace of at most 50 characters, a separator, and a repository name) plus a
 /// 36-byte UUID, so this holds tens of millions of repositories with the B-tree overhead included.
@@ -38,17 +34,15 @@ fn name_table_dir(sync_dir: &Path) -> PathBuf {
 ///
 /// Names are matched without regard to case, so `ox/Cats` and `ox/cats` are one name.
 pub struct NameTable {
-    env: Arc<LmdbEnv>,
-    db: LmdbDb,
+    lmdb: LmdbSlot,
 }
 
 impl NameTable {
-    /// Open (or share) the name table under `sync_dir`, creating it when it is not there yet.
-    pub fn open(sync_dir: &Path) -> Result<Self, OxenError> {
-        let config = LmdbEnvConfig::new(MAX_DBS, NAME_TABLE_MAP_SIZE);
-        let env = open_shared_env(&name_table_dir(sync_dir), &config)?;
-        let db = open_db(&env, NAMES_DB_NAME)?;
-        Ok(NameTable { env, db })
+    /// The name table under `sync_dir`, created on its first read or write if it is not there yet.
+    pub fn new(sync_dir: &Path) -> Self {
+        NameTable {
+            lmdb: LmdbSlot::new(name_table_dir(sync_dir)),
+        }
     }
 
     /// The UUID of the repository recorded under `namespace`/`name`.
@@ -170,12 +164,11 @@ impl NameTable {
 }
 
 impl LmdbStore for NameTable {
-    fn lmdb_env(&self) -> &LmdbEnv {
-        &self.env
-    }
+    const LMDB_MAP_SIZE: ByteSize = NAME_TABLE_MAP_SIZE;
+    const LMDB_DB_NAME: &'static str = NAMES_DB_NAME;
 
-    fn lmdb_db(&self) -> &LmdbDb {
-        &self.db
+    fn lmdb_slot(&self) -> &LmdbSlot {
+        &self.lmdb
     }
 }
 
@@ -232,7 +225,7 @@ mod tests {
     #[test]
     fn a_name_belongs_to_one_repository_and_follows_it() -> Result<(), OxenError> {
         test::run_empty_dir_test(|sync_dir| {
-            let table = NameTable::open(sync_dir)?;
+            let table = NameTable::new(sync_dir);
             let cats = Uuid::new_v4();
             assert!(table.claim("ox", "cats", cats)?, "a free name is recorded");
 
@@ -364,7 +357,7 @@ mod tests {
             // handle that wrote it.
             drop(table);
             assert_eq!(
-                NameTable::open(sync_dir)?.get("zoo", "cats")?,
+                NameTable::new(sync_dir).get("zoo", "cats")?,
                 Some(next),
                 "an entry outlives the env that recorded it"
             );

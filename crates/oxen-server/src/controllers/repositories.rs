@@ -819,7 +819,7 @@ mod tests {
 
         // The repository records a name of its own, and the position it is addressed by holds the
         // entry of an unrelated repository, so the two cannot both be freed.
-        let table = NameTable::open(&sync_dir)?;
+        let table = NameTable::new(&sync_dir);
         table.claim("bessie", "cats", repo_uuid)?;
         table.claim(namespace, repo_name, Uuid::new_v4())?;
 
@@ -996,7 +996,7 @@ mod tests {
         assert_eq!(identity.namespace.as_deref(), Some("bessie"));
         assert_eq!(identity.name.as_deref(), Some("cats"));
         assert_eq!(
-            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            NameTable::new(&sync_dir).get("bessie", "cats")?,
             Some(repo_uuid),
             "the name a repository records is what resolves to it"
         );
@@ -1013,7 +1013,7 @@ mod tests {
             .expect("the handler reports the conflict rather than failing");
         assert_eq!(resp.status(), http::StatusCode::CONFLICT);
         assert_eq!(
-            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            NameTable::new(&sync_dir).get("bessie", "cats")?,
             Some(repo_uuid),
             "a refused create leaves the name with the repository that holds it"
         );
@@ -1029,7 +1029,7 @@ mod tests {
             .expect("the handler reports the conflict rather than failing");
         assert_eq!(resp.status(), http::StatusCode::CONFLICT);
         assert_eq!(
-            NameTable::open(&sync_dir)?.get("bessie", "cats")?,
+            NameTable::new(&sync_dir).get("bessie", "cats")?,
             Some(repo_uuid),
             "a create refused to the repository already holding the name leaves it holding it"
         );
@@ -1089,7 +1089,7 @@ mod tests {
         let mut config = RepositoryConfig::from_file(&config_path)?;
         config.identity = Some(identity);
         config.save(&config_path)?;
-        let table = NameTable::open(&sync_dir)?;
+        let table = NameTable::new(&sync_dir);
         table.claim(namespace, repo_name, repo_uuid)?;
 
         let transfer_request = |from_namespace: &'static str| {
