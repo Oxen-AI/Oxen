@@ -204,9 +204,9 @@ pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = Lo
 /// does not already hold.
 ///
 /// Writes nothing when neither argument supplies a hint, when both are already recorded, or when
-/// the repository carries no identity. An existing hint is left as it is: a repository's namespace
-/// changes by being moved, so [`transfer_namespace`] is what updates that one. The identity to fill
-/// is read from the repository's config, so `repo` may have been opened before it was recorded.
+/// the repository carries no identity. An existing hint is left as it is: [`transfer_namespace`]
+/// updates the namespace and [`rename`] the name. The identity to fill is read from the
+/// repository's config, so `repo` may have been opened before it was recorded.
 ///
 /// # Errors
 /// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
@@ -258,6 +258,57 @@ pub fn record_name_hints(
             log::error!(
                 "Failed to give back {namespace}/{name} after its hint write failed: {undo}"
             );
+        }
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+/// Record `to_name` as what `repo` is called, in its config and in the server's name table.
+///
+/// The directory stays where it is, so this suits only a server whose repository directories do
+/// not carry names. Writes nothing when the repository carries no identity. The identity is read
+/// from the repository's config, so `repo` may have been opened before it was recorded.
+///
+/// # Errors
+/// [`OxenError::InvalidRepoName`] when `to_name` is not a valid repository name.
+/// [`OxenError::LockTimeout`] when a maintenance operation holds the repository.
+/// [`OxenError::RepoAlreadyExists`] when another repository in the same namespace holds `to_name`.
+pub fn rename(sync_dir: &Path, repo: &LocalRepository, to_name: &str) -> Result<(), OxenError> {
+    if !is_valid_repo_name(to_name) {
+        return Err(OxenError::InvalidRepoName(to_name.into()));
+    }
+
+    // Held across the read and the write, as in `record_name_hints`.
+    let _write = repo_locks::begin_write(repo)?;
+    let path = util::fs::config_filepath(&repo.path);
+    let mut config = RepositoryConfig::from_file(&path)?;
+    let Some(identity) = config.identity.as_mut() else {
+        return Ok(());
+    };
+    let from_name = identity.name.replace(to_name.to_string());
+    let repo_uuid = identity.repo_uuid;
+    let Some(namespace) = identity.namespace.clone() else {
+        // Half a name holds no entry, so there is nothing in the table to change.
+        config.save(&path)?;
+        return Ok(());
+    };
+
+    // Recorded ahead of the config write and put back where that write does not land.
+    let table = name_table::NameTable::open(sync_dir)?;
+    match &from_name {
+        Some(from_name) => table.rename(&namespace, from_name, to_name, repo_uuid)?,
+        None => {
+            table.claim(&namespace, to_name, repo_uuid)?;
+        }
+    }
+    if let Err(err) = config.save(&path) {
+        let undo = match &from_name {
+            Some(from_name) => table.rename(&namespace, to_name, from_name, repo_uuid),
+            None => table.release(&namespace, to_name, repo_uuid),
+        };
+        if let Err(undo) = undo {
+            log::error!("Failed to put back {namespace}/{to_name} after its rename failed: {undo}");
         }
         return Err(err.into());
     }

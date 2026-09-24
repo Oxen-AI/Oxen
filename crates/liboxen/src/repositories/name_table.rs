@@ -130,6 +130,43 @@ impl NameTable {
             Ok(())
         })
     }
+
+    /// Record `repo_uuid` as `namespace`/`to_name` in place of `namespace`/`name`, in one commit.
+    /// The old name is released only where `repo_uuid` holds it, and the new one is recorded
+    /// either way, so a repository that held no entry under its old name ends up holding the new
+    /// one.
+    ///
+    /// # Errors
+    /// [`OxenError::RepoAlreadyExists`] when another repository holds `namespace`/`to_name`.
+    pub fn rename(
+        &self,
+        namespace: &str,
+        name: &str,
+        to_name: &str,
+        repo_uuid: Uuid,
+    ) -> Result<(), OxenError> {
+        self.write(|db, txn| {
+            let to = key(namespace, to_name);
+            if let Some(recorded) = db.get(txn, &to)?
+                && parse_uuid(&recorded, namespace, to_name)? != repo_uuid
+            {
+                return Err(already_taken(namespace, to_name));
+            }
+            let from = key(namespace, name);
+            if from != to
+                && let Some(recorded) = db.get(txn, &from)?
+            {
+                match parse_uuid(&recorded, namespace, name)? {
+                    holder if holder == repo_uuid => {
+                        db.delete(txn, &from)?;
+                    }
+                    holder => warn_held_by_another(namespace, name, holder, repo_uuid),
+                }
+            }
+            db.put(txn, &to, repo_uuid.to_string().as_bytes())?;
+            Ok(())
+        })
+    }
 }
 
 impl LmdbStore for NameTable {
@@ -185,7 +222,7 @@ mod tests {
     use crate::test;
 
     /// One name belongs to one repository, whatever case it arrives in; it follows the repository
-    /// into a new namespace; and releasing it hands it to the next claimant. Case folding is
+    /// into a new namespace and to a new name; and releasing it hands it to the next claimant. Case folding is
     /// asserted on both halves of the key, since a namespace and a repository name are validated
     /// by different rules. A claim reports whether it is what recorded the name, so a repeat of
     /// one reports nothing recorded. Only the repository holding a name releases or moves it, so an
@@ -288,6 +325,28 @@ mod tests {
                 Some(next),
                 "a released name is free for the next repository"
             );
+
+            table.rename("ZOO", "Cats", "dogs", next)?;
+            assert_eq!(
+                (table.get("zoo", "cats")?, table.get("zoo", "dogs")?),
+                (None, Some(next)),
+                "a rename frees the old name and records the new one"
+            );
+            let err = table
+                .rename("zoo", "birds", "DOGS", impostor)
+                .expect_err("a name another repository holds refuses the rename");
+            assert!(
+                matches!(err, OxenError::RepoAlreadyExists(_)),
+                "expected a name conflict, got {err:?}"
+            );
+            table.rename("zoo", "dogs", "eels", impostor)?;
+            assert_eq!(
+                (table.get("zoo", "dogs")?, table.get("zoo", "eels")?),
+                (Some(next), Some(impostor)),
+                "a rename leaves an old name another repository holds, and records the new one"
+            );
+            table.release("zoo", "eels", impostor)?;
+            table.rename("zoo", "dogs", "cats", next)?;
 
             table.write(|db, txn| {
                 db.put(txn, &key("ox", "dogs"), b"not a uuid")?;

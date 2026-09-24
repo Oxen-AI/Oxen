@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 use dotenvy::from_filename;
-use liboxen::api::requests::{RepoNew, TransferNamespaceRequest};
+use liboxen::api::requests::{RenameRepoRequest, RepoNew, TransferNamespaceRequest};
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
@@ -132,6 +132,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::repositories::update_size,
         crate::controllers::repositories::get_size,
         crate::controllers::repositories::transfer_namespace,
+        crate::controllers::repositories::rename,
         // Workspaces
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
@@ -231,7 +232,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
             RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse,
             RepositoryStatsView, DataTypeView, DataTypeCount,
-            RepoNew, TransferNamespaceRequest, User,
+            RenameRepoRequest, RepoNew, TransferNamespaceRequest, User,
             // Commit Schemas
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit,

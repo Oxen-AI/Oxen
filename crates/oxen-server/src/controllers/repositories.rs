@@ -9,7 +9,7 @@ use crate::tasks;
 
 use futures_util::TryStreamExt;
 use futures_util::stream::StreamExt;
-use liboxen::api::requests::{RepoNew, TransferNamespaceRequest};
+use liboxen::api::requests::{RenameRepoRequest, RepoNew, TransferNamespaceRequest};
 // Import StreamExt for the next() method
 use liboxen::constants::DEFAULT_BRANCH_NAME;
 use liboxen::core::repo_locks;
@@ -692,6 +692,77 @@ pub async fn transfer_namespace(
     }))
 }
 
+/// Rename a repository
+#[utoipa::path(
+    patch,
+    path = "/api/repos/{namespace}/{repo_name}/rename",
+    tag = "Repositories",
+    description = "Record a new name for a repository whose directory does not carry its name. Only a server whose repository UUIDs are assigned by an auth provider accepts it.",
+    params(
+        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "Name of the repository", example = "Cat-Dog-Classifier"),
+    ),
+    request_body(
+        content = RenameRepoRequest,
+        description = "The repository's new name.",
+        example = json!({
+            "repo_name": "Cat-Dog-Detector"
+        })
+    ),
+    responses(
+        (status = 200, description = "Repository renamed", body = RepositoryResponse),
+        (status = 400, description = "Invalid body or name, or a server whose directories carry names"),
+        (status = 404, description = "Repository not found"),
+        (status = 409, description = "Another repository in the namespace holds the name")
+    )
+)]
+pub async fn rename(
+    req: HttpRequest,
+    body: String,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
+    let data: RenameRepoRequest = serde_json::from_str(&body)?;
+    // Where the request's positions carry names, the directory is the name, and renaming it is a
+    // move this endpoint does not make.
+    if app_data
+        .config
+        .identity
+        .repo_uuids_assigned_by()
+        .supplies_names()
+    {
+        return Err(OxenHttpError::BadRequest(
+            "This server addresses repositories by name, so it cannot rename one in place".into(),
+        ));
+    }
+    reject_invalid_repo_name(Some(&data.repo_name))?;
+
+    let repo = get_repo_async(app_data, &namespace, &name).await?;
+    // Read ahead of the rename, so a completed rename never answers with an error.
+    let is_empty = repositories::is_empty(&repo).await?;
+    let sync_dir = app_data.path.clone();
+    let repo = tasks::spawn_blocking(move || {
+        repositories::rename(&sync_dir, &repo, &data.repo_name).map(|()| repo)
+    })
+    .await
+    .map_err(OxenError::from)??;
+
+    Ok(HttpResponse::Ok().json(RepositoryResponse {
+        status: STATUS_SUCCESS.to_string(),
+        status_message: MSG_RESOURCE_UPDATED.to_string(),
+        repository: RepositoryView {
+            namespace,
+            name,
+            min_version: Some("0.36.0".to_string()),
+            is_empty,
+            storage_kind: repo.storage_config().kind,
+            merkle_node_backend: Some(repo.merkle_node_backend()),
+            repo_uuid: repo.repo_uuid(),
+        },
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::app_data::OxenAppData;
@@ -1083,6 +1154,44 @@ mod tests {
             "a refused transfer creates nothing at the destination it was refused from"
         );
 
+        // A rename records the new name in the config and the table, and moves no directory.
+        let body = r#"{"repo_name":"Renamed-Repo"}"#.to_string();
+        let resp = super::rename(transfer_request("Other-Namespace"), body)
+            .await
+            .expect("rename should succeed");
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        let recorded_name = || -> Result<Option<String>, OxenError> {
+            Ok(
+                RepositoryConfig::from_file(util::fs::config_filepath(&moved))?
+                    .identity
+                    .and_then(|identity| identity.name),
+            )
+        };
+        assert_eq!(recorded_name()?.as_deref(), Some("Renamed-Repo"));
+        assert_eq!(
+            (
+                table.get("bessie", repo_name)?,
+                table.get("bessie", "Renamed-Repo")?
+            ),
+            (None, Some(repo_uuid)),
+            "the repository resolves under its new name and not its old one"
+        );
+
+        table.claim("bessie", "Taken-Repo", Uuid::new_v4())?;
+        let body = r#"{"repo_name":"Taken-Repo"}"#.to_string();
+        let err = super::rename(transfer_request("Other-Namespace"), body)
+            .await
+            .expect_err("a name another repository holds refuses the rename");
+        assert_eq!(err.error_response().status(), http::StatusCode::CONFLICT);
+        assert_eq!(
+            (
+                recorded_name()?.as_deref(),
+                table.get("bessie", "Renamed-Repo")?
+            ),
+            (Some("Renamed-Repo"), Some(repo_uuid)),
+            "a refused rename leaves the config and the table as they were"
+        );
+
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
@@ -1117,6 +1226,21 @@ mod tests {
             identity.namespace.as_deref(),
             Some("Other-Namespace"),
             "the addressed position wins over the body's name"
+        );
+
+        let req = test::repo_request(&sync_dir, "/", "Other-Namespace", repo_name);
+        let body = r#"{"repo_name":"Renamed-Repo"}"#.to_string();
+        let err = super::rename(req, body)
+            .await
+            .expect_err("a server whose directories carry names refuses a rename");
+        assert_eq!(err.error_response().status(), http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            RepositoryConfig::from_file(util::fs::config_filepath(&moved))?
+                .identity
+                .and_then(|identity| identity.name)
+                .as_deref(),
+            Some(repo_name),
+            "a refused rename records nothing"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
