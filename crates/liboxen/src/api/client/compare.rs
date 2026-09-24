@@ -549,7 +549,7 @@ mod tests {
 
             repositories::add(&local_repo, &local_repo.path).await?;
 
-            repositories::commit(&local_repo, "committing files")?;
+            let first_commit = repositories::commit(&local_repo, "committing files")?;
 
             // set remote
 
@@ -624,11 +624,11 @@ mod tests {
 
             assert_eq!(removed_df.height(), 1);
 
-            // Advance the data and don't change the compare definition. New will just take away the removed observation
-            let csv1 = "a,b,c,d\n1,2,3,4\n4,5,6,7";
-            // let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8\n0,1,9,2";
+            // Advance the data and don't change the compare definition. New will just take away the
+            // added observation
+            let csv2 = "a,b,c,d\n1,2,3,4\n4,5,6,8";
 
-            test::write_txt_file_to_path(local_repo.path.join(left_path), csv1)?;
+            test::write_txt_file_to_path(local_repo.path.join(right_path), csv2)?;
 
             repositories::add(&local_repo, &local_repo.path).await?;
             repositories::commit(&local_repo, "committing files")?;
@@ -644,12 +644,12 @@ mod tests {
             assert_eq!(new_df, df);
 
             // Now, update the compare - using the exact same body as before, only the commits have changed
-            // (is now MAIN)
+            // (the left side stays on the first commit, the right side is now MAIN)
             api::client::compare::update_compare(
                 &remote_repo,
                 compare_id,
                 left_path,
-                constants::DEFAULT_BRANCH_NAME,
+                &first_commit.id,
                 right_path,
                 constants::DEFAULT_BRANCH_NAME,
                 vec![
@@ -685,7 +685,10 @@ mod tests {
                 api::client::compare::get_derived_compare_df(&remote_repo, compare_id).await?;
 
             let new_df = derived_df.to_df().await;
-            assert!(new_df != df);
+            assert!(
+                new_df != df,
+                "the update reads right.csv at the right-hand revision"
+            );
 
             assert_ne!(new_df, df);
             assert_eq!(new_df.height(), 2);
