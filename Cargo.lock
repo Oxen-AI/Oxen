@@ -7246,8 +7246,6 @@ version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
- "libc",
- "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
@@ -7257,7 +7255,7 @@ version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
 dependencies = [
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "rand_core 0.9.5",
 ]
 
@@ -7270,16 +7268,6 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -7381,7 +7369,7 @@ dependencies = [
  "paste",
  "profiling",
  "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "rand_chacha",
  "simd_helpers",
  "thiserror 2.0.20",
  "v_frame",
@@ -7707,41 +7695,6 @@ checksum = "d8d90add70d1d420ee487bce4a1449880a8d147451c6051b2ee5f8354553dcbf"
 dependencies = [
  "libc",
  "librocksdb-sys",
-]
-
-[[package]]
-name = "rust-embed"
-version = "8.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e7760e252aaba7b09f4be00e36476cf585bdb68a53552ac954cdf504ab4bc9"
-dependencies = [
- "rust-embed-impl",
- "rust-embed-utils",
- "walkdir",
-]
-
-[[package]]
-name = "rust-embed-impl"
-version = "8.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bcfc4d6f53af43755f7a723e4b6b8794fcce052a178dd8c6c1dadc5f5343097"
-dependencies = [
- "mime_guess",
- "proc-macro2",
- "quote",
- "rust-embed-utils",
- "syn 2.0.119",
- "walkdir",
-]
-
-[[package]]
-name = "rust-embed-utils"
-version = "8.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ffa149f6aa81b58a5b3011d01a857c4ed12c7a732d2c51947a4c7c692185f0"
-dependencies = [
- "sha2 0.11.0",
- "walkdir",
 ]
 
 [[package]]
@@ -9697,9 +9650,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "utoipa"
-version = "5.5.0"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bde15df68e80b16c7d16b9616e80770ad158988daa56a27dccd1e55558b0160"
+checksum = "8765fe27aeff71012a3f90fa474cf1df863a7d0dd81ed25de4e63fff2544994f"
 dependencies = [
  "indexmap 2.14.2",
  "serde",
@@ -9709,32 +9662,31 @@ dependencies = [
 
 [[package]]
 name = "utoipa-gen"
-version = "5.5.0"
+version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ba0b99ee52df3028635d93840c797102da61f8a7bb3cf751032455895b52ef8"
+checksum = "d935f1c83fdf8b88f09bbe050d0cea78ea4afee6d7b0317403228c1200b2c8ab"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.6",
  "uuid",
 ]
 
 [[package]]
 name = "utoipa-swagger-ui"
-version = "9.0.2"
+version = "10.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d047458f1b5b65237c2f6dc6db136945667f40a7668627b3490b9513a3d43a55"
+checksum = "3f5ec9d7816e4ce8ccb7e0bd7276e090cad0fcb1def4f3540e5b0f7485d7583e"
 dependencies = [
  "actix-web",
- "base64 0.22.1",
+ "base64 0.23.1",
  "mime_guess",
  "regex",
- "rust-embed",
  "serde",
  "serde_json",
  "url",
  "utoipa",
- "zip 3.0.0",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -10388,20 +10340,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
-]
-
-[[package]]
-name = "zip"
-version = "3.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12598812502ed0105f607f941c386f43d441e00148fce9dec3ca5ffb0bde9308"
-dependencies = [
- "arbitrary",
- "crc32fast",
- "flate2",
- "indexmap 2.14.2",
- "memchr",
- "zopfli",
 ]
 
 [[package]]
