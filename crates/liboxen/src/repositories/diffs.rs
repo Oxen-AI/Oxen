@@ -683,7 +683,7 @@ pub async fn diff_tabular_file_and_file_node(
 
     validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
 
-    diff_dfs(&df_1, &df_2, keys, targets, display)
+    diff_dfs(df_1, df_2, keys, targets, display).await
 }
 
 pub async fn diff_tabular_file_nodes(
@@ -714,7 +714,7 @@ pub async fn diff_tabular_file_nodes(
             let schema_1 = Schema::from_polars(df_1.schema());
             let schema_2 = Schema::from_polars(df_2.schema());
             validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
-            diff_dfs(&df_1, &df_2, keys, targets, display)
+            diff_dfs(df_1, df_2, keys, targets, display).await
         }
         (Some(file_1), None) => {
             let version_store = repo.version_store();
@@ -729,7 +729,7 @@ pub async fn diff_tabular_file_nodes(
             let df_2 = tabular::new_df();
 
             validate_required_fields(schema_1.clone(), schema_1, keys.clone(), targets.clone())?;
-            diff_dfs(&df_1, &df_2, keys, targets, display)
+            diff_dfs(df_1, df_2, keys, targets, display).await
         }
         (None, Some(file_2)) => {
             let version_store = repo.version_store();
@@ -743,7 +743,7 @@ pub async fn diff_tabular_file_nodes(
             .await?;
             let schema_2 = Schema::from_polars(df_2.schema());
             validate_required_fields(schema_2.clone(), schema_2, keys.clone(), targets.clone())?;
-            diff_dfs(&df_1, &df_2, keys, targets, display)
+            diff_dfs(df_1, df_2, keys, targets, display).await
         }
         _ => Err(OxenError::basic_str(
             "Could not find one or both of the files to compare",
@@ -834,7 +834,7 @@ pub async fn tabular(
 
     validate_required_fields(schema_1, schema_2, keys.clone(), targets.clone())?;
 
-    diff_dfs(&df_1, &df_2, keys, targets, display)
+    diff_dfs(df_1, df_2, keys, targets, display).await
 }
 
 async fn read_version_file_to_string(
@@ -878,26 +878,27 @@ fn validate_required_fields(
     Ok(())
 }
 
-pub fn diff_dfs(
-    df_1: &DataFrame,
-    df_2: &DataFrame,
+pub async fn diff_dfs(
+    df_1: DataFrame,
+    df_2: DataFrame,
     keys: Vec<String>,
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
-    let schema_diff = get_schema_diff(df_1, df_2);
+    tokio::task::spawn_blocking(move || {
+        let schema_diff = get_schema_diff(&df_1, &df_2);
 
-    let (keys, targets) = get_keys_targets_smart_defaults(keys, targets, &schema_diff)?;
-    let display = get_display_smart_defaults(&keys, &targets, display, &schema_diff);
+        let (keys, targets) = get_keys_targets_smart_defaults(keys, targets, &schema_diff)?;
+        let display = get_display_smart_defaults(&keys, &targets, display, &schema_diff);
 
-    log::debug!("df_1 is {df_1:?}");
-    log::debug!("df_2 is {df_2:?}");
+        log::debug!("df_1 is {df_1:?}");
+        log::debug!("df_2 is {df_2:?}");
 
-    let (df_1, df_2) = hash_dfs(df_1.clone(), df_2.clone(), &keys, &targets)?;
+        let (df_1, df_2) = hash_dfs(df_1, df_2, &keys, &targets)?;
 
-    let compare = join_diff::diff(&df_1, &df_2, schema_diff, &keys, &targets, &display)?;
-
-    Ok(compare)
+        join_diff::diff(&df_1, &df_2, schema_diff, &keys, &targets, &display)
+    })
+    .await?
 }
 
 fn get_schema_diff(df1: &DataFrame, df2: &DataFrame) -> SchemaDiff {
@@ -1036,7 +1037,7 @@ pub fn compute_new_row_indices(
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, v)| (v.unwrap().to_string(), i as u32))
         .collect();
@@ -1046,7 +1047,7 @@ pub fn compute_new_row_indices(
         .unwrap()
         .str()
         .unwrap()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, v)| (v.unwrap().to_string(), i as u32))
         .collect();
@@ -1474,11 +1475,7 @@ mod tests {
     use crate::test;
     use crate::util;
 
-    use polars::lazy::dsl::{col, lit};
-    use polars::lazy::frame::IntoLazy;
-
-    use crate::constants::DIFF_STATUS_COL;
-    use crate::model::diff::{ChangeType, DiffResult};
+    use crate::model::diff::{AddRemoveModifyCounts, ChangeType, DiffResult};
     use crate::model::entry::commit_entry::CommitPath;
 
     #[tokio::test]
@@ -2030,23 +2027,14 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             let compare_result =
                 repositories::diffs::diff_commits(&repo, c1, c2, vec![], vec![], vec![]).await?;
 
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 2);
                     assert_eq!(df.width(), 4); // 3 (inferred) key columns + diff status
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 1);
-                    assert_eq!(removed_df.height(), 1);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 1);
+                    assert_eq!(counts.removed, 1);
                 }
                 _ => panic!("expected tabular result"),
             }
@@ -2098,29 +2086,15 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             )
             .await?;
 
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 4);
                     assert_eq!(df.width(), 5); // 2 key columns, 1 target column * 2 views each, and diff status
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    let modified_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("modified")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 1);
-                    assert_eq!(removed_df.height(), 2);
-                    assert_eq!(modified_df.height(), 1);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 1);
+                    assert_eq!(counts.removed, 2);
+                    assert_eq!(counts.modified, 1);
                 }
                 _ => panic!("expected tabular result"),
             }
@@ -2170,29 +2144,15 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             )
             .await?;
 
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 3);
                     assert_eq!(df.width(), 5); // 2 key columns, 1 target column * 2 views each, and diff status
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    let modified_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("modified")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 1);
-                    assert_eq!(removed_df.height(), 2);
-                    assert_eq!(modified_df.height(), 0);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 1);
+                    assert_eq!(counts.removed, 2);
+                    assert_eq!(counts.modified, 0);
                 }
                 _ => panic!("expected tabular result"),
             }
@@ -2243,29 +2203,15 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             .await?;
 
             // Should return empty df
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 0);
                     assert_eq!(df.width(), 7); // 2 key columns, 2 targets * 2(right+left) + diff status
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    let modified_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("modified")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 0);
-                    assert_eq!(removed_df.height(), 0);
-                    assert_eq!(modified_df.height(), 0);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 0);
+                    assert_eq!(counts.removed, 0);
+                    assert_eq!(counts.modified, 0);
                 }
                 _ => panic!("expected tabular result"),
             }
@@ -2307,28 +2253,14 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 repositories::diffs::diff_commits(&repo, c1, c2, vec![], vec![], vec![]).await?;
 
             // Should return empty df
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 4);
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    let modified_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("modified")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 1);
-                    assert_eq!(removed_df.height(), 1);
-                    assert_eq!(modified_df.height(), 2);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 1);
+                    assert_eq!(counts.removed, 1);
+                    assert_eq!(counts.modified, 2);
                 }
                 _ => panic!("expected tabular result"),
             }
@@ -2379,28 +2311,14 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
             .await?;
 
             // Should return empty df
-            let diff_col = DIFF_STATUS_COL;
             match compare_result {
                 DiffResult::Tabular(result) => {
                     let df = result.contents;
                     assert_eq!(df.height(), 3);
-                    let added_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("added")))
-                        .collect()?;
-                    let removed_df = df
-                        .clone()
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("removed")))
-                        .collect()?;
-                    let modified_df = df
-                        .lazy()
-                        .filter(col(diff_col).eq(lit("modified")))
-                        .collect()?;
-                    assert_eq!(added_df.height(), 1);
-                    assert_eq!(removed_df.height(), 1);
-                    assert_eq!(modified_df.height(), 1);
+                    let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+                    assert_eq!(counts.added, 1);
+                    assert_eq!(counts.removed, 1);
+                    assert_eq!(counts.modified, 1);
                 }
                 _ => panic!("expected tabular result"),
             }

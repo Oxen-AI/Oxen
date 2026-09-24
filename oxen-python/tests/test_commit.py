@@ -17,6 +17,25 @@ def test_commit_one_file(celeba_local_repo_no_commits):
     history = repo.log()
     assert len(history) == 1
 
+    # oxen rm
+    repo.rm(full_path)
+    status = repo.status()
+    assert repr(status) == "PyStagedData(added=0, removed=1, modified=0)"
+    assert status.removed_files() == [image_file]
+    assert status.added_files() == []
+
+    # oxen restore --staged
+    repo.restore(full_path, staged=True)
+    status = repo.status()
+    assert status.removed_files() == [], "the staged removal is discarded"
+    assert status.unstaged_removed_files() == [image_file], "the file is still gone"
+
+    # oxen restore
+    repo.restore(full_path)
+    status = repo.status()
+    assert os.path.exists(full_path), "the working copy is back"
+    assert status.unstaged_removed_files() == [], "nothing is left pending"
+
 
 def test_commit_all(celeba_local_repo_no_commits):
     repo = celeba_local_repo_no_commits
@@ -36,3 +55,27 @@ def test_commit_all(celeba_local_repo_no_commits):
     # oxen log
     history = repo.log()
     assert len(history) == 2
+
+    # edit a tracked file, leaving the edit unstaged
+    labels_file = str(PurePath("annotations", "labels.txt"))
+    labels_path = os.path.join(repo.path, labels_file)
+    with open(labels_path, "a") as f:
+        f.write("hat\n")
+    status = repo.status()
+    assert status.unstaged_modified_files() == [labels_file]
+    assert status.modified_files() == [], "an edit on disk stages nothing"
+
+    # oxen add the edit
+    repo.add(labels_path)
+    status = repo.status()
+    assert status.modified_files() == [labels_file], (
+        "modified_files() is the staged set, not the working tree"
+    )
+    assert status.unstaged_modified_files() == []
+
+    # delete a tracked file, leaving the removal unstaged
+    image_file = str(PurePath("images", "1.jpg"))
+    os.remove(os.path.join(repo.path, image_file))
+    status = repo.status()
+    assert status.unstaged_removed_files() == [image_file]
+    assert status.removed_files() == [], "a deletion on disk stages nothing"

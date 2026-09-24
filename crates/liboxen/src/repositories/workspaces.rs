@@ -390,7 +390,7 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
 }
 
 /// Removes a partially-built workspace name index so the next `ensure_name_index`
-/// rebuilds it from disk. Evicts the cached DB handle, then removes the index dir.
+/// rebuilds it from disk. Evicts the cached DB handle around the removal of the index dir.
 fn invalidate_name_index(repo: &LocalRepository) {
     workspace_name_index::remove_from_cache(repo);
     let dir = workspace_name_index::index_dir(repo);
@@ -399,6 +399,8 @@ fn invalidate_name_index(repo: &LocalRepository) {
     {
         log::error!("ensure_name_index: failed to remove partial index dir {dir:?}: {e}");
     }
+    // Again after the removal, so no handle opened during it survives.
+    workspace_name_index::remove_from_cache(repo);
 }
 
 /// A wrapper around Workspace that automatically deletes the workspace when dropped
@@ -576,8 +578,10 @@ pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
     // unlinking a still-open file leaves a hidden .nfsXXXX entry that fails the rmdir with ENOTEMPTY.
     df_db::remove_df_db_from_cache_with_children(&workspaces_dir)?;
 
-    util::fs::remove_dir_all(&workspaces_dir)?;
-    Ok(())
+    let removed = util::fs::remove_dir_all(&workspaces_dir);
+    // Again after the removal, so no handle opened during it survives.
+    workspace_name_index::remove_from_cache(repo);
+    removed
 }
 
 pub fn update_commit(workspace: &Workspace, new_commit_id: &str) -> Result<(), OxenError> {

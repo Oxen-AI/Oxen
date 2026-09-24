@@ -21,9 +21,10 @@ use std::sync::{Arc, LazyLock, Weak};
 use std::thread::sleep;
 use std::time::Duration;
 
+use bytesize::ByteSize;
 use parking_lot::{Mutex, RwLock};
 
-use super::lmdb_env::{LmdbEnv, LmdbEnvConfig, open_lmdb_env};
+use super::lmdb_env::{LmdbEnv, open_lmdb_env};
 use super::lmdb_error::LmdbLayerError;
 use crate::util::fs::canonicalize;
 
@@ -32,22 +33,22 @@ const REOPEN_RETRIES: u32 = 100;
 const REOPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
 /// Path-keyed registry of shared `LmdbEnv` handles. `parking_lot::RwLock` internally (cannot
-/// poison), so there is no lock-poisoned error path. Holds no config — the per-store `map_size`
-/// etc. is passed to `get_or_open`, so one registry (the process-global [`open_shared_env`]) serves
+/// poison), so there is no lock-poisoned error path. Holds no map size — the per-store `map_size`
+/// is passed to `get_or_open`, so one registry (the process-global [`open_shared_env`]) serves
 /// every store rather than needing one registry per store type.
 #[derive(Default)]
-pub struct LmdbEnvRegistry {
+pub(in crate::lmdb) struct LmdbEnvRegistry {
     slots: RwLock<HashMap<PathBuf, Weak<LmdbEnv>>>,
     /// Serializes opens so two first-opens of the same path cannot race.
     open_lock: Mutex<()>,
 }
 
 impl LmdbEnvRegistry {
-    pub fn new() -> Self {
+    pub(in crate::lmdb) fn new() -> Self {
         Self::default()
     }
 
-    /// Shared env for `path`, opening it sized by `config` on a miss (`config` is ignored on a
+    /// Shared env for `path`, opening it sized by `map_size` on a miss (`map_size` is ignored on a
     /// hit; see [`open_shared_env`] for why one registry serves all stores).
     ///
     /// Open-on-miss order (avoids canonicalizing a brand-new path that does not exist yet): the
@@ -60,10 +61,10 @@ impl LmdbEnvRegistry {
     /// previous handle, where heed has not finished closing the env yet — the registry re-resolves
     /// the live handle if one is observable, otherwise waits out the close briefly and retries
     /// rather than surfacing the error.
-    pub fn get_or_open(
+    pub(in crate::lmdb) fn get_or_open(
         &self,
         path: &Path,
-        config: &LmdbEnvConfig,
+        map_size: ByteSize,
     ) -> Result<Arc<LmdbEnv>, LmdbLayerError> {
         if let Some(handle) = self.lookup(path) {
             return Ok(handle);
@@ -74,7 +75,7 @@ impl LmdbEnvRegistry {
         }
         let mut attempts = 0;
         loop {
-            match open_lmdb_env(path, config) {
+            match open_lmdb_env(path, map_size) {
                 Ok(env) => {
                     let handle = Arc::new(env);
                     self.insert(&handle);
@@ -106,7 +107,7 @@ impl LmdbEnvRegistry {
     /// is already closed, so a `false` here confirms no open mmap blocks the filesystem op; a
     /// `true` means the precondition is violated and the caller should refuse rather than corrupt
     /// or race.
-    pub fn is_live(&self, path: &Path) -> bool {
+    pub(in crate::lmdb) fn is_live(&self, path: &Path) -> bool {
         self.lookup(path).is_some()
     }
 
@@ -144,17 +145,20 @@ impl LmdbEnvRegistry {
 /// env per canonical path" invariant global.
 static SHARED_REGISTRY: LazyLock<LmdbEnvRegistry> = LazyLock::new(LmdbEnvRegistry::new);
 
-/// Open (or share) the LMDB env at `dir`, sized by `config`, through the process-global registry —
-/// so a store does not stand up its own registry. Hold the returned `Arc<LmdbEnv>` to keep the env
-/// live (weak retention; see the module docs). `config` is consulted only on an actual open (a
-/// miss); on a shared hit it is ignored, and "one logical store per env" means every caller of a
-/// given `dir` passes the same `config`.
-pub fn open_shared_env(dir: &Path, config: &LmdbEnvConfig) -> Result<Arc<LmdbEnv>, LmdbLayerError> {
-    SHARED_REGISTRY.get_or_open(dir, config)
+/// Open (or share) the LMDB env at `dir`, sized by `map_size`, through the process-global registry
+/// — so a store does not stand up its own registry. Hold the returned `Arc<LmdbEnv>` to keep the
+/// env live (weak retention; see the module docs). `map_size` is consulted only on an actual open
+/// (a miss); on a shared hit it is ignored, and "one logical store per env" means every caller of
+/// a given `dir` passes the same `map_size`.
+pub(in crate::lmdb) fn open_shared_env(
+    dir: &Path,
+    map_size: ByteSize,
+) -> Result<Arc<LmdbEnv>, LmdbLayerError> {
+    SHARED_REGISTRY.get_or_open(dir, map_size)
 }
 
 /// Whether the env at `dir` is currently live in the process-global registry — the precondition
-/// check before deleting/renaming an env dir (see [`LmdbEnvRegistry::is_live`]).
+/// check before deleting/renaming an env dir (see `LmdbEnvRegistry::is_live`).
 pub fn shared_env_is_live(dir: &Path) -> bool {
     SHARED_REGISTRY.is_live(dir)
 }
@@ -165,13 +169,9 @@ fn lookup_key(slots: &HashMap<PathBuf, Weak<LmdbEnv>>, key: &Path) -> Option<Arc
 
 #[cfg(test)]
 mod tests {
-    use bytesize::ByteSize;
-
     use super::*;
 
-    fn test_config() -> LmdbEnvConfig {
-        LmdbEnvConfig::new(1, ByteSize::mib(16))
-    }
+    const TEST_MAP_SIZE: ByteSize = ByteSize::mib(16);
 
     fn test_registry() -> LmdbEnvRegistry {
         LmdbEnvRegistry::new()
@@ -184,10 +184,10 @@ mod tests {
         let registry = test_registry();
         let dir = tempfile::tempdir().expect("create temp dir");
         let a = registry
-            .get_or_open(dir.path(), &test_config())
+            .get_or_open(dir.path(), TEST_MAP_SIZE)
             .expect("first open");
         let b = registry
-            .get_or_open(dir.path(), &test_config())
+            .get_or_open(dir.path(), TEST_MAP_SIZE)
             .expect("second open");
         assert!(Arc::ptr_eq(&a, &b));
     }
@@ -199,7 +199,7 @@ mod tests {
         let registry = test_registry();
         let dir = tempfile::tempdir().expect("create temp dir");
         let handle = registry
-            .get_or_open(dir.path(), &test_config())
+            .get_or_open(dir.path(), TEST_MAP_SIZE)
             .expect("open");
         let observer = Arc::downgrade(&handle);
         drop(handle);
@@ -208,7 +208,7 @@ mod tests {
             "registry must not keep the env alive after the last external Arc drops"
         );
         registry
-            .get_or_open(dir.path(), &test_config())
+            .get_or_open(dir.path(), TEST_MAP_SIZE)
             .expect("reopen after close");
     }
 
@@ -223,13 +223,13 @@ mod tests {
         let alias = dir.path().join(".").join("store");
 
         let via_alias = registry
-            .get_or_open(&alias, &test_config())
+            .get_or_open(&alias, TEST_MAP_SIZE)
             .expect("open brand-new path via non-canonical spelling");
         let via_plain = registry
-            .get_or_open(&store, &test_config())
+            .get_or_open(&store, TEST_MAP_SIZE)
             .expect("open via plain path");
         let via_canonical = registry
-            .get_or_open(via_alias.path(), &test_config())
+            .get_or_open(via_alias.path(), TEST_MAP_SIZE)
             .expect("open via canonical path");
         assert!(Arc::ptr_eq(&via_alias, &via_plain));
         assert!(Arc::ptr_eq(&via_alias, &via_canonical));
@@ -245,7 +245,7 @@ mod tests {
         let alias = dir.path().join(".").join("store");
 
         assert!(!registry.is_live(&store), "unopened path is not live");
-        let handle = registry.get_or_open(&store, &test_config()).expect("open");
+        let handle = registry.get_or_open(&store, TEST_MAP_SIZE).expect("open");
         assert!(registry.is_live(&store), "open env is live");
         assert!(
             registry.is_live(&alias),
@@ -263,8 +263,8 @@ mod tests {
         let store = dir.path().join("shared_store");
 
         assert!(!shared_env_is_live(&store));
-        let a = open_shared_env(&store, &test_config()).expect("first open");
-        let b = open_shared_env(&store, &test_config()).expect("second open");
+        let a = open_shared_env(&store, TEST_MAP_SIZE).expect("first open");
+        let b = open_shared_env(&store, TEST_MAP_SIZE).expect("second open");
         assert!(Arc::ptr_eq(&a, &b));
         assert!(shared_env_is_live(&store));
         drop(a);

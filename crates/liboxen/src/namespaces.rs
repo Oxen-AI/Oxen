@@ -4,26 +4,15 @@ use std::path::Path;
 use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
 use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
-use crate::util;
+use crate::sync_dir::{is_namespace, namespace_dirs};
 
 pub fn list(path: &Path) -> Vec<String> {
     log::debug!("repositories::namespaces::list",);
-    let mut results: Vec<String> = vec![];
-
-    if let Ok(dir) = std::fs::read_dir(path) {
-        for entry in dir.into_iter().filter_map(|e| e.ok()) {
-            // if the directory has a .oxen dir, let's add it, otherwise ignore
-            let path = entry.path();
-
-            log::debug!("repositories::namespaces::list checking path {path:?}");
-
-            if path.is_dir() && !util::fs::is_in_oxen_hidden_dir(&path) {
-                results.push(path.file_name().unwrap().to_str().unwrap().to_string())
-            }
-        }
-    }
-
-    results
+    namespace_dirs(path)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|dir| dir.file_name()?.to_str().map(str::to_string))
+        .collect()
 }
 
 /// The named namespace, or `None` when it has no directory on disk. Starts a size recalculation for
@@ -33,7 +22,7 @@ pub fn get(data_dir: &Path, name: &str) -> Option<Namespace> {
     log::debug!("repositories::namespaces::get {name}");
     let namespace_path = data_dir.join(name);
 
-    if !namespace_path.is_dir() {
+    if !is_namespace(name) || !namespace_path.is_dir() {
         return None;
     }
 
@@ -83,6 +72,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories::size::repo_size_path;
     use crate::test;
+    use crate::util;
     use crate::util::fs::AtomicFile;
 
     /// Leave `record` as the size a repo at `path` has recorded, without going through a commit,

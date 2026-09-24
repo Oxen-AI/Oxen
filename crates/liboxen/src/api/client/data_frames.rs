@@ -773,7 +773,7 @@ mod tests {
             assert_eq!(p_df.width(), 3);
 
             let file_path_col = p_df.column("file_path").unwrap();
-            let file_paths: Vec<&str> = file_path_col.str().unwrap().into_no_null_iter().collect();
+            let file_paths: Vec<&str> = file_path_col.str().unwrap().no_null_iter().collect();
             let file_1_str = PathBuf::from("test_files")
                 .join("file1.txt")
                 .to_str()

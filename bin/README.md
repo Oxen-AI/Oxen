@@ -43,6 +43,14 @@ Uploads an explicit list of files to a remote Oxen repository in a single worksp
 
 ## Release & Versioning
 
+### `build-rhel8-release`
+
+Builds the `-rhel8` release `oxen` and `oxen-server` binaries and the `oxenai` Python wheels against glibc 2.28, so the artifacts run on RHEL 8 and its rebuilds as well as every newer distribution. Run by the Linux release workflow, alongside the runner-native build that produces the glibc 2.34 artifacts.
+
+- Runs inside the PyPA manylinux_2_28 image, pinned by `MANYLINUX_VERSION` in `tool-versions.env`, rather than directly on the runner.
+- Reads `PYTHON_VERSIONS` to pick which of the image's CPython interpreters to build wheels for.
+- Fails the build if `oxen` or `oxen-server` needs a glibc, libstdc++, or libgcc symbol version above the manylinux_2_28 baseline, as maturin does for the wheels, so an artifact that installs but cannot load never reaches a release.
+
 ### `bump-version`
 
 Bumps the project version across the Rust workspace and Python package in one step. Useful when cutting a new release so all version strings stay in sync.

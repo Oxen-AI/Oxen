@@ -1,12 +1,11 @@
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::str;
-use std::sync::{Arc, LazyLock, Weak};
-use std::thread::sleep;
+use std::sync::{Arc, LazyLock};
 
 use glob::Pattern;
-use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, MultiThreaded, SingleThreaded};
 use time::OffsetDateTime;
 
@@ -15,6 +14,7 @@ use crate::constants::COMMIT_COUNT_DIR;
 use crate::core::db;
 use crate::core::db::key_val::{opts, str_val_db};
 use crate::core::db::merkle_node::MerkleNodeDB;
+use crate::core::db::weak_cache::WeakDbCache;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -757,58 +757,36 @@ fn list_recursive_with_depth(
     Ok(())
 }
 
-/// Open `commit_count` DB handles, keyed by DB path. Concurrent callers share one handle, which
-/// RocksDB requires — it takes an exclusive lock per path. Entries are `Weak`, so the DB closes
-/// when the last caller drops it and no repo directory stays pinned open between requests.
-/// A brief LOCK collision is still possible when an open races the tail of a concurrent close
-/// (RocksDB releases the OS lock in its `Drop`, after `strong_count` already hit zero); see
-/// [`open_commit_count_db`] for the bounded retry that waits it out.
-static COMMIT_COUNT_DBS: LazyLock<Mutex<HashMap<PathBuf, Weak<DBWithThreadMode<MultiThreaded>>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+// How many repositories keep their commit count cache open after their last caller drops it.
+const WARM_COMMIT_COUNT_DBS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 
-/// Return the shared commit-count cache DB for `repo`, opening it on first access.
-/// Retries briefly on a LOCK-collision race with a concurrent close (see static docs).
+// Registry of open commit count DB handles, keyed by DB path. Concurrent callers share one handle,
+// which RocksDB requires, since it takes an exclusive lock per path.
+static COMMIT_COUNT_DBS: LazyLock<WeakDbCache<DBWithThreadMode<MultiThreaded>>> =
+    LazyLock::new(|| WeakDbCache::new(WARM_COMMIT_COUNT_DBS));
+
+/// Drops the commit count cache handles under `repository_path`, warm ones included. A handle a
+/// caller still holds stays open and closes on its last drop.
+///
+/// Call this after moving or removing the directory as well as before, since a handle opened while
+/// the move or removal ran keeps the old files open.
+pub fn remove_commit_count_db_from_cache_with_children(repository_path: &Path) {
+    COMMIT_COUNT_DBS.forget_prefix(repository_path);
+}
+
+/// Return the shared commit-count cache DB for `repo`, opening it when no live handle exists. A
+/// cache hit does no filesystem work.
 fn open_commit_count_db(
     repo: &LocalRepository,
 ) -> Result<Arc<DBWithThreadMode<MultiThreaded>>, OxenError> {
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(COMMIT_COUNT_DIR);
-
-    // Fast path: a cache hit does no filesystem work.
-    if let Some(db) = lookup_live_commit_count_db(&db_path) {
-        return Ok(db);
-    }
-
-    util::fs::create_dir_all(&db_path)?;
-    let mut attempts = 0;
-    loop {
-        let mut handles = COMMIT_COUNT_DBS.lock();
-        if let Some(db) = handles.get(&db_path).and_then(Weak::upgrade) {
-            return Ok(db);
-        }
-        match DBWithThreadMode::open(&opts::default(), dunce::simplified(&db_path)) {
-            Ok(db) => {
-                let db = Arc::new(db);
-                handles.insert(db_path, Arc::downgrade(&db));
-                // Drop tombstones left by handles whose last caller has already finished.
-                handles.retain(|_, weak| weak.strong_count() > 0);
-                return Ok(db);
-            }
-            Err(err) if db::is_lock_collision(&err) => {
-                drop(handles);
-                attempts += 1;
-                if attempts >= db::OPEN_RETRIES {
-                    return Err(OxenError::from(err));
-                }
-                sleep(db::OPEN_RETRY_INTERVAL);
-            }
-            Err(err) => return Err(OxenError::from(err)),
-        }
-    }
-}
-
-fn lookup_live_commit_count_db(db_path: &Path) -> Option<Arc<DBWithThreadMode<MultiThreaded>>> {
-    let handles = COMMIT_COUNT_DBS.lock();
-    handles.get(db_path)?.upgrade()
+    COMMIT_COUNT_DBS.get_or_open(&db_path, || {
+        util::fs::create_dir_all(&db_path)?;
+        db::open_with_lock_retry(|| {
+            DBWithThreadMode::open(&opts::default(), dunce::simplified(&db_path))
+        })
+        .map_err(OxenError::from)
+    })
 }
 
 fn get_cached_count(
@@ -1124,6 +1102,8 @@ pub fn list_by_path_from_paginated(
 
 #[cfg(test)]
 mod tests {
+    use std::thread::sleep;
+
     use super::*;
     use crate::repositories;
     use crate::test;
@@ -1332,15 +1312,17 @@ mod tests {
                 "overlapping callers should share one commit_count handle"
             );
 
-            // After the last caller drops it the cached entry is dangling, so the next open has
-            // to build a fresh handle rather than hand back the dead one.
+            let handle = Arc::downgrade(&first);
             drop(first);
             drop(second);
-            let reopened = open_commit_count_db(&repo)?;
-            assert_eq!(
-                Arc::strong_count(&reopened),
-                1,
-                "a reopen after full release should yield a fresh handle"
+            assert!(
+                handle.upgrade().is_some(),
+                "the handle stays open after its last caller drops it"
+            );
+            remove_commit_count_db_from_cache_with_children(&repo.path);
+            assert!(
+                handle.upgrade().is_none(),
+                "evicting the repository closes its warm handle"
             );
 
             Ok(())

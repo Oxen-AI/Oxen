@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
 use dotenvy::from_filename;
-use liboxen::api::requests::{RepoNew, TransferNamespaceRequest};
+use liboxen::api::requests::{RenameRepoRequest, RepoNew, TransferNamespaceRequest};
 use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
@@ -16,7 +16,6 @@ use oxen_server::{app_data, auth, config, controllers, crash_diagnostics, metric
 
 extern crate liboxen;
 extern crate log;
-extern crate lru;
 
 use actix_web::middleware::{Condition, DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};
@@ -77,9 +76,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use liboxen::constants;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
+use liboxen::repositories::name_table::seed;
+use liboxen::sync_dir;
 
 use crate::config::Config;
 use crate::config::storage_policy::StoragePolicyError;
@@ -132,6 +132,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::repositories::update_size,
         crate::controllers::repositories::get_size,
         crate::controllers::repositories::transfer_namespace,
+        crate::controllers::repositories::rename,
         // Workspaces
         crate::controllers::workspaces::get_or_create,
         crate::controllers::workspaces::get,
@@ -231,7 +232,7 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             RepositoryCreationResponse, RepositoryCreationView, RepositoryDataTypesResponse,
             RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse,
             RepositoryStatsView, DataTypeView, DataTypeCount,
-            RepoNew, TransferNamespaceRequest, User,
+            RenameRepoRequest, RepoNew, TransferNamespaceRequest, User,
             // Commit Schemas
             CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit,
@@ -387,6 +388,11 @@ enum ServerCommand {
         )]
         output: PathBuf,
     },
+
+    /// Record the name every repository holds in the server's name table. Run with the server
+    /// stopped
+    #[command(name = "seed-name-table")]
+    SeedNameTable,
 
     /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
     #[command(name = "scan-node-format")]
@@ -587,21 +593,29 @@ async fn server() -> Result<(), ServerError> {
             Ok(())
         }
 
+        ServerCommand::SeedNameTable => seed_name_table(&sync_dir),
+
         ServerCommand::ScanNodeFormat { namespace, limit } => {
             scan_node_format(&sync_dir, namespace.as_deref(), limit)
         }
     }
 }
 
-/// Whether `path` is a directory and not a symlink to one.
-///
-/// Uses `metadata.is_dir()` rather than `path.is_dir()` to avoid following symlinks — Oxen does
-/// not track them, and a symlinked namespace or repo would otherwise be walked as though it were
-/// a second copy, counting the same repository twice.
-fn is_real_dir(path: &Path) -> bool {
-    std::fs::symlink_metadata(path)
-        .map(|metadata| metadata.is_dir())
-        .unwrap_or(false)
+/// Record the name every repository under `sync_dir` holds in the server's name table, reporting
+/// what the table answers for once the walk is done.
+fn seed_name_table(sync_dir: &Path) -> Result<(), ServerError> {
+    let seeded = seed::run(sync_dir)?;
+    // KEEP as println! -- do not log!
+    println!(
+        "covered={} recorded={} uncovered={} unlistable={} unclaimed={} covers_every_repository={}",
+        seeded.covered,
+        seeded.recorded,
+        seeded.uncovered,
+        seeded.unlistable,
+        seeded.unclaimed,
+        seeded.complete()
+    );
+    Ok(())
 }
 
 /// Walk repositories under `sync_dir` and report which hold pre-v0.25.0 Merkle nodes.
@@ -620,7 +634,7 @@ fn scan_node_format(
         // — the one output a caller must be able to trust.
         Some(one) => {
             let namespace_dir = sync_dir.join(one);
-            if !is_real_dir(&namespace_dir) {
+            if !namespace_dir.is_dir() {
                 return Err(ServerError::NamespaceNotFound {
                     namespace: one.to_string(),
                     sync_dir: sync_dir.to_path_buf(),
@@ -628,14 +642,7 @@ fn scan_node_format(
             }
             vec![namespace_dir]
         }
-        None => {
-            let mut dirs: Vec<PathBuf> = std::fs::read_dir(sync_dir)?
-                .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|path| is_real_dir(path))
-                .collect();
-            dirs.sort();
-            dirs
-        }
+        None => sync_dir::namespace_dirs(sync_dir)?,
     };
 
     // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
@@ -651,8 +658,8 @@ fn scan_node_format(
         // it quietly would understate every total below with nothing to say so. Reported and
         // counted rather than fatal: unlike the explicit-namespace case, which is a caller
         // mistake with nothing left to do, one bad namespace should not cost the whole run.
-        let entries = match std::fs::read_dir(&namespace_dir) {
-            Ok(entries) => entries,
+        let repo_dirs = match sync_dir::repo_dirs(&namespace_dir) {
+            Ok(repo_dirs) => repo_dirs,
             Err(err) => {
                 unlistable += 1;
                 let label = namespace_dir
@@ -664,11 +671,6 @@ fn scan_node_format(
                 continue;
             }
         };
-        let mut repo_dirs: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|path| is_real_dir(path) && is_real_dir(&path.join(constants::OXEN_HIDDEN_DIR)))
-            .collect();
-        repo_dirs.sort();
 
         for repo_dir in repo_dirs {
             if limit.is_some_and(|max| scanned >= max) {
@@ -836,6 +838,15 @@ async fn start(
     match liboxen::core::df::duckdb_setup::preload_extensions() {
         Ok(()) => log::info!("DuckDB extensions preloaded"),
         Err(e) => log::error!("Failed to preload DuckDB extensions: {e}"),
+    }
+
+    // A repository no create, delete, or transfer has passed through holds no entry, so walking
+    // the configs is where the table's entry for it comes from. A table already covering every
+    // repository is not walked again.
+    match seed::run_if_incomplete(sync_dir) {
+        Ok(Some(seeded)) => log::info!("Seeded the name table: {seeded:?}"),
+        Ok(None) => {}
+        Err(err) => tracing::error!(%err, "Failed to seed the name table"),
     }
 
     let data = app_data::OxenAppData {

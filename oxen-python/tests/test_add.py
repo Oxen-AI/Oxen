@@ -25,3 +25,4 @@ def test_add(shared_datadir):
         str(train_path),
         str(labels_path),
     }
+    assert staged_data.removed_files() == [], "adding files stages no removals"

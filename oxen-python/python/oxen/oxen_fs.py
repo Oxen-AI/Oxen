@@ -45,7 +45,7 @@ class OxenFS(fsspec.AbstractFileSystem):
     ### Writing Files
 
     You must have write access to the repository to write files. See:
-    https://docs.oxen.ai/getting-started/python#private-repositories
+    https://docs.oxen.ai/getting-started/auth#public-vs-private-repositories
 
     OxenFS will automatically commit the file to the repository when the
     context is exited (or the file is closed some other way). New

@@ -106,7 +106,7 @@ elif [ "$PLATFORM" = "linux" ]; then
         ok "All system packages already installed"
     fi
 
-    # Install FFmpeg 8 for the `ffmpeg` feature via the shared helper; bin/test-rust points
+    # Install FFmpeg 9 for the `ffmpeg` feature via the shared helper; bin/test-rust points
     # pkg-config at this prefix.
     "$SCRIPT_DIR/install-ffmpeg"
 fi

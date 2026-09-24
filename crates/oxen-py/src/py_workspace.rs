@@ -14,7 +14,7 @@ use crate::py_staged_data::PyStagedData;
 use crate::py_types::PyErrorFileInfo;
 
 #[derive(Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyWorkspace {
     pub repo: PyRemoteRepo,
     pub branch_name: String,

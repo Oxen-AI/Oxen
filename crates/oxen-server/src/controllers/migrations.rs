@@ -117,8 +117,10 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     // Recorded outside the exclusive section: a migration writes the whole identity table, and a
     // hint write begins a write the exclusive section would block.
     let hinted = repo.clone();
+    let sync_dir = app_data.path.clone();
     tasks::spawn_blocking(move || {
         repositories::record_name_hints(
+            &sync_dir,
             &hinted,
             namespace_name.as_deref(),
             repo_name_hint.as_deref(),

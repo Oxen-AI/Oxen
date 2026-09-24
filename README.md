@@ -79,7 +79,7 @@ To learn what everything Oxen can do, the full documentation can be found at [ht
 
 ## 🧑‍💻 Getting Started
 
-You can install through homebrew or pip or from our [releases page](https://github.com/Oxen-AI/Oxen/releases).
+You can install through homebrew or pip or from our [releases page](https://github.com/Oxen-AI/Oxen/releases). When upgrading the CLI or a self-hosted `oxen-server`, check [the migrations](./docs/migrations.md) for any step the new release asks you to run.
 
 ### 🖥️ Platform Support
 

@@ -157,7 +157,7 @@ pub fn modify_rows(
         }
 
         let mut new_row = current_row.clone();
-        for col in df.get_columns() {
+        for col in df.columns() {
             // Replace that column - copy the entire Series to preserve complex types (lists, structs, etc.)
             let col_name = col.name();
             let col_series = df.column(col_name)?;
