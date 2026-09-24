@@ -295,7 +295,7 @@ pub fn rename(sync_dir: &Path, repo: &LocalRepository, to_name: &str) -> Result<
     };
 
     // Recorded ahead of the config write and put back where that write does not land.
-    let table = name_table::NameTable::open(sync_dir)?;
+    let table = name_table::NameTable::new(sync_dir);
     match &from_name {
         Some(from_name) => table.rename(&namespace, from_name, to_name, repo_uuid)?,
         None => {
