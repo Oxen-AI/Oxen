@@ -57,29 +57,6 @@ pub fn create_local_repo(
     Ok(repo)
 }
 
-pub fn run_empty_sync_dir_test<T>(test: T) -> Result<(), OxenError>
-where
-    T: FnOnce(&Path) -> Result<(), OxenError> + std::panic::UnwindSafe,
-{
-    let sync_dir = get_sync_dir()?;
-
-    // Run test to see if it panic'd
-    let result = std::panic::catch_unwind(|| match test(&sync_dir) {
-        Ok(_) => {}
-        Err(err) => {
-            panic!("Error running test. Err: {err}");
-        }
-    });
-
-    // Remove repo dir
-    util::fs::remove_dir_all(&sync_dir)?;
-
-    // Assert everything okay after we cleanup the repo dir
-    assert!(result.is_ok());
-
-    Ok(())
-}
-
 #[allow(unused)]
 pub fn request(sync_dir: &Path, uri: &str) -> actix_web::HttpRequest {
     actix_web::test::TestRequest::with_uri(uri)

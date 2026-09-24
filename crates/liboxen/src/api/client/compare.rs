@@ -204,16 +204,13 @@ mod tests {
     use crate::api;
 
     use crate::constants;
-    use crate::constants::DIFF_STATUS_COL;
     use crate::error::OxenError;
+    use crate::model::diff::AddRemoveModifyCounts;
     use crate::model::diff::diff_entry_status::DiffEntryStatus;
     use crate::repositories;
     use crate::test;
     use crate::util;
     use crate::view::compare::{TabularCompareFieldBody, TabularCompareTargetBody};
-    use polars::lazy::dsl::col;
-    use polars::lazy::dsl::lit;
-    use polars::lazy::frame::IntoLazy;
 
     use std::path::PathBuf;
 
@@ -505,27 +502,10 @@ mod tests {
 
             assert_eq!(df.height(), 3);
 
-            let added_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("added")))
-                .collect()?;
-            assert_eq!(added_df.height(), 1);
-
-            let modified_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("modified")))
-                .collect()?;
-            assert_eq!(modified_df.height(), 1);
-
-            let removed_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("removed")))
-                .collect()?;
-
-            assert_eq!(removed_df.height(), 1);
+            let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+            assert_eq!(counts.added, 1);
+            assert_eq!(counts.modified, 1);
+            assert_eq!(counts.removed, 1);
 
             Ok(remote_repo)
         })
@@ -602,27 +582,10 @@ mod tests {
 
             assert_eq!(df.height(), 3);
 
-            let added_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("added")))
-                .collect()?;
-            assert_eq!(added_df.height(), 1);
-
-            let modified_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("modified")))
-                .collect()?;
-            assert_eq!(modified_df.height(), 1);
-
-            let removed_df = df
-                .clone()
-                .lazy()
-                .filter(col(DIFF_STATUS_COL).eq(lit("removed")))
-                .collect()?;
-
-            assert_eq!(removed_df.height(), 1);
+            let counts = AddRemoveModifyCounts::from_diff_df(&df)?;
+            assert_eq!(counts.added, 1);
+            assert_eq!(counts.modified, 1);
+            assert_eq!(counts.removed, 1);
 
             // Advance the data and don't change the compare definition. New will just take away the
             // added observation

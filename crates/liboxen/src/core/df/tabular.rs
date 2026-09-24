@@ -1,7 +1,8 @@
 use duckdb::ToSql;
 use polars::io::cloud::CloudOptions;
+use polars::polars_utils::slice_enum::Slice;
+use polars::prelude::DataType as PolarsDataType;
 use polars::prelude::*;
-use polars_utils::mmap::MemSlice;
 use serde_json::json;
 use std::collections::HashSet;
 use std::fs::File;
@@ -37,12 +38,7 @@ use super::filter::{DFFilterExp, DFFilterOp, DFFilterVal};
 
 const READ_ERROR: &str = "Could not read tabular data from path";
 
-fn base_lazy_csv_reader(
-    path: impl AsRef<Path>,
-    delimiter: u8,
-    quote_char: Option<u8>,
-) -> LazyCsvReader {
-    let path = path.as_ref();
+fn base_lazy_csv_reader(path: PlRefPath, delimiter: u8, quote_char: Option<u8>) -> LazyCsvReader {
     let reader = LazyCsvReader::new(path);
     reader
         .with_infer_schema_length(Some(10000))
@@ -65,44 +61,23 @@ fn read_df_csv(
     delimiter: u8,
     quote_char: Option<u8>,
 ) -> Result<LazyFrame, OxenError> {
-    let reader = base_lazy_csv_reader(path.as_ref(), delimiter, quote_char);
+    let reader = base_lazy_csv_reader(
+        PlRefPath::try_from_path(path.as_ref())?,
+        delimiter,
+        quote_char,
+    );
     reader
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
-/// An NDJSON file's bytes as an in-memory polars scan source, with trailing newlines trimmed.
-///
-/// polars' NDJSON reader (`polars_io::ndjson::core::get_line_stats_json`, still the same on main
-/// as of 0.49) samples line lengths from the 75% byte mark whenever the scan carries a positive
-/// slice, which every paginated data frame read does. The sampler takes the position *after* the
-/// first `}\n` in that tail and then skips one more byte, so when that newline is the last byte of
-/// the file it indexes one past the end and panics with "range start index N+1 out of range for
-/// slice of length N". That is any file of six or more rows whose last row spans the 75% mark: a
-/// chat history whose newest conversation is longer than the rest combined, for one. With no
-/// trailing newline that position cannot be produced, and NDJSON without a final newline is valid.
-///
-/// Memory-mapped and in-memory sources are sliced without copying, so this costs nothing over
-/// handing polars the path, and the streaming reader loads the whole file either way.
-fn ndjson_scan_source(bytes: MemSlice) -> ScanSources {
-    let end = bytes.iter().rposition(|&b| b != b'\n').map_or(0, |i| i + 1);
-    ScanSources::Buffers(Arc::from([bytes.slice(0..end)]))
-}
-
-fn lazy_jsonl_reader(bytes: MemSlice) -> LazyJsonLineReader {
-    LazyJsonLineReader::new_with_sources(ndjson_scan_source(bytes))
-        .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
-}
-
-/// Memory-maps a JSONL file, naming the path in the error when it is missing or unreadable.
-fn mmap_jsonl(path: &Path) -> Result<MemSlice, OxenError> {
-    MemSlice::from_file(&fs::open_file(path)?)
-        .map_err(|e| OxenError::basic_str(format!("{READ_ERROR}: {path:?}: {e}")))
+fn lazy_jsonl_reader(path: PlRefPath) -> LazyJsonLineReader {
+    LazyJsonLineReader::new(path).with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
 }
 
 fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
     let path = path.as_ref();
-    lazy_jsonl_reader(mmap_jsonl(path)?)
+    lazy_jsonl_reader(PlRefPath::try_from_path(path)?)
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
@@ -134,7 +109,7 @@ pub fn read_df_parquet(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
     //     path.as_ref(),
     //     args.n_rows
     // )
-    LazyFrame::scan_parquet(&path, args).map_err(|_| {
+    LazyFrame::scan_parquet(PlRefPath::try_from_path(path.as_ref())?, args).map_err(|_| {
         OxenError::basic_str(format!(
             "Error scanning parquet file {}: {:?}",
             READ_ERROR,
@@ -144,8 +119,12 @@ pub fn read_df_parquet(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
 }
 
 fn read_df_arrow(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    LazyFrame::scan_ipc(&path, ScanArgsIpc::default())
-        .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
+    LazyFrame::scan_ipc(
+        PlRefPath::try_from_path(path.as_ref())?,
+        IpcScanOptions::default(),
+        ipc_scan_args(None, None),
+    )
+    .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
 pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
@@ -166,7 +145,11 @@ pub fn scan_df_csv(
     quote_char: Option<u8>,
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
-    let reader = base_lazy_csv_reader(path.as_ref(), delimiter, quote_char);
+    let reader = base_lazy_csv_reader(
+        PlRefPath::try_from_path(path.as_ref())?,
+        delimiter,
+        quote_char,
+    );
     reader
         .with_n_rows(Some(total_rows))
         .finish()
@@ -175,7 +158,7 @@ pub fn scan_df_csv(
 
 pub fn scan_df_jsonl(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFrame, OxenError> {
     let path = path.as_ref();
-    lazy_jsonl_reader(mmap_jsonl(path)?)
+    lazy_jsonl_reader(PlRefPath::try_from_path(path)?)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
@@ -191,7 +174,7 @@ pub fn scan_df_parquet(path: impl AsRef<Path>, total_rows: usize) -> Result<Lazy
     //     path.as_ref(),
     //     args.n_rows
     // );
-    LazyFrame::scan_parquet(&path, args).map_err(|_| {
+    LazyFrame::scan_parquet(PlRefPath::try_from_path(path.as_ref())?, args).map_err(|_| {
         OxenError::basic_str(format!(
             "Error scanning parquet file {}: {:?}",
             READ_ERROR,
@@ -201,13 +184,12 @@ pub fn scan_df_parquet(path: impl AsRef<Path>, total_rows: usize) -> Result<Lazy
 }
 
 pub fn scan_df_arrow(path: impl AsRef<Path>, total_rows: usize) -> Result<LazyFrame, OxenError> {
-    let args = ScanArgsIpc {
-        n_rows: Some(total_rows),
-        ..Default::default()
-    };
-
-    LazyFrame::scan_ipc(&path, args)
-        .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
+    LazyFrame::scan_ipc(
+        PlRefPath::try_from_path(path.as_ref())?,
+        IpcScanOptions::default(),
+        ipc_scan_args(Some(total_rows), None),
+    )
+    .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
 pub async fn add_col_lazy(
@@ -234,10 +216,10 @@ pub async fn add_col_lazy(
         .extend_constant(val_from_str_and_dtype(val, &dtype), df.height())
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     if let Some(at) = at {
-        df.insert_column(at, column)
+        df.insert_column(at, column.into_column())
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     } else {
-        df.with_column(column)
+        df.with_column(column.into_column())
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     }
     let df = df.lazy();
@@ -256,7 +238,7 @@ pub fn add_col(
     let column = column
         .extend_constant(val_from_str_and_dtype(val, &dtype), df.height())
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    df.with_column(column)
+    df.with_column(column.into_column())
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
     Ok(df)
 }
@@ -324,7 +306,7 @@ pub fn row_from_str_and_schema(
         }
     }
 
-    let df = DataFrame::new(vec)?;
+    let df = DataFrame::new_infer_height(vec)?;
 
     Ok(df)
 }
@@ -338,7 +320,7 @@ pub fn parse_str_to_df(data: impl AsRef<str>) -> Result<DataFrame, OxenError> {
 
     let cursor = Cursor::new(data.as_bytes());
 
-    let reader = JsonLineReader::new(cursor);
+    let reader = JsonReader::new(cursor).with_json_format(JsonFormat::JsonLines);
 
     match reader.finish() {
         Ok(df) => Ok(df),
@@ -445,7 +427,10 @@ fn filter_df(mut df: LazyFrame, filter: &DFFilterExp) -> Result<LazyFrame, OxenE
 
 fn unique_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError> {
     log::debug!("Got unique: {columns:?}");
-    Ok(df.unique(Some(columns), UniqueKeepStrategy::First))
+    Ok(df.unique(
+        Some(by_name(columns, true, false)),
+        UniqueKeepStrategy::First,
+    ))
 }
 
 fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, OxenError> {
@@ -528,7 +513,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
             .with_row_index(shuffle_col, None)
             .with_column(col(shuffle_col).shuffle(Some(rand::random())))
             .sort([shuffle_col], Default::default())
-            .drop([shuffle_col]);
+            .drop(by_name([shuffle_col], true, false));
     }
 
     if let Some(columns) = opts.unique_columns() {
@@ -602,7 +587,7 @@ pub fn transform_slice_lazy(mut df: LazyFrame, opts: &DFOpts) -> Result<LazyFram
         let full_df = df.collect()?;
         let value = full_df.column(&item.col)?.get(item.index)?;
         let s1 = Column::Series(Series::new(PlSmallStr::from_str(""), &[value]).into());
-        let df = DataFrame::new(vec![s1])?;
+        let df = DataFrame::new_infer_height(vec![s1])?;
         return Ok(df.lazy());
     }
 
@@ -748,7 +733,7 @@ fn struct_array_to_json(
             let mut rows = Vec::with_capacity(df.height());
             for i in 0..df.height() {
                 let mut map = serde_json::Map::new();
-                for col in df.get_columns() {
+                for col in df.columns() {
                     let val = col.get(i).unwrap_or(AnyValue::Null);
                     map.insert(col.name().to_string(), any_val_to_json(val));
                 }
@@ -849,7 +834,7 @@ pub fn df_hash_rows(df: DataFrame) -> Result<DataFrame, OxenError> {
     let df = df
         .lazy()
         .select([
-            all(),
+            all().as_expr(),
             as_struct(col_names)
                 .apply(
                     move |s| {
@@ -877,11 +862,11 @@ pub fn df_hash_rows(df: DataFrame) -> Result<DataFrame, OxenError> {
                         }
                         pb.finish_and_clear();
 
-                        Ok(Some(Column::Series(
+                        Ok(Column::Series(
                             Series::new(PlSmallStr::from_str(""), hashes).into(),
-                        )))
+                        ))
                     },
-                    GetOutput::from_type(polars::prelude::DataType::String),
+                    string_field,
                 )
                 .alias(constants::ROW_HASH_COL_NAME),
         ])
@@ -889,6 +874,11 @@ pub fn df_hash_rows(df: DataFrame) -> Result<DataFrame, OxenError> {
         .unwrap();
     log::debug!("Hashed rows: {df}");
     Ok(df)
+}
+
+/// The output field of an expression that produces strings.
+pub(crate) fn string_field(_: &Schema, field: &Field) -> PolarsResult<Field> {
+    Ok(Field::new(field.name().clone(), PolarsDataType::String))
 }
 
 // Maybe pass in fields here?
@@ -927,7 +917,7 @@ pub fn df_hash_rows_on_cols(
     let df = df
         .lazy()
         .select([
-            all(),
+            all().as_expr(),
             as_struct(col_names)
                 .apply(
                     move |s| {
@@ -953,11 +943,11 @@ pub fn df_hash_rows_on_cols(
                         }
                         pb.finish_and_clear();
 
-                        Ok(Some(Column::Series(
+                        Ok(Column::Series(
                             Series::new(PlSmallStr::from_str(""), hashes).into(),
-                        )))
+                        ))
                     },
-                    GetOutput::from_type(polars::prelude::DataType::String),
+                    string_field,
                 )
                 .alias(out_col_name),
         ])
@@ -1225,17 +1215,16 @@ async fn read_s3_version_df(
             config.push(("aws_allow_http", "true".to_string()));
             config.push(("aws_virtual_hosted_style_request", "false".to_string()));
         }
-        CloudOptions::from_untyped_config(url, config.iter().map(|(k, v)| (*k, v.as_str())))
+        CloudOptions::from_untyped_config(
+            CloudScheme::from_path(url),
+            config.iter().map(|(k, v)| (*k, v.as_str())),
+        )
     }?;
     let url = url.to_string();
 
     let df_lazy = match extension {
         "ndjson" | "jsonl" => {
-            // The NDJSON reader loads the whole object anyway, so pull it through the store and
-            // scan the bytes; see `ndjson_scan_source` for why polars must not see the file's
-            // trailing newline.
-            let bytes = version_store.get_version(hash).await?;
-            task::spawn_blocking(move || read_jsonl_bytes(bytes)).await??
+            task::spawn_blocking(move || read_s3_jsonl(&url, cloud_opts)).await??
         }
         "json" => {
             // `JsonReader` is byte-stream only (no cloud reader), so pull the bytes through the
@@ -1308,19 +1297,31 @@ fn read_s3_parquet(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, Oxe
         cloud_options: Some(cloud_opts),
         ..Default::default()
     };
-    LazyFrame::scan_parquet(url, args).map_err(OxenError::from)
+    LazyFrame::scan_parquet(PlRefPath::new(url), args).map_err(OxenError::from)
 }
 
 fn read_s3_ipc(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
-    let args = ScanArgsIpc {
-        cloud_options: Some(cloud_opts),
-        ..Default::default()
-    };
-    LazyFrame::scan_ipc(url, args).map_err(OxenError::from)
+    LazyFrame::scan_ipc(
+        PlRefPath::new(url),
+        IpcScanOptions::default(),
+        ipc_scan_args(None, Some(cloud_opts)),
+    )
+    .map_err(OxenError::from)
 }
 
-fn read_jsonl_bytes(bytes: Vec<u8>) -> Result<LazyFrame, OxenError> {
-    lazy_jsonl_reader(MemSlice::from_vec(bytes))
+/// Scan arguments for an IPC file, reading at most `n_rows` rows from its start.
+fn ipc_scan_args(n_rows: Option<usize>, cloud_options: Option<CloudOptions>) -> UnifiedScanArgs {
+    UnifiedScanArgs {
+        cloud_options,
+        cache: true,
+        pre_slice: n_rows.map(|len| Slice::Positive { offset: 0, len }),
+        ..Default::default()
+    }
+}
+
+fn read_s3_jsonl(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
+    lazy_jsonl_reader(PlRefPath::new(url))
+        .with_cloud_options(Some(cloud_opts))
         .finish()
         .map_err(OxenError::from)
 }
@@ -1331,7 +1332,7 @@ fn read_s3_csv(
     delimiter: u8,
     quote_char: Option<u8>,
 ) -> Result<LazyFrame, OxenError> {
-    base_lazy_csv_reader(url, delimiter, quote_char)
+    base_lazy_csv_reader(PlRefPath::new(url), delimiter, quote_char)
         .with_cloud_options(Some(cloud_opts))
         .finish()
         .map_err(OxenError::from)
@@ -1728,7 +1729,6 @@ mod tests {
         opts::{DFOpts, SliceRange},
     };
     use itertools::Itertools;
-    use std::path::PathBuf;
     use tokio::task;
 
     #[test]
@@ -1925,8 +1925,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_read_json() -> Result<(), OxenError> {
+    #[test]
+    fn test_read_json() -> Result<(), OxenError> {
         let df = tabular::read_df_json(test::test_text_json())?.collect()?;
 
         println!("{df}");
@@ -1947,67 +1947,31 @@ mod tests {
         Ok(())
     }
 
-    /// Writes the JSONL file that trips polars' NDJSON line sampler: six or more rows, with the
-    /// last row spanning the 75% byte mark (see `ndjson_scan_source`).
-    fn write_jsonl_with_last_row_spanning_three_quarter_mark(
-        dir: &Path,
-    ) -> Result<PathBuf, OxenError> {
-        let path = dir.join("chat_history.jsonl");
-        let mut contents = String::new();
-        for id in 0..6 {
-            contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
-        }
-        contents.push_str(&format!(
-            "{{\"id\":6,\"text\":\"{}\"}}\n",
-            "x".repeat(20_000)
-        ));
-        fs::write_to_path(&path, contents)?;
-        Ok(path)
-    }
-
-    /// Canary for the polars bug that `ndjson_scan_source` works around: a path scan of the file
-    /// that trips the sampler still fails under a slice. When this test starts failing, polars has
-    /// fixed the sampler, so delete `ndjson_scan_source`, drop the `polars-utils` dependency, and
-    /// keep `test_read_jsonl_slice_when_last_row_spans_three_quarter_mark` as the regression test.
-    #[tokio::test]
-    async fn test_polars_path_scan_still_fails_when_last_row_spans_three_quarter_mark()
-    -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
-            let path = write_jsonl_with_last_row_spanning_three_quarter_mark(&dir)?;
-            // The scan panics inside polars, so the join error is the expected outcome here.
-            let scan = task::spawn_blocking(move || {
-                LazyJsonLineReader::new(path)
-                    .with_infer_schema_length(Some(
-                        NonZeroUsize::new(10000).expect("10000 is non-zero"),
-                    ))
-                    .finish()?
-                    .slice(0, 100)
-                    .collect()
-            })
-            .await;
-            assert!(
-                !matches!(scan, Ok(Ok(_))),
-                "polars now reads this file from a path: remove `ndjson_scan_source` and the \
-                 `polars-utils` dependency, and keep the regression test"
-            );
-            Ok(())
-        })
-        .await
-    }
-
-    /// polars' NDJSON line sampler indexes past the end of a file of six or more rows whose last
-    /// row spans the 75% byte mark (see `ndjson_scan_source`). The slice is what makes it run, as
-    /// it does for every paginated data frame read.
+    /// A paginated or row-limited read of a JSONL file whose last row spans the 75% byte mark
+    /// returns its rows (ENG-1579).
     #[tokio::test]
     async fn test_read_jsonl_slice_when_last_row_spans_three_quarter_mark() -> Result<(), OxenError>
     {
         test::run_empty_dir_test_async(|dir| async move {
-            let path = write_jsonl_with_last_row_spanning_three_quarter_mark(&dir)?;
+            let path = dir.join("chat_history.jsonl");
+            let mut contents = String::new();
+            for id in 0..6 {
+                contents.push_str(&format!("{{\"id\":{id},\"text\":\"short\"}}\n"));
+            }
+            let long_text = "x".repeat(20_000);
+            contents.push_str(&format!("{{\"id\":6,\"text\":\"{long_text}\"}}\n"));
+            fs::write_to_path(&path, contents)?;
 
             let mut opts = DFOpts::empty();
             opts.slice = Some(SliceRange::for_page(1, 100));
             let df = tabular::read_df_with_extension(path.clone(), "jsonl", &opts).await?;
             assert_eq!(df.height(), 7);
+            assert_eq!(df.column("id")?.i64()?.get(6), Some(6));
+            assert_eq!(
+                df.column("text")?.str()?.get(6),
+                Some(long_text.as_str()),
+                "the long last row comes back whole"
+            );
 
             // A row limit is pushed down as the same kind of slice.
             let scanned = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {

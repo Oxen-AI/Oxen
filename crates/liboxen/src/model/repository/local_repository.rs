@@ -641,7 +641,20 @@ impl LocalRepository {
         let mtime_matched = self
             .mtime_matches(file_last_modified, node_last_modified)
             .await;
-        util::fs::classify_modified_from_node_with_metadata(path, node, metadata, mtime_matched)
+        if mtime_matched || metadata.len() != node.num_bytes() {
+            return util::fs::classify_modified_from_node_with_metadata(
+                path,
+                node,
+                metadata,
+                mtime_matched,
+            );
+        }
+        // The remaining checks read and hash the file.
+        let (path, node, metadata) = (path.to_path_buf(), node.clone(), metadata.clone());
+        tokio::task::spawn_blocking(move || {
+            util::fs::classify_modified_from_node_with_metadata(&path, &node, &metadata, false)
+        })
+        .await?
     }
 
     /// Override the mtime tolerance for this repo path in the per-process cache. Test-only

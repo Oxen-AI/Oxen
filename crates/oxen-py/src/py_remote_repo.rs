@@ -29,7 +29,7 @@ use crate::py_user::PyUser;
 use crate::py_workspace::PyWorkspaceResponse;
 
 #[derive(Clone)]
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyRemoteRepo {
     // Identity of the repo this handle points at, known even before it exists on the server.
     pub namespace: String,
