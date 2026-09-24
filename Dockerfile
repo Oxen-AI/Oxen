@@ -29,7 +29,7 @@ RUN apt-get update \
 #     && cmake --build . -j $(nproc) \
 #     && cmake --install .
 
-# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
+# FFmpeg 9 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
 # tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
 # That file stays for the cargo-chef install below; only the helper script is cleaned up.
 ARG TARGETARCH
@@ -107,7 +107,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends openssl curl ca-certificates \
     && rm -rfv /var/lib/apt/lists/*
 
-# FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see builder stage).
+# FFmpeg 9 shared libraries for the `ffmpeg` video-thumbnail feature (see builder stage).
 COPY --from=builder /opt/ffmpeg/lib /opt/ffmpeg/lib
 RUN echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg.conf && ldconfig
 

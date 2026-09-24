@@ -2866,7 +2866,7 @@ mod tests {
             .await?;
 
             let inner = series.list()?.get_as_series(0).unwrap();
-            let values: Vec<i64> = inner.i64()?.into_iter().map(|v| v.unwrap()).collect();
+            let values: Vec<i64> = inner.i64()?.iter().map(|v| v.unwrap()).collect();
             assert_eq!(values, vec![10, 20, 30]);
             Ok(())
         })
@@ -2899,7 +2899,7 @@ mod tests {
             let inner = series.list()?.get_as_series(0).unwrap();
             let values: Vec<Option<String>> = inner
                 .str()?
-                .into_iter()
+                .iter()
                 .map(|v| v.map(|s| s.to_string()))
                 .collect();
             assert_eq!(
@@ -2937,7 +2937,7 @@ mod tests {
             .await?;
 
             let inner = series.list()?.get_as_series(0).unwrap();
-            let values: Vec<u32> = inner.u32()?.into_iter().map(|v| v.unwrap()).collect();
+            let values: Vec<u32> = inner.u32()?.iter().map(|v| v.unwrap()).collect();
             assert_eq!(values, vec![1, 2, 3]);
             Ok(())
         })
@@ -2968,7 +2968,7 @@ mod tests {
             .await?;
 
             let inner = series.list()?.get_as_series(0).unwrap();
-            let values: Vec<f64> = inner.f64()?.into_iter().map(|v| v.unwrap()).collect();
+            let values: Vec<f64> = inner.f64()?.iter().map(|v| v.unwrap()).collect();
             assert_eq!(values, vec![0.1, 0.2, 0.3]);
             Ok(())
         })

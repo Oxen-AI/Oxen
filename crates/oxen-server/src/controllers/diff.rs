@@ -599,7 +599,7 @@ pub async fn update_df_diff(
             OxenError::ResourceNotFound(format!("{}@{}", resource_1.display(), commit_1).into())
         })?;
     let node_2 =
-        repositories::entries::get_file(&repository, &commit_1, &resource_2)?.ok_or_else(|| {
+        repositories::entries::get_file(&repository, &commit_2, &resource_2)?.ok_or_else(|| {
             OxenError::ResourceNotFound(format!("{}@{}", resource_2.display(), commit_2).into())
         })?;
 

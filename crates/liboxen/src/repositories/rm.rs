@@ -1187,9 +1187,9 @@ mod tests {
             // Should have staged the file for removal
             let status = repositories::status(&repo).await?;
             let has_staged_removal = status
-                .staged_files
-                .iter()
-                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+                .paths_with_status(StagedEntryStatus::Removed)
+                .next()
+                .is_some();
             assert!(has_staged_removal, "file should be staged for removal");
 
             // Commit the removal
@@ -1258,9 +1258,9 @@ mod tests {
             // Should have staged the file for removal
             let status = repositories::status(&repo).await?;
             let has_staged_removal = status
-                .staged_files
-                .iter()
-                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+                .paths_with_status(StagedEntryStatus::Removed)
+                .next()
+                .is_some();
             assert!(
                 has_staged_removal,
                 "file should be staged for removal after `oxen add .`"
@@ -1334,9 +1334,9 @@ mod tests {
             // Should have staged the file for removal
             let status = repositories::status(&repo).await?;
             let has_staged_removal = status
-                .staged_files
-                .iter()
-                .any(|(_, entry)| entry.status == StagedEntryStatus::Removed);
+                .paths_with_status(StagedEntryStatus::Removed)
+                .next()
+                .is_some();
             assert!(
                 has_staged_removal,
                 "file should be staged for removal after `oxen add .`"

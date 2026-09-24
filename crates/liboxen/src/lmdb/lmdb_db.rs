@@ -119,10 +119,8 @@ impl LmdbDb {
 
 /// Open or create a single named sub-database in `lmdb_env`, running the heed-required write txn.
 ///
-/// A convenience over [`LmdbDb::open`] for the common case of opening one database when a store is
-/// constructed. To open several databases together, run them inside a single [`with_write_txn`]
-/// closure with [`LmdbDb::open`] instead of paying one write txn per database.
-pub fn open_db(lmdb_env: &LmdbEnv, name: &str) -> Result<LmdbDb, LmdbLayerError> {
+/// A convenience over [`LmdbDb::open`] for opening an env's one database outside a txn.
+pub(in crate::lmdb) fn open_db(lmdb_env: &LmdbEnv, name: &str) -> Result<LmdbDb, LmdbLayerError> {
     with_write_txn(lmdb_env, |txn| LmdbDb::open(lmdb_env, txn, name))
 }
 
@@ -165,13 +163,12 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::lmdb::lmdb_env::{LmdbEnvConfig, open_lmdb_env};
+    use crate::lmdb::lmdb_env::open_lmdb_env;
     use crate::lmdb::txn::{with_read_txn, with_write_txn};
 
     fn test_lmdb_env() -> (TempDir, LmdbEnv) {
         let dir = tempfile::tempdir().expect("create temp dir");
-        let lmdb_env =
-            open_lmdb_env(dir.path(), &LmdbEnvConfig::new(1, ByteSize::mib(16))).expect("open env");
+        let lmdb_env = open_lmdb_env(dir.path(), ByteSize::mib(16)).expect("open env");
         (dir, lmdb_env)
     }
 

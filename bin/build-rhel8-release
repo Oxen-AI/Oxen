@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# build-rhel8-release
+#
+# Build the release `oxen` and `oxen-server` binaries and the `oxenai` Python wheels against
+# glibc 2.28, so they load on RHEL 8 and its rebuilds (Rocky Linux 8, AlmaLinux 8) as well as on
+# every newer distribution. Binaries land in target/release, wheels in target/wheels.
+#
+# Runs inside the PyPA manylinux_2_28 image, which supplies AlmaLinux 8, gcc, cmake, patchelf, and
+# the CPython interpreters under /opt/python. The repository must be mounted as the working
+# directory. The parallel runner-native build in .github/workflows/release_linux.yml produces the
+# glibc 2.34 artifacts.
+#
+# Removal is scheduled for 2029-05-31, RHEL 8 end of maintenance. See docs/deprecations.md.
+#
+#   PYTHON_VERSIONS   space-separated CPython versions to build wheels for, e.g. "3.11 3.12"
+set -euo pipefail
+
+: "${PYTHON_VERSIONS:?PYTHON_VERSIONS must name at least one CPython version, e.g. 3.11}"
+
+cd "$(dirname "$0")/.."
+# shellcheck disable=SC1091
+. tool-versions.env
+
+# clang-devel carries the libclang that librocksdb-sys's bindgen loads at runtime. perl and
+# pkgconfig back the cmake builds of aws-lc-sys and libz-sys.
+dnf install -y clang-devel perl pkgconfig
+
+export LIBCLANG_PATH=/usr/lib64
+export CARGO_HOME=/root/.cargo
+export RUSTUP_HOME=/root/.rustup
+export PATH="/root/.local/bin:$CARGO_HOME/bin:$PATH"
+
+# The statistics leave with the container, so print them on the way out of a failed build too.
+# They are diagnostic, so a failure to read them leaves a good build passing.
+trap 'sccache --show-stats || true' EXIT
+
+# The default toolchain is the one rust-toolchain.toml pins. maturin's host-target probe runs
+# rustc through sccache, where the toolchain file does not reach, and fails with no default set.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+    sh -s -- -y --no-modify-path --default-toolchain none
+rustup toolchain install
+rustup default "$(rustup show active-toolchain | cut -d' ' -f1)"
+curl -LsSf "https://astral.sh/uv/$UV_VERSION/install.sh" | sh
+
+# Reject an artifact needing a symbol version RHEL 8 cannot resolve, which installs and then fails
+# at load. The ceilings are the manylinux_2_28 baseline. An artifact whose requirements cannot be
+# read is rejected too, so an unreadable file cannot pass for a clean one.
+assert_runs_on_rhel8() {
+    local artifact="$1" info family ceiling highest
+    info=$(readelf --version-info --wide "$artifact") || true
+    if ! grep -q 'GLIBC_' <<<"$info"; then
+        echo "cannot read version requirements from $artifact" >&2
+        return 1
+    fi
+    for limit in GLIBC:2.28 GLIBCXX:3.4.24 CXXABI:1.3.11 GCC:7.0.0; do
+        family="${limit%%:*}"
+        ceiling="${limit##*:}"
+        highest=$(grep -oE "\b${family}_[0-9][0-9.]*" <<<"$info" |
+            sed "s/^${family}_//" | sort -V | tail -1)
+        if [ -n "$highest" ] &&
+            [ "$highest" != "$(printf '%s\n%s\n' "$ceiling" "$highest" | sort -V | head -1)" ]; then
+            echo "$artifact needs ${family}_${highest}, above ${family}_${ceiling}" >&2
+            return 1
+        fi
+    done
+}
+
+cargo build --workspace --exclude oxen-py --release
+
+assert_runs_on_rhel8 target/release/oxen
+assert_runs_on_rhel8 target/release/oxen-server
+
+for version in $PYTHON_VERSIONS; do
+    tag="cp${version//./}"
+    (
+        cd oxen-python
+        uvx --from "maturin[patchelf]==$MATURIN_VERSION" maturin build --release \
+            --interpreter "/opt/python/$tag-$tag/bin/python" \
+            --compatibility manylinux_2_28
+    )
+done

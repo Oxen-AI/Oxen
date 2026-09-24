@@ -103,6 +103,41 @@ jobs:
     secrets:
       GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
+  # Removal is scheduled for 2029-05-31, RHEL 8 end of maintenance. See docs/deprecations.md.
+  release_linux_rhel8_arm64:
+    name: Linux arm64 (RHEL 8)
+    needs: set_env
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/release_linux.yml
+    with:
+      ARCHITECTURE: arm64
+      RHEL8: true
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      RELEASE_VERSION: ${{ needs.set_env.outputs.release_version }}
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  release_linux_rhel8_x86_64:
+    name: Linux x86_64 (RHEL 8)
+    needs: set_env
+    permissions:
+      id-token: write
+      contents: read
+    uses: ./.github/workflows/release_linux.yml
+    with:
+      ARCHITECTURE: x86_64
+      RHEL8: true
+      AWS_ROLE: ${{ needs.set_env.outputs.aws_role }}
+      AWS_REGION: ${{ needs.set_env.outputs.aws_region }}
+      PYTHON_VERSIONS: ${{ needs.set_env.outputs.python_versions }}
+      RELEASE_VERSION: ${{ needs.set_env.outputs.release_version }}
+    secrets:
+      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
   release_macos_arm64_x86_64:
     name: MacOS arm64 and x86_64
     needs: set_env
@@ -142,6 +177,8 @@ jobs:
       - release_docker_x86_64
       - release_linux_arm64
       - release_linux_x86_64
+      - release_linux_rhel8_arm64
+      - release_linux_rhel8_x86_64
       - release_macos_arm64_x86_64
       - release_windows_x86_64
     if: success() || failure()
@@ -199,6 +236,9 @@ jobs:
             | Fedora       | 35                             |
             | RHEL         | 9.0                            |
             | Ubuntu       | 22.04                          |
+
+            The `-rhel8` tarballs and wheels are for RHEL 8 and its rebuilds, which have glibc
+            2.28. No distribution in the table above needs them.
 
             🖥️ Windows Binaries
             The Windows binaries require a minimum version of Visual C++ 2022.

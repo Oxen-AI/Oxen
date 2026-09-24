@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpng-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# FFmpeg 8 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
+# FFmpeg 9 for the `ffmpeg` video-thumbnail feature, installed via the shared helper. Pins live in
 # tool-versions.env, the single source of truth shared with Linux dev (bin/install-prereqs) and CI.
 ARG TARGETARCH
 COPY bin/install-ffmpeg tool-versions.env /tmp/ffmpeg-install/
@@ -49,7 +49,7 @@ RUN apt-get update \
     ca-certificates \
     && rm -rfv /var/lib/apt/lists/*
 
-# FFmpeg 8 shared libraries for the `ffmpeg` video-thumbnail feature (see base stage).
+# FFmpeg 9 shared libraries for the `ffmpeg` video-thumbnail feature (see base stage).
 COPY --from=builder /opt/ffmpeg/lib /opt/ffmpeg/lib
 RUN echo /opt/ffmpeg/lib > /etc/ld.so.conf.d/ffmpeg.conf && ldconfig
 

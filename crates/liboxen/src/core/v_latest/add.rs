@@ -204,7 +204,7 @@ pub async fn add_files(
                 repo_path,
                 &maybe_head_commit,
                 &corrected_path,
-                &Arc::clone(&staged_db),
+                &staged_db,
                 version_store,
             )
             .await?;
@@ -494,15 +494,23 @@ pub async fn process_add_dir(
                                             )
                                             .await?;
 
-                                        match process_add_file(
-                                            &repo,
-                                            &repo_path,
-                                            &file_status,
-                                            &staged_db,
-                                            &path,
-                                            &seen_dirs_clone,
-                                            &conflicts,
-                                        ) {
+                                        let added = {
+                                            let file_status = file_status.clone();
+                                            let path = path.clone();
+                                            tokio::task::spawn_blocking(move || {
+                                                process_add_file(
+                                                    &repo,
+                                                    &repo_path,
+                                                    &file_status,
+                                                    &staged_db,
+                                                    &path,
+                                                    &seen_dirs_clone,
+                                                    &conflicts,
+                                                )
+                                            })
+                                            .await?
+                                        };
+                                        match added {
                                             Ok(Some(node)) => {
                                                 let file = tokio::fs::File::open(&path).await?;
                                                 let size = file.metadata().await?.len();
@@ -658,7 +666,7 @@ async fn add_file_inner(
     repo_path: &PathBuf,
     maybe_head_commit: &Option<Commit>,
     path: &Path,
-    staged_db: &DBWithThreadMode<MultiThreaded>,
+    staged_db: &Arc<DBWithThreadMode<MultiThreaded>>,
     version_store: &Arc<dyn VersionStore>,
 ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
     let maybe_dir_node = if let Some(head_commit) = maybe_head_commit {
@@ -684,15 +692,24 @@ async fn add_file_inner(
         .map(|conflict| conflict.merge_entry.path)
         .collect();
 
-    process_add_file(
-        repo,
-        repo_path,
-        &file_status,
-        staged_db,
-        path,
-        &seen_dirs,
-        &conflicts,
-    )
+    let (repo, repo_path, staged_db, path) = (
+        repo.clone(),
+        repo_path.clone(),
+        Arc::clone(staged_db),
+        path.to_path_buf(),
+    );
+    tokio::task::spawn_blocking(move || {
+        process_add_file(
+            &repo,
+            &repo_path,
+            &file_status,
+            &staged_db,
+            &path,
+            &seen_dirs,
+            &conflicts,
+        )
+    })
+    .await?
 }
 
 pub async fn determine_file_status(
@@ -1024,22 +1041,31 @@ pub async fn stage_file_with_hash(
         }
     };
 
-    if let Some(metadata) = staged_file_metadata(staged_db_manager, &relative_path)? {
-        file_status.previous_metadata = Some(metadata);
-    }
+    let (workspace_repo, data_path, dst_path) = (
+        workspace_repo.clone(),
+        data_path.to_path_buf(),
+        dst_path.to_path_buf(),
+    );
+    let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
+    tokio::task::spawn_blocking(move || {
+        if let Some(metadata) = staged_file_metadata(&staged_db_manager, &relative_path)? {
+            file_status.previous_metadata = Some(metadata);
+        }
 
-    let file_node = generate_file_node(workspace_repo, data_path, dst_path, &file_status)?;
-    if let Some(file_node) = file_node {
-        let status = file_status.status.clone();
-        add_file_node_and_parent_dir(
-            &file_node,
-            status,
-            &relative_path,
-            staged_db_manager,
-            seen_dirs,
-        )?;
-    }
-    Ok(())
+        let file_node = generate_file_node(&workspace_repo, &data_path, &dst_path, &file_status)?;
+        if let Some(file_node) = file_node {
+            let status = file_status.status.clone();
+            add_file_node_and_parent_dir(
+                &file_node,
+                status,
+                &relative_path,
+                &staged_db_manager,
+                &seen_dirs,
+            )?;
+        }
+        Ok(())
+    })
+    .await?
 }
 
 /// Stage file node and parent dirs with staged db manager
