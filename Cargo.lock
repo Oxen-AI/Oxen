@@ -4679,7 +4679,7 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "liboxen"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "approx",
  "arrow",
@@ -5874,7 +5874,7 @@ checksum = "13c45bb4a6ae1280ec0803b1ef9d3455eb50f01efbbe1447ab020f1d54fba9d8"
 
 [[package]]
 name = "oxen-cli"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5900,7 +5900,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-py"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "bindgen 0.73.2",
  "cc",
@@ -5921,7 +5921,7 @@ dependencies = [
 
 [[package]]
 name = "oxen-server"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "actix-http",
  "actix-multipart",
