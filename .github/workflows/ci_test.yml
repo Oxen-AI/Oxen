@@ -273,18 +273,19 @@ jobs:
           & $readobj --coff-imports $exe | Select-String "Name: .*\.dll" | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique
           $uv = (Get-Command uv).Source
           $env:PATH = $stepPath
-          Write-Host "== where.exe python3.dll"
-          where.exe python3.dll
-          & $exe --version
+          Write-Host "== python3.dll on the step PATH"
+          $found = $stepPath -split ";" | Where-Object { $_ } | ForEach-Object { Join-Path $_ "python3.dll" } | Where-Object { Test-Path $_ }
+          if ($found) { $found } else { Write-Host "(none)" }
+          try { & $exe --version } catch { Write-Host "== oxen.exe threw: $_" }
           Write-Host ("== oxen --version, step PATH: exit 0x{0:X8}" -f $LASTEXITCODE)
           cd ${{ github.workspace }}\cli-test
           & $uv sync
-          & $uv run cmd /c "oxen --version & echo == oxen --version under uv run: exit %ERRORLEVEL%"
+          & $uv run $env:ComSpec /c "oxen --version & echo == oxen --version under uv run: exit %ERRORLEVEL%"
           $pydir = Split-Path (& $uv python find)
           Write-Host "== uv Python dir: $pydir"
           Get-ChildItem $pydir -Filter "python3*.dll" | ForEach-Object { Write-Host $_.Name }
           $env:PATH = "$pydir;$env:PATH"
-          & $exe --version
+          try { & $exe --version } catch { Write-Host "== oxen.exe threw: $_" }
           Write-Host ("== oxen --version, uv Python dir on PATH: exit 0x{0:X8}" -f $LASTEXITCODE)
           exit 0
 
