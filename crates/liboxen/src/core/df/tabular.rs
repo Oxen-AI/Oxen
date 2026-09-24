@@ -1925,8 +1925,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_read_json() -> Result<(), OxenError> {
+    #[test]
+    fn test_read_json() -> Result<(), OxenError> {
         let df = tabular::read_df_json(test::test_text_json())?.collect()?;
 
         println!("{df}");

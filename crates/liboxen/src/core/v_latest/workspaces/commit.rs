@@ -436,50 +436,67 @@ async fn compute_staged_merkle_tree_node(
     data_type: EntryDataType,
 ) -> Result<StagedMerkleTreeNode, OxenError> {
     // This logic is copied from add.rs but add has some optimizations that make it hard to be reused here
-    let metadata = util::fs::metadata(path)?;
-    let mtime = FileTime::from_last_modification_time(&metadata);
-    let hash = util::hasher::get_hash_given_metadata(path, &metadata)?;
-    let num_bytes = metadata.len();
-    let hash = MerkleHash::new(hash);
+    let (mtime, num_bytes, hash, mime_type, metadata, metadata_hash, combined_hash) = {
+        let workspace_repo = workspace.workspace_repo.clone();
+        let (path, data_type) = (path.clone(), data_type.clone());
+        tokio::task::spawn_blocking(move || {
+            let metadata = util::fs::metadata(&path)?;
+            let mtime = FileTime::from_last_modification_time(&metadata);
+            let hash = util::hasher::get_hash_given_metadata(&path, &metadata)?;
+            let num_bytes = metadata.len();
+            let hash = MerkleHash::new(hash);
 
-    // Use the committed node's data type for the guard below: an empty export
-    // can mime-detect as non-tabular.
-    let mime_type = util::fs::file_mime_type(path);
-    log::debug!("compute_staged_merkle_tree_node path: {path:?}");
-    let mut metadata = repositories::metadata::get_file_metadata(path, &data_type)?;
-    log::debug!("compute_staged_merkle_tree_node metadata: {metadata:?}");
+            // Use the committed node's data type for the guard below: an empty export
+            // can mime-detect as non-tabular.
+            let mime_type = util::fs::file_mime_type(&path);
+            log::debug!("compute_staged_merkle_tree_node path: {path:?}");
+            let mut metadata = repositories::metadata::get_file_metadata(&path, &data_type)?;
+            log::debug!("compute_staged_merkle_tree_node metadata: {metadata:?}");
 
-    // A tabular file we cannot parse must never be committed: a FileNode with
-    // data_type Tabular and no metadata makes every subsequent read of the
-    // file fail with `TabularFileMissingMetadata`. This happens when
-    // the exported data frame is empty (e.g. all rows were staged as removed
-    // — an empty jsonl/csv has no schema to infer). Failing the commit keeps
-    // the last good version readable.
-    if data_type == EntryDataType::Tabular && metadata.is_none() {
-        return Err(OxenError::TabularExportMissingMetadata(path.clone()));
-    }
+            // A tabular file we cannot parse must never be committed: a FileNode with
+            // data_type Tabular and no metadata makes every subsequent read of the
+            // file fail with `TabularFileMissingMetadata`. This happens when
+            // the exported data frame is empty (e.g. all rows were staged as removed
+            // — an empty jsonl/csv has no schema to infer). Failing the commit keeps
+            // the last good version readable.
+            if data_type == EntryDataType::Tabular && metadata.is_none() {
+                return Err(OxenError::TabularExportMissingMetadata(path));
+            }
 
-    // Here we give priority to the staged schema, as it can contained metadata that was changed during the
-    if let Ok(Some(staged_schema)) =
-        core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
-            &workspace.workspace_repo,
-            path,
-        )
-        && let Some(GenericMetadata::MetadataTabular(metadata)) = &mut metadata
-    {
-        metadata
-            .tabular
-            .schema
-            .update_metadata_from_schema(&staged_schema);
-    }
+            // Here we give priority to the staged schema, as it can contained metadata that was
+            // changed during the
+            if let Ok(Some(staged_schema)) =
+                core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+                    &workspace_repo,
+                    &path,
+                )
+                && let Some(GenericMetadata::MetadataTabular(metadata)) = &mut metadata
+            {
+                metadata
+                    .tabular
+                    .schema
+                    .update_metadata_from_schema(&staged_schema);
+            }
 
-    // Absent metadata leaves the metadata hash unset and the combined hash equal to the content
-    // hash, the same convention `add` and `FileNode::recompute_metadata_hashes` follow. A file's
-    // combined hash feeds the vnode and dir node hashes, so one convention across every writer is
-    // what keeps identical content under one tree identity.
-    let metadata_hash = util::hasher::maybe_get_metadata_hash(&metadata)?;
-    let combined_hash = util::hasher::get_combined_hash(metadata_hash, hash.to_u128())?;
-    let combined_hash = MerkleHash::new(combined_hash);
+            // Absent metadata leaves the metadata hash unset and the combined hash equal to the
+            // content hash, the same convention `add` and `FileNode::recompute_metadata_hashes`
+            // follow. A file's combined hash feeds the vnode and dir node hashes, so one convention
+            // across every writer is what keeps identical content under one tree identity.
+            let metadata_hash = util::hasher::maybe_get_metadata_hash(&metadata)?;
+            let combined_hash = util::hasher::get_combined_hash(metadata_hash, hash.to_u128())?;
+            let combined_hash = MerkleHash::new(combined_hash);
+            Ok::<_, OxenError>((
+                mtime,
+                num_bytes,
+                hash,
+                mime_type,
+                metadata,
+                metadata_hash,
+                combined_hash,
+            ))
+        })
+        .await??
+    };
 
     // Copy file to the version store
     log::debug!("compute_staged_merkle_tree_node writing file to version store");
