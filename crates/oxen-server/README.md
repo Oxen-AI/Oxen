@@ -19,17 +19,9 @@ Use the standard `cargo ... --workspace` commands and `cargo ... -p oxen-server`
 
 ## Run
 
-To run a local Oxen Server, generate a config file and token to authenticate the user:
+To run a local Oxen Server, first set the name and email the `oxen` client saves your commits as:
 ```bash
-cargo run -p oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-```
-
-Copy the config to the default locations:
-```bash
-mkdir ~/.oxen
-mv user_config.toml ~/.oxen/user_config.toml
-mkdir -p data/test/config/
-cp ~/.oxen/user_config.toml data/test/config/user_config.toml
+./target/debug/oxen config --name Ox --email ox@oxen.ai
 ```
 
 Set where you want the data to be synced to.
@@ -65,19 +57,14 @@ bacon server
 
 Server defaults to localhost 3000.
 
-You can grab your auth token from the config file above (`~/.oxen/user_config.toml`):
-```bash
-export TOKEN="<YOUR_TOKEN>"
-```
-
 #### List Repositories
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "http://0.0.0.0:3000/api/repos"
+curl "http://0.0.0.0:3000/api/repos"
 ```
 
 #### Create Repository
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000api/repos"
+curl -X POST -d '{"name": "MyRepo"}' "http://0.0.0.0:3000/api/repos"
 ```
 
 

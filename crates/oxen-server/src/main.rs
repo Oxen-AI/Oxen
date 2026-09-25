@@ -1,7 +1,6 @@
 use dotenvy::dotenv;
 use dotenvy::from_filename;
 use liboxen::api::requests::{RenameRepoRequest, RepoNew, TransferNamespaceRequest};
-use liboxen::config::UserConfig;
 use liboxen::constants::OXEN_VERSION;
 use liboxen::error::OxenError;
 use liboxen::model::User;
@@ -12,14 +11,13 @@ use liboxen::util::telemetry;
 
 // Imported as modules rather than as items: the `crate::`-rooted paths below — notably the utoipa
 // `paths(...)` list — resolve through this crate's root.
-use oxen_server::{app_data, auth, config, controllers, crash_diagnostics, metrics, routes};
+use oxen_server::{app_data, config, controllers, crash_diagnostics, metrics, routes};
 
 extern crate liboxen;
 extern crate log;
 
-use actix_web::middleware::{Condition, DefaultHeaders, Logger};
+use actix_web::middleware::{DefaultHeaders, Logger};
 use actix_web::{App, HttpServer, web};
-use actix_web_httpauth::middleware::HttpAuthentication;
 use thiserror::Error;
 
 use oxen_server::middleware::{
@@ -334,14 +332,6 @@ enum ServerCommand {
         )]
         port: u16,
 
-        /// Whether or not to use auth on the routes. Defaults to off.
-        #[arg(
-            short = 'a',
-            long = "auth",
-            help = "Start the server with token-based authentication enforced"
-        )]
-        auth: bool,
-
         /// Optional path to a TOML config file controlling server-wide settings.
         #[arg(
             long = "config",
@@ -359,34 +349,6 @@ enum ServerCommand {
                     local mock HTTP server. Do not use in production."
         )]
         test: bool,
-    },
-
-    /// Create a new user in the server and output the config file for that user
-    #[command(name = "add-user")]
-    AddUser {
-        #[arg(
-            short = 'e',
-            long = "email",
-            required = true,
-            help = "User's email address"
-        )]
-        email: String,
-
-        #[arg(
-            short = 'n',
-            long = "name",
-            required = true,
-            help = "User's name that will show up in the commits"
-        )]
-        name: String,
-
-        #[arg(
-            short = 'o',
-            long = "output",
-            default_value = "user_config.toml",
-            help = "Where to write the output config file to give to the user"
-        )]
-        output: PathBuf,
     },
 
     /// Record the name every repository holds in the server's name table. Run with the server
@@ -547,7 +509,6 @@ async fn server() -> Result<(), ServerError> {
         ServerCommand::Start {
             ip,
             port,
-            auth,
             config,
             test,
         } => {
@@ -568,28 +529,11 @@ async fn server() -> Result<(), ServerError> {
             start(
                 &ip,
                 port,
-                ServerOpts {
-                    enable_auth: auth,
-                    test_mode: test,
-                },
+                ServerOpts { test_mode: test },
                 &sync_dir,
                 server_config,
             )
             .await?;
-            Ok(())
-        }
-
-        ServerCommand::AddUser {
-            email,
-            name,
-            output,
-        } => {
-            log::debug!("Saving to sync dir: {sync_dir:?}");
-            let token = add_user(&email, &name, output.as_path(), &sync_dir)?;
-            // KEEP as println! -- do not log!
-            println!(
-                "User access token created:\n\n{token}\n\nTo give user access have them run the command `oxen config --auth <HOST> <TOKEN>`"
-            );
             Ok(())
         }
 
@@ -812,7 +756,6 @@ fn init_metrics() -> Result<Option<MetricsGuard>, ServerError> {
 /// [`config::Config`] (which carries settings from disk).
 #[derive(Debug, Clone)]
 struct ServerOpts {
-    enable_auth: bool,
     /// Test mode (`--test`): relaxes the import SSRF guard to allow loopback targets. Never
     /// enabled in production.
     test_mode: bool,
@@ -825,10 +768,7 @@ async fn start(
     sync_dir: &Path,
     config: Config,
 ) -> Result<(), std::io::Error> {
-    let ServerOpts {
-        enable_auth,
-        test_mode,
-    } = opts;
+    let ServerOpts { test_mode } = opts;
 
     // Install DuckDB extensions before actix hands out any request threads. oxen-server
     // is a single-instance deploy, so every restart drains pent-up client retries into a
@@ -898,10 +838,6 @@ async fn start(
                 "/api/migrations/{migration_tstamp}",
                 web::get().to(controllers::migrations::list_unmigrated),
             )
-            .wrap(Condition::new(
-                enable_auth,
-                HttpAuthentication::bearer(auth::validator::validate),
-            ))
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api/_spec/oxen_server_openapi.json", ApiDoc::openapi()),
@@ -945,20 +881,6 @@ async fn start(
     log::info!("DuckDB connection cache flushed — exiting");
 
     server_result
-}
-
-/// Creates the user and returns their auth token.
-fn add_user(email: &str, name: &str, output: &Path, sync_dir: &Path) -> Result<String, OxenError> {
-    let keygen = auth::access_keys::AccessKeyManager::new(sync_dir)?;
-    let (user, token) = keygen.create(&User {
-        name: name.to_string(),
-        email: email.to_string(),
-    })?;
-
-    let cfg = UserConfig::from_user(&user);
-    cfg.save(output)?;
-
-    Ok(token)
 }
 
 #[cfg(test)]

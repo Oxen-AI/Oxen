@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
-version = "0.58.1"
+version = "0.59.0"
 edition = "2024"
 license-file = "LICENSE"
 homepage = "https://oxen.ai"
@@ -30,7 +30,6 @@ actix-http = "3.4.0"
 actix-multipart = "0.8"
 actix-multipart-test = "0.0.3"
 actix-web = { version = "4.9.0", features = ["rustls"] }
-actix-web-httpauth = "0.8.0"
 anyhow = "1.0.102"
 approx = "0.5.1"
 arrow = "=58.1.0"
@@ -84,7 +83,6 @@ infer = "0.22"
 itertools = "0.15"
 # 11.0 ships no crypto backend by default and panics on the first encode without one.
 # rust_crypto keeps the JWT path pure Rust, adding no C toolchain to the container build.
-jsonwebtoken = { version = "11.0", features = ["rust_crypto"] }
 jwalk = "0.9"
 lazy_static = "1.4.0"
 libc = "0.2"
@@ -92,7 +90,7 @@ libduckdb-sys = { version = "=1.10505.0" }
 # liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
 # resolve liboxen from crates.io when published.
-liboxen = { path = "crates/liboxen", version = "=0.58.1" }
+liboxen = { path = "crates/liboxen", version = "=0.59.0" }
 lofty = "0.25"
 log = "0.4.33"
 lru = "0.18"

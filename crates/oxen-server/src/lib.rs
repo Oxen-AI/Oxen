@@ -1,7 +1,6 @@
 //! The Oxen server's implementation. The `oxen-server` binary is a thin shell over this crate.
 
 pub mod app_data;
-pub mod auth;
 pub mod config;
 pub mod controllers;
 pub mod crash_diagnostics;

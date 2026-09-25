@@ -76,11 +76,6 @@ jobs:
       - name: Build oxen rust project
         run: cargo build --workspace
 
-      - name: Setup oxen-server user
-        run: |
-          ./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-          cp user_config.toml data/test/config/user_config.toml
-
       # Nightly and non-blocking, so run the whole suite on NFS rather than a guessed subset —
       # NFS-only failures can surface anywhere, not just in the transfer/storage paths.
       - name: Run oxen rust tests

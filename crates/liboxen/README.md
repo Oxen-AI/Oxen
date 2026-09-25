@@ -127,24 +127,10 @@ oxen push origin main
 
 ## Oxen Server
 
-To run a local Oxen Server, generate a config file and token to authenticate the user
+To run a local Oxen Server, first set the name and email the `oxen` client saves your commits as
 
 ```bash
-./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output user_config.toml
-```
-
-Copy the config to the default locations
-
-```bash
-mkdir ~/.oxen
-```
-
-```bash
-mv user_config.toml ~/.oxen/user_config.toml
-```
-
-```bash
-cp ~/.oxen/user_config.toml data/test/config/user_config.toml
+./target/debug/oxen config --name Ox --email ox@oxen.ai
 ```
 
 Set where you want the data to be synced to. The default sync directory is `./data/` to change it set the `SYNC_DIR` environment variable to a path.
@@ -238,9 +224,8 @@ docker load -i result
 Here are the steps to manually configure and run tests (see also the [Automatic Test Setup](#automatic-test-setup) section). Make sure your user is configured and server is running on the default port and host, by following these setup steps:
 
 ```bash
-# Configure a user
-mkdir -p data/test/{runs,config}
-./target/debug/oxen-server add-user --email ox@oxen.ai --name Ox --output data/test/config/user_config.toml
+# The tests use the checked-in data/test/config/user_config.toml
+mkdir -p data/test/runs
 # Start the oxen-server
 ./target/debug/oxen-server start
 ```
@@ -306,22 +291,16 @@ Server defaults to localhost 3000
 set SERVER 0.0.0.0:3000
 ```
 
-You can grab your auth token from the config file above (~/.oxen/user_config.toml)
-
-```bash
-set TOKEN <YOUR_TOKEN>
-```
-
 ## List Repositories
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" "http://$SERVER/api/repos"
+curl "http://$SERVER/api/repos"
 ```
 
 ## Create Repository
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$SERVER/api/repos"
+curl -X POST -d '{"name": "MyRepo"}' "http://$SERVER/api/repos"
 ```
 
 # Docker
@@ -329,13 +308,13 @@ curl -H "Authorization: Bearer $TOKEN" -X POST -d '{"name": "MyRepo"}' "http://$
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.58.1 .
+docker build -t oxen/server:0.59.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
 ```bash
-docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.58.1
+docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.59.0
 ```
 
 Or use docker compose

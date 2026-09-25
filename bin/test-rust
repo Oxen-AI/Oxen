@@ -179,19 +179,8 @@ if [ "$CURRENT_ULIMIT" -lt "$DESIRED_ULIMIT" ]; then
     }
 fi
 
-# Configure test user
-if [ ! -d ./data/test/runs ] || [ ! -d ./data/test/config ]; then
-    echo "==> Configuring test user..."
-    mkdir -p ./data/test/runs
-    mkdir -p ./data/test/config
-
-    ./target/debug/oxen-server add-user \
-        --email ox@oxen.ai \
-        --name ox \
-        --output data/test/config/user_config.toml
-else
-    echo "==> Test user already configured, skipping."
-fi
+# The tests' user config is the checked-in data/test/config/user_config.toml.
+mkdir -p ./data/test/runs
 
 # Select port and start oxen-server
 port_is_free() {

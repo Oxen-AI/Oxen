@@ -9,6 +9,7 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 | 0.51.4 to TBD | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
 | 0.58.0 to TBD | Server | [Record identity for repositories that predate it](#record-identity-for-repositories-that-predate-it) |
 | 0.58.0 to TBD | Server | [Re-seed the name table after changing the sync directory by hand](#re-seed-the-name-table-after-changing-the-sync-directory-by-hand) |
+| 0.59.0 to TBD | Server | [Stop starting the server with `-a`](#stop-starting-the-server-with--a) |
 
 ## Move a repository's Merkle nodes to LMDB
 
@@ -59,6 +60,20 @@ oxen-server seed-name-table
 ```
 
 It indexes the name every repository records and prints how many it covered. It only adds names, so a repository directory removed by hand keeps its name taken, and the command reports those names as `unclaimed`.
+
+## Stop starting the server with `-a`
+
+**Versions:** 0.59.0 to TBD. **Applies to:** server.
+
+`oxen-server` no longer authenticates requests itself, so it refuses to start with `-a` and no longer has an `add-user` command. Before upgrading a server started with `-a`, put a reverse proxy or gateway in front of it that authenticates requests (see [Self Hosting](../SelfHosting.md)), and drop `-a` from the command that starts it.
+
+The tokens `add-user` issued and the secret they were signed with stay in `$SYNC_DIR/.oxen/`, which nothing reads any more. Delete it:
+
+```bash
+rm -rf "$SYNC_DIR/.oxen"
+```
+
+Until it is gone, the `oxen` CLI run from a directory inside the sync directory that no repository contains takes the whole sync directory for a repository.
 
 ## Maintaining this page
 
