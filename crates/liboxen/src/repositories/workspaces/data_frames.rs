@@ -2017,9 +2017,12 @@ mod tests {
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
-            let err_files =
-                repositories::workspaces::files::rm(&workspace, slice::from_ref(&file_path))
-                    .await?;
+            let (removed, yielded) = test::run_and_report_yield(
+                repositories::workspaces::files::rm(&workspace, slice::from_ref(&file_path)),
+            )
+            .await;
+            let err_files = removed?;
+            assert!(yielded, "rm held the thread it was called on");
             assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
             assert!(
                 !workspaces::data_frames::is_indexed(&workspace, &file_path)?,
