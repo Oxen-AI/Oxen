@@ -68,7 +68,7 @@ It indexes the name every repository records and prints how many it covered. It 
 
 > **Warning:** the S3 backend is not yet supported in open source, so do not use it yet. If you do, you use it at your own risk.
 
-The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in its bucket rather than `{namespace}/{name}/`. With the server stopped, [record identity](#record-identity-for-repositories-that-predate-it) for any repository that lacks it, copy each S3-backed repository's objects from its old prefix to `repo/{repo_uuid}/`, using the UUID in its config, then start the server and delete the old prefixes once the repositories read correctly.
+The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in its bucket rather than `{namespace}/{name}/`. With the server stopped, add an [`[identity]` section](../SelfHosting.md#the-identity-section) by hand to the config of any S3-backed repository that lacks one, with a new UUID and the namespace and name from its path, since the `backfill_repo_identity` migration cannot open an S3-backed repository. Then copy each S3-backed repository's objects from its old prefix to `repo/{repo_uuid}/`, using the UUID in its config. Start the server, and delete the old prefixes once the repositories read correctly.
 
 ## Stop starting the server with `-a`
 
