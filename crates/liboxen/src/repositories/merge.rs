@@ -736,19 +736,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_checkout_theirs()
-    -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_command_merge_dataframe_conflict_both_added_rows() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Add a more rows on this branch
-            let branch_name = "ox-add-rows";
-            repositories::branches::create_checkout(&repo, branch_name)?;
 
             let bbox_filename = Path::new("annotations")
                 .join("train")
                 .join("bounding_box.csv");
             let bbox_file = repo.path.join(&bbox_filename);
+            let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
+
+            // Add a more rows on this branch
+            let branch_name = "ox-add-rows";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+
             let bbox_file =
                 test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
             let their_branch_contents = util::fs::read_from_path(&bbox_file)?;
@@ -769,67 +770,23 @@ mod tests {
             repositories::merge::merge(&repo, branch_name).await?;
 
             // We should have a conflict....
-            println!("status plz");
             let status = repositories::status(&repo).await?;
             assert_eq!(status.merge_conflicts.len(), 1);
 
-            println!("checkout theirs plz");
-
-            // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
+            // Taking theirs keeps the branch's rows
             repositories::checkout::checkout_theirs(&repo, &bbox_filename).await?;
-
             let file_contents = util::fs::read_from_path(&bbox_file)?;
             assert_eq!(file_contents, their_branch_contents);
-            Ok(())
-        })
-        .await
-    }
 
-    #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows_combine_uniq()
-    -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            let bbox_filename = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let bbox_file = repo.path.join(&bbox_filename);
-
-            // Add a more rows on this branch
-            let branch_name = "ox-add-rows";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            // Add in a line in this branch
-            let row_from_branch = "train/cat_3.jpg,cat,41.0,31.5,410,427";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_branch)?;
-
-            // Add the changes
-            repositories::add(&repo, &bbox_file).await?;
-            repositories::commit(&repo, "Adding new annotation as an Ox on a branch.")?;
-
-            // Add a more rows on the main branch
-            repositories::checkout(&repo, og_branch.name).await?;
-
-            let row_from_main = "train/dog_4.jpg,dog,52.0,62.5,256,429";
-            let bbox_file = test::append_line_txt_file(bbox_file, row_from_main)?;
-
-            repositories::add(&repo, &bbox_file).await?;
-            repositories::commit(&repo, "Adding new annotation on main branch")?;
-
-            // Try to merge in the changes
-            repositories::merge::merge(&repo, branch_name).await?;
-
-            // We should have a conflict....
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.merge_conflicts.len(), 1);
-
-            // Run repositories::checkout::checkout_theirs() and make sure their changes get kept
-            repositories::checkout::checkout_combine(&repo, bbox_filename).await?;
+            // Combining the same conflict keeps the rows from both sides, whatever the working
+            // file currently holds
+            repositories::checkout::checkout_combine(&repo, &bbox_filename).await?;
             let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
-
-            // This doesn't guarantee order, but let's make sure we have 7 annotations now
-            assert_eq!(df.height(), 8);
+            assert_eq!(
+                df.height(),
+                og_df.height() + 2,
+                "the combined file carries one new row from each branch"
+            );
 
             Ok(())
         })
@@ -838,7 +795,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_merge_dataframe_conflict_error_added_col() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -903,70 +860,53 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_command_merge_fast_forward_pull() -> Result<(), OxenError> {
-        test::run_remote_repo_test_bounding_box_csv_pushed(|_local_repo, remote_repo| async move {
+        test::run_remote_repo_test_bounding_box_csv_pushed(|repo_a, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
-            test::run_empty_dir_test_async(|repo_dir_a| async move {
-                let repo_dir_a = repo_dir_a.join("repo_a");
-                let cloned_repo_a =
-                    repositories::clone_url(&remote_repo.remote.url, &repo_dir_a).await?;
+            test::run_empty_dir_test_async(|repo_dir_b| async move {
+                let repo_dir_b = repo_dir_b.join("repo_b");
+                let cloned_repo_b =
+                    repositories::clone_url(&remote_repo.remote.url, &repo_dir_b).await?;
 
-                test::run_empty_dir_test_async(|repo_dir_b| async move {
-                    let repo_dir_b = repo_dir_b.join("repo_b");
-                    let cloned_repo_b =
-                        repositories::clone_url(&remote_repo.remote.url, &repo_dir_b).await?;
+                // Add a more rows on this branch
+                let bbox_filename = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                let bbox_file = repo_a.path.join(&bbox_filename);
+                let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
+                let bbox_file =
+                    test::append_line_txt_file(bbox_file, "train/cat_3.jpg,cat,41.0,31.5,410,427")?;
+                repositories::add(&repo_a, &bbox_file).await?;
+                repositories::commit(&repo_a, "Adding new annotation as an Ox.")?;
 
-                    // Add a more rows on this branch
-                    let bbox_filename = Path::new("annotations")
-                        .join("train")
-                        .join("bounding_box.csv");
-                    let bbox_file = cloned_repo_a.path.join(&bbox_filename);
-                    let og_df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
-                    let bbox_file = test::append_line_txt_file(
-                        bbox_file,
-                        "train/cat_3.jpg,cat,41.0,31.5,410,427",
-                    )?;
-                    repositories::add(&cloned_repo_a, &bbox_file).await?;
-                    repositories::commit(&cloned_repo_a, "Adding new annotation as an Ox.")?;
+                repositories::push(&repo_a).await?;
 
-                    repositories::push(&cloned_repo_a).await?;
+                // Pull in the changes
+                repositories::pull(&cloned_repo_b).await?;
 
-                    // Pull in the changes
-                    repositories::pull(&cloned_repo_b).await?;
+                // Check that we have the new data
+                let bbox_file = cloned_repo_b.path.join(&bbox_filename);
+                let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
+                assert_eq!(df.height(), og_df.height() + 1);
 
-                    // Check that we have the new data
-                    let bbox_file = cloned_repo_b.path.join(&bbox_filename);
-                    let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
-                    assert_eq!(df.height(), og_df.height() + 1);
+                // make the changes again from repo_a
+                let bbox_file = repo_a.path.join(&bbox_filename);
+                let bbox_file = test::append_line_txt_file(
+                    bbox_file,
+                    "train/cat_13.jpg,cat,41.0,31.5,410,427",
+                )?;
+                repositories::add(&repo_a, &bbox_file).await?;
+                repositories::commit(&repo_a, "Adding another new annotation as an Ox.")?;
 
-                    // make the changes again from repo_a
-                    // Add a more rows on this branch
-                    let bbox_filename = Path::new("annotations")
-                        .join("train")
-                        .join("bounding_box.csv");
-                    let bbox_file = cloned_repo_a.path.join(&bbox_filename);
-                    let bbox_file = test::append_line_txt_file(
-                        bbox_file,
-                        "train/cat_13.jpg,cat,41.0,31.5,410,427",
-                    )?;
-                    repositories::add(&cloned_repo_a, &bbox_file).await?;
-                    repositories::commit(
-                        &cloned_repo_a,
-                        "Adding another new annotation as an Ox.",
-                    )?;
+                repositories::push(&repo_a).await?;
 
-                    repositories::push(&cloned_repo_a).await?;
+                // Pull in the changes
+                repositories::pull(&cloned_repo_b).await?;
 
-                    // Pull in the changes
-                    repositories::pull(&cloned_repo_b).await?;
+                // Check that we have the new data
+                let bbox_file = cloned_repo_b.path.join(&bbox_filename);
+                let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
+                assert_eq!(df.height(), og_df.height() + 2);
 
-                    // Check that we have the new data
-                    let bbox_file = cloned_repo_b.path.join(&bbox_filename);
-                    let df = tabular::read_df(&bbox_file, DFOpts::empty()).await?;
-                    assert_eq!(df.height(), og_df.height() + 2);
-
-                    Ok(())
-                })
-                .await?;
                 Ok(())
             })
             .await?;
