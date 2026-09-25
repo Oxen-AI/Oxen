@@ -2145,7 +2145,6 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
     }
 }
 
-// Catch all tests for the library
 /// Run `work` to completion and report whether it ever yielded the thread it started on.
 ///
 /// Call it from a `#[tokio::test]`, whose current-thread runtime matches what an oxen-server
@@ -2168,6 +2167,7 @@ pub async fn run_and_report_yield<F: Future>(work: F) -> (F::Output, bool) {
     (output, yielded.load(Ordering::SeqCst))
 }
 
+// Catch all tests for the library
 #[cfg(test)]
 mod tests {
 
