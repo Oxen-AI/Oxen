@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{file_stream_response, get_repo};
+use crate::helpers::{file_stream_response, get_repo, get_repo_async};
 use crate::params::{app_data, path_param};
 use crate::tasks;
 
@@ -208,11 +208,11 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let directory = path_param(&req, "path")?.to_string();
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -289,25 +289,18 @@ pub async fn rm_files(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
-    let mut ret_files = vec![];
-    let mut err_files = vec![];
-
-    for path in &paths_to_remove {
-        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
-        log::debug!("rm ✅ success! staged file {path:?} as removed");
-        ret_files.push(path);
-    }
-
+    let err_files = repositories::workspaces::files::rm(&workspace, &paths_to_remove).await?;
+    log::debug!("rm ✅ success! staged files {paths_to_remove:?} as removed");
     log::debug!("err_files: {err_files:?}");
 
     if err_files.is_empty() {
@@ -372,7 +365,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
@@ -387,13 +380,16 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     // Validate and normalize new_path
     let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
     // Check if new_path already exists in the workspace or base repo
-    if repositories::tree::get_node_by_path(&repo, &workspace.commit, &new_path)?.is_some() {
+    if repositories::tree::get_node_by_path_async(&repo, &workspace.commit, &new_path)
+        .await?
+        .is_some()
+    {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));
@@ -403,7 +399,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     if util::fs::is_tabular(&path) {
         repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
     } else {
-        repositories::workspaces::files::mv(&workspace, &path, &new_path)?;
+        repositories::workspaces::files::mv(&workspace, &path, &new_path).await?;
     }
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))

@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{create_user_from_options, file_stream_response, get_repo};
-use crate::params::{app_data, parse_resource, path_param, query_param};
+use crate::helpers::{create_user_from_options, file_stream_response, get_repo, get_repo_async};
+use crate::params::{app_data, parse_resource, parse_resource_async, path_param, query_param};
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
@@ -25,6 +25,7 @@ use liboxen::util::fs::AtomicFile;
 use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
+use std::slice;
 use std::sync::Arc;
 use tokio::task::spawn_blocking;
 use utoipa::ToSchema;
@@ -410,7 +411,7 @@ pub async fn delete(
 
     // Stage the path as removed
     log::debug!("file::delete staging path {path:?}");
-    repositories::workspaces::files::rm(&workspace, &path).await?;
+    repositories::workspaces::files::rm(&workspace, slice::from_ref(&path)).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
@@ -479,11 +480,11 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     // Parse the resource (branch/commit/path)
-    let resource = parse_resource(&req, &repo)?;
+    let resource = parse_resource_async(&req, &repo).await?;
 
     // Resource must specify branch because we need to commit the workspace back to a branch
     let branch = resource
@@ -504,13 +505,20 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     // Validate and normalize new_path
     let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
-    // Verify source file exists
-    if repositories::entries::get_file(&repo, &commit, &source_path)?.is_none() {
+    // Verify source file exists. Both this and the collision check below walk the Merkle tree
+    // synchronously, so they go off the worker the same way the move itself does.
+    if repositories::tree::get_file_by_path_async(&repo, &commit, &source_path)
+        .await?
+        .is_none()
+    {
         return Err(OxenHttpError::NotFound);
     }
 
     // Check if new_path already exists (file OR directory)
-    if repositories::tree::get_node_by_path(&repo, &commit, &new_path)?.is_some() {
+    if repositories::tree::get_node_by_path_async(&repo, &commit, &new_path)
+        .await?
+        .is_some()
+    {
         return Err(OxenHttpError::BadRequest(
             "new_path already exists in the repository".into(),
         ));
@@ -521,7 +529,7 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
 
     // Stage the move
     log::debug!("file::mv moving {source_path:?} to {new_path:?}");
-    repositories::workspaces::files::mv(&workspace, &source_path, &new_path)?;
+    repositories::workspaces::files::mv(&workspace, &source_path, &new_path).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {
