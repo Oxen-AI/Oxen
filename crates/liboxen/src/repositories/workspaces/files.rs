@@ -89,7 +89,7 @@ mod tests {
                 repositories::workspaces::create(&repo, &commit, "rm-yield-workspace", true)?;
 
             let (result, yielded) =
-                test::run_and_report_yield(workspaces::files::rm(&workspace, &hello)).await;
+                test::run_and_report_yield(workspaces::files::rm(&workspace, &[hello])).await;
             result?;
             assert!(yielded, "rm held the thread it was called on");
 

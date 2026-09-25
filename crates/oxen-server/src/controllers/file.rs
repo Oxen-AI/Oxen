@@ -25,6 +25,7 @@ use liboxen::util::fs::AtomicFile;
 use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
 use std::path::{Component, Path, PathBuf};
+use std::slice;
 use std::sync::Arc;
 use tokio::task::spawn_blocking;
 use utoipa::ToSchema;
@@ -410,7 +411,7 @@ pub async fn delete(
 
     // Stage the path as removed
     log::debug!("file::delete staging path {path:?}");
-    repositories::workspaces::files::rm(&workspace, &path).await?;
+    repositories::workspaces::files::rm(&workspace, slice::from_ref(&path)).await?;
 
     // Commit workspace
     let commit_body = NewCommitBody {

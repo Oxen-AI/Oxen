@@ -299,15 +299,8 @@ pub async fn rm_files(
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
-    let mut ret_files = vec![];
-    let mut err_files = vec![];
-
-    for path in &paths_to_remove {
-        err_files.extend(repositories::workspaces::files::rm(&workspace, &path).await?);
-        log::debug!("rm ✅ success! staged file {path:?} as removed");
-        ret_files.push(path);
-    }
-
+    let err_files = repositories::workspaces::files::rm(&workspace, &paths_to_remove).await?;
+    log::debug!("rm ✅ success! staged files {paths_to_remove:?} as removed");
     log::debug!("err_files: {err_files:?}");
 
     if err_files.is_empty() {

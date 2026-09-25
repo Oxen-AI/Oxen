@@ -51,15 +51,21 @@ pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<Pa
     Ok(relative_path)
 }
 
-pub async fn rm(
-    workspace: &Workspace,
-    filepath: impl AsRef<Path>,
-) -> Result<Vec<ErrorFileInfo>, OxenError> {
+/// Stage each of `paths` for removal and return the ones that could not be staged. An error on one
+/// path stops the rest, leaving the paths before it staged.
+pub async fn rm(workspace: &Workspace, paths: &[PathBuf]) -> Result<Vec<ErrorFileInfo>, OxenError> {
     let workspace = workspace.clone();
-    let filepath = filepath.as_ref().to_path_buf();
-    // Staging a removal reads the committed tree -- for a directory, the whole subtree -- and
-    // writes the staged db, all synchronously. Keep it to one blocking hop off the worker.
-    tokio::task::spawn_blocking(move || p_rm(&workspace, &filepath)).await?
+    let paths = paths.to_vec();
+    // Staging a removal reads the committed tree (a directory's whole subtree) and writes the
+    // staged db, all synchronously, so every path goes through one blocking hop off the worker.
+    tokio::task::spawn_blocking(move || {
+        let mut err_files = vec![];
+        for path in &paths {
+            err_files.extend(p_rm(&workspace, path)?);
+        }
+        Ok(err_files)
+    })
+    .await?
 }
 
 pub async fn add_version_file(
