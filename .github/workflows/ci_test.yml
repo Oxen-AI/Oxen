@@ -58,7 +58,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          prefix-key: rust-test
+          prefix-key: rust-test-dnm-base
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
@@ -200,7 +200,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          prefix-key: python-test
+          prefix-key: python-test-dnm-base
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
