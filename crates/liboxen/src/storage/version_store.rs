@@ -11,6 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::constants;
 use crate::constants::MAX_CONCURRENT_VERSION_PROBES;
@@ -504,12 +505,16 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 ///
 /// `server_s3_opts` is the server-wide S3 configuration (bucket name). It must be `Some`
 /// whenever `config.kind == StorageKind::S3`; CLI and test paths pass `None` because they never
-/// run with the S3 backend enabled. The S3 prefix is derived from the repo path's
-/// `<namespace>/<name>` tail at construction time and never written to per-repo config, so the
-/// server can rotate buckets without rewriting every repo.
+/// run with the S3 backend enabled. The S3 prefix is `repo/<repo_uuid>`, built from the repo's UUID
+/// in its identity and never written to per-repo config, so the server can rotate buckets
+/// without rewriting every repo, and the prefix stays put when the repo's directory moves.
+///
+/// # Errors
+/// [`OxenError::S3RepoWithoutIdentity`] when an S3-backed repo has no `repo_uuid`.
 pub fn create_version_store(
     repo_dir: &Path,
     config: &StorageConfig,
+    repo_uuid: Option<Uuid>,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<Arc<dyn VersionStore>, OxenError> {
     match config.kind {
@@ -532,19 +537,9 @@ pub fn create_version_store(
         }
         StorageKind::S3 => {
             let opts = server_s3_opts.ok_or(OxenError::S3BackendMissingServerOpts)?;
-            // Server repo paths are always `<sync_dir>/<namespace>/<name>` (the only path that
-            // reaches the S3 branch), so the tail components should always be present. We still
-            // surface a structured error instead of panicking on a malformed caller.
-            let name = repo_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
-            let namespace = repo_dir
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-                .ok_or_else(|| OxenError::S3PrefixUnresolvable(repo_dir.into()))?;
-            let prefix = format!("{namespace}/{name}");
+            let repo_uuid =
+                repo_uuid.ok_or_else(|| OxenError::S3RepoWithoutIdentity(repo_dir.into()))?;
+            let prefix = format!("repo/{repo_uuid}");
             let store = S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix);
             Ok(Arc::new(store))
         }
@@ -568,24 +563,35 @@ mod tests {
     #[test]
     fn create_version_store_s3_without_server_opts_errors() {
         let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
-        let result = create_version_store(&repo_dir, &s3_config(), None);
+        let result = create_version_store(&repo_dir, &s3_config(), Some(Uuid::new_v4()), None);
         assert!(
             matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
             "expected S3BackendMissingServerOpts, got {result:?}",
         );
     }
 
-    /// With server opts, the S3 branch returns an S3-kind store.
+    /// With server opts, the S3 branch returns an S3-kind store prefixed by the repo's UUID.
     #[test]
     fn create_version_store_s3_with_server_opts_builds_s3_store() {
-        let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
+        let repo_dir = PathBuf::from("/srv/oxen/repo/0c/0e/0c0e2a8e-93a4-4a9f-9f1e-2b9b3f0f9a11");
+        let repo_uuid = Uuid::new_v4();
         let opts = S3Opts {
             bucket: "my-bucket".to_string(),
             region: "us-west-1".to_string(),
         };
-        let store = create_version_store(&repo_dir, &s3_config(), Some(&opts))
+        let store = create_version_store(&repo_dir, &s3_config(), Some(repo_uuid), Some(&opts))
             .expect("S3 store should construct when server opts are present");
         assert_eq!(store.storage_kind(), StorageKind::S3);
+        assert!(
+            format!("{store:?}").contains(&format!("prefix: \"repo/{repo_uuid}\"")),
+            "the prefix comes from the repo's UUID, not its directory: {store:?}",
+        );
+
+        let result = create_version_store(&repo_dir, &s3_config(), None, Some(&opts));
+        assert!(
+            matches!(result, Err(OxenError::S3RepoWithoutIdentity(_))),
+            "an S3 repo missing a UUID has no prefix to build, got {result:?}",
+        );
     }
 }
 

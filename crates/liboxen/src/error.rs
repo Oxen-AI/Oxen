@@ -367,14 +367,11 @@ pub enum OxenError {
     )]
     S3BackendMissingServerOpts,
 
-    /// `create_version_store` could not derive the S3 object prefix from the repo path because the
-    /// path lacks the expected `<namespace>/<name>` tail. Server repo paths are always built as
-    /// `<sync_dir>/<namespace>/<name>`, so this only surfaces for malformed callers — but we
-    /// surface it as a structured error rather than panicking.
+    /// An S3-backed repository is missing the UUID its S3 object prefix is built from.
     #[error(
-        "Cannot derive S3 object prefix from repo path {0}: expected `<namespace>/<name>` tail"
+        "S3-backed repository {0} is missing the repository UUID its S3 object prefix is built from"
     )]
-    S3PrefixUnresolvable(PathBufError),
+    S3RepoWithoutIdentity(PathBufError),
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.

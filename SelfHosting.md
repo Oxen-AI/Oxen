@@ -63,7 +63,7 @@ s3_region = "us-west-1"      # required iff "s3" is in backends
 ```
 
 - **`backends`** — a list of which storage kinds this server is willing to host. The valid values are `"local"` (local-filesystem version storage) and `"s3"` (S3 version storage), spelled in lowercase. The first element is the server's default: when a client creates a new repo without specifying a kind, the server uses that. Each kind must appear at most once; the list must be non-empty.
-- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends` and rejected when it doesn't. Each repo gets the prefix `{namespace}/{name}/` inside this bucket; the prefix is not configurable per repo.
+- **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends` and rejected when it doesn't. Each repo gets the prefix `repo/{repo_uuid}/` inside this bucket, named for the repo's UUID in its config, so renaming a repo or moving it to another namespace leaves its objects where they are. The prefix is not configurable per repo.
   - **`s3_region`** — the AWS region the bucket lives in (e.g. `us-west-1`). Required when `"s3"` appears in `backends`. The server uses it to build the S3 client directly rather than detecting it at runtime; if it's wrong, startup fails when the bucket reachability check runs.
 
 Omitting the `[storage]` section entirely is equivalent to:
@@ -156,8 +156,6 @@ name = "my-repo"
 
 - **`repo_uuid`** — the repository's immutable identity, written when the repo is created and never changed afterwards, including when the repo moves to another namespace. Do not edit it by hand.
 - **`namespace`** / **`name`** — the human-readable names, recorded so a repository directory can be identified without consulting anything else. They track renames and carry no authority: nothing is addressed by them.
-
-Repositories created before `oxen-server` recorded identity have no `[identity]` section and continue to work normally.
 
 `oxen-server` refuses to create a repository under a name another repository already holds, matching without regard to case, so `my-namespace/My-Repo` and `my-namespace/my-repo` cannot both be created.
 

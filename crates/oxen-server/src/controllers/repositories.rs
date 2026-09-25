@@ -517,6 +517,12 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
                 "Invalid namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}"
             )))
         }
+        OxenError::S3RepoWithoutIdentity(path) => {
+            log::warn!("Refused an S3 repository with no repo_uuid: {path:?}");
+            HttpResponse::BadRequest().json(StatusMessage::error(
+                "An S3-backed repository needs a repo_uuid.",
+            ))
+        }
         err => {
             log::error!("Err repositories::create: {err:?}");
             HttpResponse::InternalServerError().json(StatusMessage::error("Invalid body."))

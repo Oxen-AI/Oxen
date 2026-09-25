@@ -17,7 +17,7 @@ use crate::model::Commit;
 use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
-use crate::storage::S3Opts;
+use crate::storage::{S3Opts, StorageKind};
 use crate::util;
 use crate::util::fs::AtomicFile;
 use bytes::Bytes;
@@ -448,7 +448,8 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
 ///
 /// # Errors
 /// [`OxenError::RepoAlreadyExists`] when `root_dir` already holds the repository, or when another
-/// repository holds the name `identity` records.
+/// repository holds the name `identity` records. [`OxenError::S3RepoWithoutIdentity`] when an
+/// S3-backed repository has no `identity`.
 pub async fn create(
     root_dir: &Path,
     new_repo: RepoNew,
@@ -462,6 +463,10 @@ pub async fn create(
         return Err(OxenError::InvalidNamespaceName(new_repo.namespace.into()));
     }
     let dir = repo_dir(root_dir, &new_repo.namespace, &new_repo.name)?;
+    // Refused before anything reaches disk.
+    if new_repo.storage_kind == Some(StorageKind::S3) && identity.is_none() {
+        return Err(OxenError::S3RepoWithoutIdentity(dir.into()));
+    }
     // Refused ahead of the claim, so a create the occupied directory turns away records no name.
     if dir.exists() {
         log::error!("Repository already exists {dir:?}");
@@ -685,6 +690,7 @@ mod tests {
     use crate::namespaces;
     use crate::repositories;
     use crate::repositories::name_table::NameTable;
+    use crate::storage::StorageKind;
     use crate::sync_dir::NAME_TABLE_DIR;
     use crate::test;
     use crate::util;
@@ -1283,6 +1289,17 @@ mod tests {
                 }
                 other => panic!("Expected InvalidNamespaceName error, got: {other:?}"),
             }
+
+            let repo_new = RepoNew::from_namespace_name("ox", name, Some(StorageKind::S3));
+            let result = repositories::create(&sync_dir, repo_new, None, None).await;
+            assert!(
+                matches!(result, Err(OxenError::S3RepoWithoutIdentity(_))),
+                "an S3 repository missing a UUID is refused, got {result:?}",
+            );
+            assert!(
+                !sync_dir.join("ox").exists(),
+                "a refused S3 create leaves nothing on disk"
+            );
 
             Ok(())
         })
