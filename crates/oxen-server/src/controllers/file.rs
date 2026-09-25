@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{create_user_from_options, file_stream_response, get_repo};
-use crate::params::{app_data, parse_resource, path_param, query_param};
+use crate::helpers::{create_user_from_options, file_stream_response, get_repo, get_repo_async};
+use crate::params::{app_data, parse_resource, parse_resource_async, path_param, query_param};
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
@@ -480,11 +480,11 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     // Parse the resource (branch/commit/path)
-    let resource = parse_resource(&req, &repo)?;
+    let resource = parse_resource_async(&req, &repo).await?;
 
     // Resource must specify branch because we need to commit the workspace back to a branch
     let branch = resource

@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{file_stream_response, get_repo};
+use crate::helpers::{file_stream_response, get_repo, get_repo_async};
 use crate::params::{app_data, path_param};
 use crate::tasks;
 
@@ -208,7 +208,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let directory = path_param(&req, "path")?.to_string();
 
@@ -289,7 +289,7 @@ pub async fn rm_files(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
@@ -365,7 +365,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
