@@ -11,6 +11,7 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 | 0.58.0 to TBD | Server | [Re-seed the name table after changing the sync directory by hand](#re-seed-the-name-table-after-changing-the-sync-directory-by-hand) |
 | 0.59.0 to TBD | Server | [Stop starting the server with `-a`](#stop-starting-the-server-with--a) |
 | 0.60.0 to TBD | Server, S3 backend | [Copy an S3-backed repository's objects to its UUID prefix](#copy-an-s3-backed-repositorys-objects-to-its-uuid-prefix) |
+| 0.60.0 to TBD | Server | [Move a namespace called `repo`](#move-a-namespace-called-repo) |
 
 ## Move a repository's Merkle nodes to LMDB
 
@@ -83,6 +84,32 @@ Until it is gone, the `oxen` CLI run from a directory inside the sync directory 
 > **Warning:** the S3 backend is not yet supported in open source, so do not use it yet. If you do, you use it at your own risk.
 
 The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in its bucket rather than `{namespace}/{name}/`. With the server stopped, add an [`[identity]` section](../SelfHosting.md#the-identity-section) by hand to the config of any S3-backed repository that lacks one, with a new UUID and the namespace and name from its path, since the `backfill_repo_identity` migration cannot open an S3-backed repository. Then copy each S3-backed repository's objects from its old prefix to `repo/{repo_uuid}/`, using the UUID in its config. Start the server, and delete the old prefixes once the repositories read correctly.
+
+## Move a namespace called `repo`
+
+**Versions:** 0.60.0 to TBD. **Applies to:** server.
+
+`oxen-server` keeps the `repo` directory at the top of the sync directory for its own use, so it refuses to start while a namespace called `repo` holds it, and refuses to create a repository in that namespace or move one into it. Before upgrading a server holding one, stop it and move the namespace to a name nothing in the sync directory uses:
+
+```bash
+mv "$SYNC_DIR/repo" "$SYNC_DIR/NEW_NAMESPACE"
+```
+
+Each moved repository records the namespace it is in, so change `namespace = "repo"` to `namespace = "NEW_NAMESPACE"` in the `[identity]` section of its `.oxen/config.toml`:
+
+```bash
+for config in "$SYNC_DIR"/NEW_NAMESPACE/*/.oxen/config.toml; do
+  sed -i.bak 's/^namespace = "repo"$/namespace = "NEW_NAMESPACE"/' "$config" && rm "$config.bak"
+done
+```
+
+Then delete the name table, which the next start rebuilds from every repository's config, and start the server:
+
+```bash
+rm -rf "$SYNC_DIR/name_table"
+```
+
+A workspace reads its repository's config, so it needs no change. If `NEW_NAMESPACE` already exists, `mv` puts `repo` inside it rather than renaming it, so pick a name that does not.
 
 ## Maintaining this page
 
