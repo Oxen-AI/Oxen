@@ -187,7 +187,6 @@ debug = "limited"
 debug = false
 strip = "symbols"
 debug-assertions = false
-opt-level = "s"
 
 [profile.release]
 codegen-units = 1

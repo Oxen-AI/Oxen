@@ -58,8 +58,8 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          prefix-key: rust-test-dnm-opts
-          save-if: true # DNM: save this experiment's cache from the PR
+          prefix-key: rust-test
+          save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
           # Don't cache ~/.cargo/bin. rustup ≥1.28 installs the proxy binaries
@@ -201,7 +201,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          prefix-key: python-test-dnm-opts
+          prefix-key: python-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
