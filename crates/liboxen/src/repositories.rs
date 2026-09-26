@@ -18,6 +18,7 @@ use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
+use crate::sync_dir::is_server_owned;
 use crate::util;
 use crate::util::fs::AtomicFile;
 use bytes::Bytes;
@@ -332,6 +333,9 @@ pub fn transfer_namespace(
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
     log::debug!("transfer_namespace from: {from_namespace} to: {to_namespace}");
+    if is_server_owned(to_namespace) {
+        return Err(OxenError::InvalidNamespaceName(to_namespace.into()));
+    }
 
     let from_dir = repo_dir(sync_dir, from_namespace, repo_name)?;
     let to_dir = repo_dir(sync_dir, to_namespace, repo_name)?;
@@ -447,6 +451,8 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
 /// Create a repository under `root_dir`, recording `identity` as who it is.
 ///
 /// # Errors
+/// [`OxenError::InvalidNamespaceName`] when the namespace is not a valid namespace name, or names a
+/// directory the server keeps for its own state.
 /// [`OxenError::RepoAlreadyExists`] when `root_dir` already holds the repository, or when another
 /// repository holds the name `identity` records.
 pub async fn create(
@@ -458,7 +464,7 @@ pub async fn create(
     if !is_valid_repo_name(&new_repo.name) {
         return Err(OxenError::InvalidRepoName(new_repo.name.into()));
     }
-    if !is_valid_namespace_name(&new_repo.namespace) {
+    if !is_valid_namespace_name(&new_repo.namespace) || is_server_owned(&new_repo.namespace) {
         return Err(OxenError::InvalidNamespaceName(new_repo.namespace.into()));
     }
     let dir = repo_dir(root_dir, &new_repo.namespace, &new_repo.name)?;
@@ -685,7 +691,7 @@ mod tests {
     use crate::namespaces;
     use crate::repositories;
     use crate::repositories::name_table::NameTable;
-    use crate::sync_dir::NAME_TABLE_DIR;
+    use crate::sync_dir::{NAME_TABLE_DIR, namespace_called_repo};
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};
@@ -1039,6 +1045,13 @@ mod tests {
             let repo_path = repo.path.clone();
             drop(repo);
 
+            let refused =
+                repositories::transfer_namespace(&sync_dir, "cats", "ox", "Repo", None, None);
+            assert!(
+                matches!(refused, Err(OxenError::InvalidNamespaceName(_))),
+                "a server-owned namespace is refused in any case, got: {refused:?}"
+            );
+
             // A file where the destination namespace directory belongs, so the transfer fails
             // creating it, after the point the hint used to be written.
             util::fs::write_to_path(sync_dir.join("bessie"), "not a directory")?;
@@ -1271,18 +1284,25 @@ mod tests {
     #[tokio::test]
     async fn test_local_repository_api_create_rejects_invalid_namespace() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let namespace = "-invalid-namespace";
-            let name = "valid-repo";
-            let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-            let result = repositories::create(&sync_dir, repo_new, None, None).await;
+            // A server-owned name is refused in any case, since `Repo` is `repo` on a filesystem
+            // that ignores case.
+            for namespace in ["-invalid-namespace", "repo", "Repo", "name_table"] {
+                let repo_new = RepoNew::from_namespace_name(namespace, "valid-repo", None);
+                let result = repositories::create(&sync_dir, repo_new, None, None).await;
 
-            assert!(result.is_err(), "Expected error but got: {result:?}");
-            match result.unwrap_err() {
-                OxenError::InvalidNamespaceName(invalid_name) => {
-                    assert_eq!(invalid_name.to_string(), namespace);
+                match result {
+                    Err(OxenError::InvalidNamespaceName(invalid_name)) => {
+                        assert_eq!(invalid_name.to_string(), namespace);
+                    }
+                    other => {
+                        panic!("Expected InvalidNamespaceName for {namespace}, got: {other:?}")
+                    }
                 }
-                other => panic!("Expected InvalidNamespaceName error, got: {other:?}"),
             }
+            assert!(
+                std::fs::read_dir(&sync_dir)?.next().is_none(),
+                "a refused create makes nothing in the sync dir"
+            );
 
             Ok(())
         })
@@ -1336,6 +1356,26 @@ mod tests {
             assert!(
                 namespaces::get(sync_dir, NAME_TABLE_DIR).is_none(),
                 "the server's own directory is not a namespace to look up either"
+            );
+
+            // Literal names, since they are the on-disk layout.
+            assert_eq!(
+                namespace_called_repo(sync_dir),
+                None,
+                "no `repo` directory is no namespace"
+            );
+            let repos_dir = sync_dir.join("repo");
+            util::fs::create_dir_all(&repos_dir)?;
+            assert_eq!(
+                namespace_called_repo(sync_dir),
+                Some(repos_dir.clone()),
+                "a `repo` directory without the marker is a namespace, which startup refuses"
+            );
+            util::fs::write_to_path(repos_dir.join("placement-v2"), "")?;
+            assert_eq!(
+                namespace_called_repo(sync_dir),
+                None,
+                "the marker makes the `repo` directory the repos dir"
             );
 
             Ok(())
