@@ -34,7 +34,7 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          prefix-key: rust-production-dnm-base
+          prefix-key: rust-production-dnm-opts
           cache-all-crates: true
           cache-on-failure: true
           cache-bin: false # See the rust-test job in ci_test.yml for rationale.
