@@ -36,6 +36,6 @@ jobs:
       id-token: write
 
   build-production:
-    if: github.event.pull_request.draft != true
+    if: false # DNM: time only the jobs with a saved experiment cache
     name: Production Build
     uses: ./.github/workflows/ci_build_production.yml

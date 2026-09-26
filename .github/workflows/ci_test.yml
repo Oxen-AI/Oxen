@@ -159,6 +159,7 @@ jobs:
           if-no-files-found: ignore
 
   python-test:
+    if: false # DNM: time only the jobs with a saved experiment cache
     name: Python Tests
     runs-on: ${{ matrix.os }}
     defaults:
