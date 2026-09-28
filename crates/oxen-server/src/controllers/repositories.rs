@@ -584,11 +584,9 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
-    // Begun only where the repository opened, since an unreadable one has no gate to register on.
-    let write_in_flight = repository
-        .as_ref()
-        .map(repo_locks::begin_write)
-        .transpose()?;
+    // Begun on the directory, so a maintenance operation holds off the delete of a repository that
+    // cannot open as well as one that can.
+    let write_in_flight = repo_locks::begin_write_at(&repo_dir)?;
 
     // Released before the removal is backgrounded, since the handler returns before the
     // repository is gone.
@@ -995,6 +993,17 @@ mod tests {
                     Err(OxenHttpError::InternalOxenError(OxenError::LockTimeout(_)))
                 ),
                 "a delete on a repository held for maintenance must be refused"
+            );
+
+            util::fs::write_to_path(util::fs::config_filepath(&repo_dir), "not a config")?;
+            let result =
+                super::delete(test::repo_request(&sync_dir, "/", namespace, repo_name)).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenHttpError::InternalOxenError(OxenError::LockTimeout(_)))
+                ),
+                "a repository held for maintenance refuses the delete even when it cannot open"
             );
             Ok::<(), OxenError>(())
         })
