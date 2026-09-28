@@ -103,7 +103,9 @@ for config in "$SYNC_DIR"/NEW_NAMESPACE/*/.oxen/config.toml; do
 done
 ```
 
-Once every moved config names the new namespace, delete the name table, which the next start rebuilds from every repository's config, and start the server:
+Once every moved config names the new namespace, run `oxen-server seed-name-table` to see what deleting the name table releases. Its `unclaimed` count covers the names the table holds that no repository's config records, and its warning lists the first ten of them. Besides the old `repo` names, those belong to a repository removed by hand, a create that did not finish, or a repository whose config cannot be read. Fix any such config first, so the next start records that repository's name again.
+
+Then delete the name table, which the next start rebuilds from every repository's config, and start the server:
 
 ```bash
 rm -rf "$SYNC_DIR/name_table"
