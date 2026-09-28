@@ -181,6 +181,18 @@ pub fn get_node_by_path(
     }
 }
 
+/// Get the node at `path` in a commit, off the async worker.
+pub async fn get_node_by_path_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: &Path,
+) -> Result<Option<MerkleTreeNode>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || get_node_by_path(&repo, &commit, &path)).await?
+}
+
 pub fn get_node_by_path_with_children(
     repo: &LocalRepository,
     commit: &Commit,

@@ -61,6 +61,16 @@ pub fn get(
     Ok(None)
 }
 
+/// [`get`], off the async worker.
+pub async fn get_async(
+    repo: &LocalRepository,
+    workspace_id: &str,
+) -> Result<Option<Workspace>, OxenError> {
+    let repo = repo.clone();
+    let workspace_id = workspace_id.to_string();
+    tokio::task::spawn_blocking(move || get(&repo, workspace_id)).await?
+}
+
 pub fn get_by_dir(
     repo: &LocalRepository,
     workspace_dir: impl AsRef<Path>,

@@ -69,7 +69,7 @@ mod tests {
             let new_path = Path::new("renamed").join("data").join("bbox_renamed.csv");
 
             // Move the file
-            workspaces::files::mv(&workspace, &original_path, &new_path)?;
+            workspaces::files::mv(&workspace, &original_path, &new_path).await?;
 
             // Check status - should show the original as removed and new as added
             let status = workspaces::status::status(&workspace)?;
@@ -280,8 +280,11 @@ mod tests {
             let first = Path::new("first.txt");
             let second = Path::new("second.txt");
             let third = Path::new("third.txt");
-            workspaces::files::mv(&workspace, first, second)?;
-            workspaces::files::mv(&workspace, second, third)?;
+            let (moved, yielded) =
+                test::run_and_report_yield(workspaces::files::mv(&workspace, first, second)).await;
+            moved?;
+            assert!(yielded, "mv held the thread it was called on");
+            workspaces::files::mv(&workspace, second, third).await?;
 
             let status = workspaces::status::status(&workspace)?;
             assert_eq!(

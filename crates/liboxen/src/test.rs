@@ -34,6 +34,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::time::{sleep, timeout};
@@ -2142,6 +2143,28 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
         let err = format!("Unknown extension file: {file_path:?}");
         Err(OxenError::basic_str(err))
     }
+}
+
+/// Run `work` to completion and report whether it ever yielded the thread it started on.
+///
+/// Call it from a `#[tokio::test]`, whose current-thread runtime matches what an oxen-server
+/// actix worker runs on. The task spawned here is ready immediately, so it can only run once
+/// `work` gives the thread up: `false` means `work` held the thread end to end, which for a
+/// server-side operation means it held an actix worker and every connection assigned to it.
+///
+/// Assert on the operation itself rather than on a caller that awaits other offloaded work
+/// first, since any of those awaits would set the flag on the operation's behalf.
+///
+/// One caveat on `false`: work that finishes before its `JoinHandle` is first polled completes
+/// without ever yielding, and so reports `false` despite having run off the thread. That needs
+/// the offloaded work to finish within the few instructions between dispatching it and awaiting
+/// it, which database and filesystem operations do not come close to.
+pub async fn run_and_report_yield<F: Future>(work: F) -> (F::Output, bool) {
+    let yielded = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&yielded);
+    tokio::task::spawn(async move { flag.store(true, Ordering::SeqCst) });
+    let output = work.await;
+    (output, yielded.load(Ordering::SeqCst))
 }
 
 // Catch all tests for the library
