@@ -95,7 +95,7 @@ The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in i
 mv "$SYNC_DIR/repo" "$SYNC_DIR/NEW_NAMESPACE"
 ```
 
-Each moved repository records the namespace it is in, so change `namespace = "repo"` to `namespace = "NEW_NAMESPACE"` in the `[identity]` section of its `.oxen/config.toml`:
+Each moved repository records the namespace it is in, so change `namespace = "repo"` to `namespace = "NEW_NAMESPACE"` in the `[identity]` section of its `.oxen/config.toml`. For example:
 
 ```bash
 for config in "$SYNC_DIR"/NEW_NAMESPACE/*/.oxen/config.toml; do
@@ -103,7 +103,7 @@ for config in "$SYNC_DIR"/NEW_NAMESPACE/*/.oxen/config.toml; do
 done
 ```
 
-Then delete the name table, which the next start rebuilds from every repository's config, and start the server:
+Once every moved config names the new namespace, delete the name table, which the next start rebuilds from every repository's config, and start the server:
 
 ```bash
 rm -rf "$SYNC_DIR/name_table"
