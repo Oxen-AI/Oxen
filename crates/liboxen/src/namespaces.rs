@@ -6,7 +6,7 @@ use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
 use crate::repositories::name_table::NameTable;
 use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
-use crate::sync_dir::{is_namespace, namespace_dirs, placed_repo_dir};
+use crate::sync_dir::{is_server_owned, namespace_dirs, placed_repo_dir};
 
 pub fn list(path: &Path) -> Vec<String> {
     log::debug!("repositories::namespaces::list",);
@@ -32,7 +32,7 @@ pub fn get(
     log::debug!("repositories::namespaces::get {name} (legacy directory {legacy_directory:?})");
     let legacy_directory = legacy_directory.unwrap_or(name);
     let namespace_path = repositories::namespace_dir(data_dir, legacy_directory)?;
-    let legacy = (is_namespace(legacy_directory) && namespace_path.is_dir())
+    let legacy = (!is_server_owned(legacy_directory) && namespace_path.is_dir())
         .then(|| repositories::list_repos_in_namespace(&namespace_path));
     let placed: Vec<LocalRepository> = NameTable::new(data_dir)
         .uuids_in_namespace(name)?

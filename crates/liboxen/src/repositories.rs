@@ -1398,6 +1398,10 @@ mod tests {
                 namespaces::get(sync_dir, NAME_TABLE_DIR, None)?.is_none(),
                 "the server's own directory is not a namespace to look up either"
             );
+            assert!(
+                namespaces::get(sync_dir, &NAME_TABLE_DIR.to_uppercase(), None)?.is_none(),
+                "nor is it under a name differing only in case"
+            );
 
             // Literal names, since they are the on-disk layout.
             assert_eq!(
