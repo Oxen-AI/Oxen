@@ -18,7 +18,7 @@ use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
 use crate::storage::{S3Opts, StorageKind};
-use crate::sync_dir::is_server_owned;
+use crate::sync_dir::{is_server_owned, placed_repo_dir};
 use crate::util;
 use crate::util::fs::AtomicFile;
 use bytes::Bytes;
@@ -86,14 +86,14 @@ pub fn namespace_dir(sync_dir: &Path, namespace: &str) -> Result<PathBuf, OxenEr
     Ok(sync_dir.join(plain_segment(namespace)?))
 }
 
-/// The directory holding repository `namespace`/`name`, under `sync_dir`.
+/// The directory holding repository `namespace`/`repo_name`, under `sync_dir`.
 ///
-/// `namespace` and `name` must each be a single ordinary path component, so the result always
+/// `namespace` and `repo_name` must each be a single ordinary path component, so the result always
 /// stays inside `sync_dir`. Build every server-side repository path through this rather than
 /// joining the parts directly, so an identifier that arrived over the network cannot name a
 /// location outside `sync_dir`.
-pub fn repo_dir(sync_dir: &Path, namespace: &str, name: &str) -> Result<PathBuf, OxenError> {
-    Ok(namespace_dir(sync_dir, namespace)?.join(plain_segment(name)?))
+fn repo_dir(sync_dir: &Path, namespace: &str, repo_name: &str) -> Result<PathBuf, OxenError> {
+    Ok(namespace_dir(sync_dir, namespace)?.join(plain_segment(repo_name)?))
 }
 
 /// Rejects anything that is not exactly one ordinary path component: `.`, `..`, a separator, an
@@ -106,6 +106,29 @@ fn plain_segment(segment: &str) -> Result<&OsStr, OxenError> {
     }
 }
 
+/// The directory of the repository `namespace`/`repo_name` addresses under `sync_dir`, whichever
+/// layout it is in. Tried in order: the repository the name table records under that name, then the
+/// one whose UUID is `repo_name`, both where a repository placed by UUID lives, then
+/// `{namespace}/{repo_name}`.
+///
+/// `None` when none of them exists. `namespace` and `repo_name` must each be a single ordinary path
+/// component, so the result always stays inside `sync_dir`.
+pub fn resolve_repo_dir(
+    sync_dir: &Path,
+    namespace: &str,
+    repo_name: &str,
+) -> Result<Option<PathBuf>, OxenError> {
+    let legacy_dir = repo_dir(sync_dir, namespace, repo_name)?;
+    let recorded = name_table::NameTable::new(sync_dir).get(namespace, repo_name)?;
+    let in_name_position = Uuid::try_parse(repo_name).ok();
+    Ok([recorded, in_name_position]
+        .into_iter()
+        .flatten()
+        .map(|repo_uuid| placed_repo_dir(sync_dir, repo_uuid))
+        .chain([legacy_dir])
+        .find(|dir| dir.exists()))
+}
+
 pub fn get_by_namespace_and_name(
     sync_dir: &Path,
     namespace: impl AsRef<str>,
@@ -114,12 +137,10 @@ pub fn get_by_namespace_and_name(
 ) -> Result<Option<LocalRepository>, OxenError> {
     let namespace = namespace.as_ref();
     let name = name.as_ref();
-    let repo_dir = repo_dir(sync_dir, namespace, name)?;
-
-    if !repo_dir.exists() {
-        log::debug!("Repo does not exist: {repo_dir:?}");
+    let Some(repo_dir) = resolve_repo_dir(sync_dir, namespace, name)? else {
+        log::debug!("No repository at {namespace}/{name}");
         return Ok(None);
-    }
+    };
 
     LocalRepository::from_dir_with_server_opts(&repo_dir, server_s3_opts)
         .inspect_err(|err| match err {
@@ -1492,8 +1513,42 @@ mod tests {
             util::fs::create_dir_all(&repo_dir)?;
 
             let _ = repositories::init(&repo_dir)?;
-            let _repo =
+            let table = NameTable::new(sync_dir);
+            table.claim(namespace, name, Uuid::new_v4())?;
+            let repo =
                 repositories::get_by_namespace_and_name(sync_dir, namespace, name, None)?.unwrap();
+            assert_eq!(
+                repo.path, repo_dir,
+                "a name whose UUID is placed nowhere resolves to the directory it names"
+            );
+
+            // Literal segments, since they are the on-disk layout.
+            let repo_uuid = Uuid::from_u128(0x0a1b_2c3d_4e5f_4a6b_8c7d_9e0f_1a2b_3c4d);
+            let in_name_position = repo_uuid.to_string();
+            let placed_dir = sync_dir
+                .join("repo")
+                .join("0a")
+                .join("1b")
+                .join(&in_name_position);
+            repositories::init(&placed_dir)?;
+            table.claim("ox", "cats", repo_uuid)?;
+            for (namespace, name) in [
+                ("ox", "cats"),
+                ("OX", "Cats"),
+                ("any-namespace", in_name_position.as_str()),
+            ] {
+                let repo =
+                    repositories::get_by_namespace_and_name(sync_dir, namespace, name, None)?;
+                assert_eq!(
+                    repo.map(|repo| repo.path),
+                    Some(placed_dir.clone()),
+                    "{namespace}/{name} resolves to the repository placed by UUID"
+                );
+            }
+            assert!(
+                repositories::get_by_namespace_and_name(sync_dir, "ox", "dogs", None)?.is_none(),
+                "a name nothing records or holds resolves to no repository"
+            );
             Ok(())
         })
     }

@@ -16,7 +16,7 @@ use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
-use liboxen::model::{Branch, ParsedResource, RepoIdentity};
+use liboxen::model::{Branch, LocalRepository, ParsedResource, RepoIdentity};
 use liboxen::repositories;
 use liboxen::repositories::size::RepoSizeFile;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
@@ -551,26 +551,30 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    // Validates the segments, so it also rejects anything that could name a directory outside the
-    // sync dir. Must come before the removal below, which is why the dir is not taken from the
-    // repository lookup (that lookup fails for exactly the repos this endpoint still has to
-    // delete).
-    let repo_dir = repositories::repo_dir(&app_data.path, &namespace, &name)?;
-
-    // Opened directly rather than through `get_repo_async`, whose identity check and hint refresh
-    // can also fail: the fallback below deletes, so only a failure to open may reach it.
-    let repository = match repositories::get_by_namespace_and_name_async(
-        &app_data.path,
-        &namespace,
-        &name,
-        app_data.config.storage.s3(),
-    )
-    .await
-    {
-        Ok(Some(repository)) => Some(repository),
-        Ok(None) => {
-            return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
-        }
+    // Resolving validates the segments, so it also rejects anything that could name a directory
+    // outside the sync dir. The repository is opened from the directory resolved, so both halves of
+    // the delete act on it, and directly rather than through `get_repo_async`, whose identity check
+    // and hint refresh can also fail: the fallback below deletes, so only a failure to open may
+    // reach it.
+    let resolved = {
+        let (sync_dir, namespace, name) = (app_data.path.clone(), namespace.clone(), name.clone());
+        let s3_opts = app_data.config.storage.s3().cloned();
+        tasks::spawn_blocking(move || {
+            let repo_dir = repositories::resolve_repo_dir(&sync_dir, &namespace, &name)?;
+            Ok::<_, OxenError>(repo_dir.map(|repo_dir| {
+                let opened =
+                    LocalRepository::from_dir_with_server_opts(&repo_dir, s3_opts.as_ref());
+                (repo_dir, opened)
+            }))
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
+    let Some((repo_dir, opened)) = resolved else {
+        return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
+    };
+    let repository = match opened {
+        Ok(repository) => Some(repository),
         // A repository the server cannot open is still deleted. Reporting it as missing would
         // strand the directory on disk with no way for a caller to reclaim it, and version blobs
         // held outside the directory are unreachable without the repository config anyway.
@@ -782,6 +786,7 @@ mod tests {
     use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
     use liboxen::model::RepoIdentity;
+    use liboxen::repositories;
     use liboxen::repositories::name_table::NameTable;
     use liboxen::util;
     use std::path::Path;
@@ -870,6 +875,41 @@ mod tests {
             table.get(namespace, unreadable)?,
             Some(squatter),
             "a repository recording no name the server can read frees none"
+        );
+
+        // Literal segments, since they are the on-disk layout.
+        let placed = "Placed-Repo";
+        let placed_uuid = Uuid::new_v4();
+        let uuid = placed_uuid.to_string();
+        let placed_dir = sync_dir
+            .join("repo")
+            .join(&uuid[0..2])
+            .join(&uuid[2..4])
+            .join(&uuid);
+        repositories::init(&placed_dir)?;
+        let config_path = util::fs::config_filepath(&placed_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity {
+            repo_uuid: placed_uuid,
+            namespace: Some(namespace.to_string()),
+            name: Some(placed.to_string()),
+        });
+        config.save(&config_path)?;
+        table.claim(namespace, placed, placed_uuid)?;
+
+        let resp = super::delete(test::repo_request(&sync_dir, "/", namespace, placed))
+            .await
+            .expect("delete handler should succeed");
+
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert!(
+            wait_until_gone(&placed_dir).await,
+            "a repository placed by UUID is deleted where it is placed: {placed_dir:?}"
+        );
+        assert_eq!(
+            table.get(namespace, placed)?,
+            None,
+            "deleting a repository placed by UUID frees the name it records"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;

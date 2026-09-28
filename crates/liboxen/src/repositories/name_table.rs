@@ -45,6 +45,14 @@ impl NameTable {
         }
     }
 
+    /// The name table under `sync_dir`, opened now. Its env stays open for as long as this value
+    /// lives, so other handles on the same table skip opening it again.
+    pub fn open(sync_dir: &Path) -> Result<Self, OxenError> {
+        let table = Self::new(sync_dir);
+        table.read(|_, _| Ok::<_, OxenError>(()))?;
+        Ok(table)
+    }
+
     /// The UUID of the repository recorded under `namespace`/`name`.
     pub fn get(&self, namespace: &str, name: &str) -> Result<Option<Uuid>, OxenError> {
         self.read(|db, txn| match db.get(txn, &key(namespace, name))? {
