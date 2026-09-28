@@ -105,48 +105,36 @@ callers that construct the error, and the callee that returned it. A liboxen fun
 an `inspect_err` has already reported the failure, so a handler that logs again on the way out
 doubles it. This applies to handlers that build a 500 directly, not just to `error_response`.
 
-**11. Test the classification. Never test the definition.**
+**11. Test that the code raises the error. Never test the error itself.**
 
 Tests are for logic and interactions. A variant constructed directly is exactly what it was
-hard-coded to be, so asserting that proves nothing and costs a test to compile, run, and maintain
-forever. **Do not write tests like these:**
+hard-coded to be, and whatever a `match` turns it into is exactly what that arm says, so asserting
+either proves nothing and costs a test to compile, run, and maintain forever. **Do not write tests
+like these:**
 
 ```rust
 // Worthless: the field holds what it was just given.
 let err = OxenError::NotAFile(PathBuf::from("a/b").into());
 assert_eq!(err.to_string(), "Not a single file: a/b");   // restates #[error(...)]
 assert!(matches!(err, OxenError::NotAFile(_)));          // restates the constructor
-```
 
-Test what the variant *causes* somewhere else:
-
-```rust
-// Worth having: exercises error_response's mapping, which has a silent default.
+// Worthless: restates one arm of error_response.
 let status = OxenHttpError::from(OxenError::NoChanges).error_response().status();
 assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-assert!(!status.is_server_error());
 ```
 
-**The test to apply: does the assertion restate a line of source, or exercise a computation?**
+The same goes for `hint`, `is_not_found`, `is_fatal_for_retry`, and every other classifier: a test
+that builds the variant by hand and asserts the classifier's answer restates a line of the
+classifier. Write the arm correctly and move on.
 
-Adding a variant to `is_not_found` is one line. A test asserting `err.is_not_found()` restates that
-line and nothing else — there is no branch, no input, no interaction, only membership in a
-`matches!` list. Write the line correctly and move on. The same goes for `hint` and for any other
-list-shaped classifier: **these do not get their own tests.**
+Test instead that the code under test *produces* the error, from a real input: call the function
+with the input that should fail and assert the variant it returns, or send the request and assert
+the status the handler answers with. That exercises the decision to fail.
 
 Beware the trap of "but it fails if I remove the fix". That proves nothing — a definitional test
 fails when you delete the definition too (`assert_eq!(err.x, 1)` fails if you remove the field). It
 is a necessary property of any useful test, not evidence that a test is useful. Judge by whether
 there is computation to exercise.
-
-What that leaves worth testing here is the HTTP boundary. `error_response` is a published contract:
-the status a caller receives is observable behavior other systems depend on, and asserting
-`!status.is_server_error()` pins the *intent* — that this is not a server fault — rather than
-restating which arm was written. Keep those. Everything upstream of that boundary is internal
-plumbing whose only observable effect shows up there anyway.
-
-If a test would fail only because someone deliberately edited the one line it mirrors, it is not
-earning its compile time. Delete it.
 
 ## Specific Guidance for Modernization of Existing Oxen Code
 
