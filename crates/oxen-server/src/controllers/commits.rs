@@ -117,6 +117,11 @@ pub async fn history(
         page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
         page_size: query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE),
     };
+    if pagination.page_size == 0 {
+        return Err(OxenHttpError::BadRequest(
+            "page_size must be at least 1".into(),
+        ));
+    }
 
     if repositories::is_empty(&repo).await? {
         return Ok(
