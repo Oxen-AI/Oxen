@@ -179,7 +179,9 @@ impl LocalRepository {
             return Err(OxenError::UnsupportedRepoVersion(version.into()));
         }
         let storage_config = config.storage.unwrap_or_default();
-        let version_store = create_version_store(&path, &storage_config, server_s3_opts)?;
+        let repo_uuid = config.identity.as_ref().map(|identity| identity.repo_uuid);
+        let version_store =
+            create_version_store(&path, &storage_config, repo_uuid, server_s3_opts)?;
         let (merkle_node_store, merkle_node_backend) =
             create_merkle_node_store(&path, config.merkle_node_backend)?;
         Ok(LocalRepository {
@@ -236,7 +238,7 @@ impl LocalRepository {
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config, None)?;
+        let version_store = create_version_store(&path, &storage_config, None, None)?;
         let (merkle_node_store, merkle_node_backend) =
             create_merkle_node_store(&path, Some(DEFAULT_MERKLE_NODE_BACKEND))?;
         Ok(LocalRepository {
@@ -276,7 +278,7 @@ impl LocalRepository {
     ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
-        let version_store = create_version_store(&path, &storage_config, None)?;
+        let version_store = create_version_store(&path, &storage_config, None, None)?;
         let resolved_backend = backend.unwrap_or(MerkleNodeBackend::Lmdb);
         let (merkle_node_store, merkle_node_backend) =
             create_merkle_node_store(&path, Some(resolved_backend))?;
