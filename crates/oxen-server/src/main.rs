@@ -359,7 +359,10 @@ enum ServerCommand {
     /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
     #[command(name = "scan-node-format")]
     ScanNodeFormat {
-        #[arg(long = "namespace", help = "Limit the scan to a single namespace")]
+        #[arg(
+            long = "namespace",
+            help = "Limit the scan to one namespace's directory, leaving out repositories placed by UUID"
+        )]
         namespace: Option<String>,
 
         #[arg(
@@ -600,29 +603,45 @@ fn scan_node_format(
         None => sync_dir::namespace_dirs(sync_dir)?,
     };
 
+    // Repositories placed by UUID sit in no namespace's directory, so only a scan of the whole
+    // server reaches them.
+    let groups = namespaces
+        .into_iter()
+        .map(|namespace_dir| {
+            let label = namespace_dir
+                .strip_prefix(sync_dir)
+                .unwrap_or(&namespace_dir)
+                .display()
+                .to_string();
+            (label, sync_dir::repo_dirs(&namespace_dir))
+        })
+        .chain(namespace.is_none().then(|| {
+            (
+                "repositories placed by UUID".to_string(),
+                sync_dir::placed_repo_dirs(sync_dir),
+            )
+        }));
+
     // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
     // migrated, damaged and unscannable ones need a person, and unopenable ones are the
-    // `min_version` population a config sweep already finds. `unlistable` counts namespaces
-    // rather than repos — it is the one that says the totals below are incomplete.
+    // `min_version` population a config sweep already finds. `unlistable` counts namespaces, and
+    // the tree of repositories placed by UUID, rather than repos — it is the one that says the
+    // totals below are incomplete.
     let (mut scanned, mut affected, mut damaged, mut unopenable, mut unscannable, mut unlistable) =
         (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
 
-    'outer: for namespace_dir in namespaces {
+    'outer: for (group, repo_dirs) in groups {
         // A namespace that cannot be listed hides an unknown number of repositories, so skipping
         // it quietly would understate every total below with nothing to say so. Reported and
         // counted rather than fatal: unlike the explicit-namespace case, which is a caller
         // mistake with nothing left to do, one bad namespace should not cost the whole run.
-        let repo_dirs = match sync_dir::repo_dirs(&namespace_dir) {
+        let repo_dirs = match repo_dirs {
             Ok(repo_dirs) => repo_dirs,
             Err(err) => {
                 unlistable += 1;
-                let label = namespace_dir
-                    .strip_prefix(sync_dir)
-                    .unwrap_or(&namespace_dir)
-                    .display();
                 // KEEP as println! -- do not log!
-                println!("{label}\tcannot list namespace: {err}");
+                println!("{group}\tcannot list: {err}");
                 continue;
             }
         };

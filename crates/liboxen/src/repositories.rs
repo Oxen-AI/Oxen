@@ -205,7 +205,9 @@ fn is_namespace_dir(path: &Path) -> bool {
 ///
 /// Skips sub-directories that either don't have an `.oxen/` dir within them or that
 /// fail to load via [`LocalRepository::from_dir`].
-pub fn list_repos_in_namespace(namespace_path: &Path) -> impl Iterator<Item = LocalRepository> {
+pub fn list_repos_in_namespace(
+    namespace_path: &Path,
+) -> impl Iterator<Item = LocalRepository> + use<> {
     log::debug!(
         "repositories::entries::list_repos_in_namespace repositories for dir: {namespace_path:?}"
     );
@@ -712,13 +714,14 @@ mod tests {
     use crate::core::repo_locks;
     use crate::core::workspaces::workspace_name_index;
     use crate::error::OxenError;
+    use crate::migrations;
     use crate::model::file::{FileContents, FileNew};
     use crate::model::{Commit, LocalRepository, RepoIdentity};
     use crate::namespaces;
     use crate::repositories;
     use crate::repositories::name_table::NameTable;
     use crate::storage::StorageKind;
-    use crate::sync_dir::{NAME_TABLE_DIR, namespace_called_repo};
+    use crate::sync_dir::{self, NAME_TABLE_DIR, namespace_called_repo};
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};
@@ -1531,6 +1534,14 @@ mod tests {
                 .join("1b")
                 .join(&in_name_position);
             repositories::init(&placed_dir)?;
+            let config_path = util::fs::config_filepath(&placed_dir);
+            let mut config = RepositoryConfig::from_file(&config_path)?;
+            config.identity = Some(RepoIdentity {
+                repo_uuid,
+                namespace: Some("ox".to_string()),
+                name: Some("cats".to_string()),
+            });
+            config.save(&config_path)?;
             table.claim("ox", "cats", repo_uuid)?;
             for (namespace, name) in [
                 ("ox", "cats"),
@@ -1548,6 +1559,57 @@ mod tests {
             assert!(
                 repositories::get_by_namespace_and_name(sync_dir, "ox", "dogs", None)?.is_none(),
                 "a name nothing records or holds resolves to no repository"
+            );
+
+            let anonymous_uuid = Uuid::from_u128(0xff00_2c3d_4e5f_4a6b_8c7d_9e0f_1a2b_3c4d);
+            let anonymous = anonymous_uuid.to_string();
+            let anonymous_dir = sync_dir.join("repo").join("ff").join("00").join(&anonymous);
+            repositories::init(&anonymous_dir)?;
+            assert_eq!(
+                sync_dir::placed_repo_dirs(sync_dir)?,
+                vec![placed_dir.clone(), anonymous_dir],
+                "the placed walk finds every repository placed by UUID, in path order"
+            );
+
+            util::fs::write_to_path(sync_dir.join(constants::LAST_MIGRATION_FILE), "20250101")?;
+            util::fs::write_to_path(
+                repo_dir
+                    .join(OXEN_HIDDEN_DIR)
+                    .join(constants::LAST_MIGRATION_FILE),
+                "20260601",
+            )?;
+            let listed = |migration_tstamp: &str, names_in_positions| {
+                Ok::<_, OxenError>(
+                    migrations::list_unmigrated(
+                        sync_dir,
+                        migration_tstamp.to_string(),
+                        names_in_positions,
+                    )?
+                    .into_iter()
+                    .map(|repo| (repo.namespace, repo.name))
+                    .collect::<Vec<_>>(),
+                )
+            };
+            let names = |pairs: &[(&str, &str)]| {
+                pairs
+                    .iter()
+                    .map(|(namespace, name)| (namespace.to_string(), name.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                listed("20260101", true)?,
+                names(&[("ox", "cats"), (&anonymous, &anonymous)]),
+                "a repository migrated since is left out, and a placed one is listed by its \
+                 recorded names, or by its UUID where it records none"
+            );
+            assert_eq!(
+                listed("20270101", false)?,
+                names(&[
+                    (namespace, name),
+                    ("ox", &in_name_position),
+                    (&anonymous, &anonymous)
+                ]),
+                "where positions carry UUIDs, a placed repository is listed by its UUID"
             );
             Ok(())
         })

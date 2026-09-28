@@ -67,6 +67,21 @@ pub fn namespace_dirs(sync_dir: &Path) -> Result<Vec<PathBuf>, OxenError> {
     .map_err(|err| OxenError::internal_error(format!("Cannot read {sync_dir:?}: {err}")))
 }
 
+/// The directories of the repositories placed by UUID under `sync_dir`, in path order. Empty when
+/// nothing has been placed.
+pub fn placed_repo_dirs(sync_dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let root = sync_dir.join(REPOS_DIR);
+    let mut dirs = vec![];
+    if root.is_dir() {
+        for bucket in sorted_dirs(&root, Path::is_dir)? {
+            for sub_bucket in sorted_dirs(&bucket, Path::is_dir)? {
+                dirs.extend(repo_dirs(&sub_bucket)?);
+            }
+        }
+    }
+    Ok(dirs)
+}
+
 /// The repository directories in `namespace_dir`, in path order.
 pub fn repo_dirs(namespace_dir: &Path) -> io::Result<Vec<PathBuf>> {
     sorted_dirs(namespace_dir, |path| path.join(OXEN_HIDDEN_DIR).is_dir())

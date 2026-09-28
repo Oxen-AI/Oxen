@@ -20,8 +20,17 @@ pub async fn list_unmigrated(req: HttpRequest) -> Result<HttpResponse, OxenHttpE
     let app_data = app_data(&req)?;
     let migration_tstamp = path_param(&req, "migration_tstamp")?.to_string();
 
-    let unmigrated_repos =
-        migrations::list_unmigrated(&app_data.path, migration_tstamp.to_string())?;
+    let sync_dir = app_data.path.clone();
+    let names_in_positions = app_data
+        .config
+        .identity
+        .repo_uuids_assigned_by()
+        .supplies_names();
+    let unmigrated_repos = tasks::spawn_blocking(move || {
+        migrations::list_unmigrated(&sync_dir, migration_tstamp, names_in_positions)
+    })
+    .await
+    .map_err(OxenError::from)??;
 
     let view = ListRepositoryResponse {
         status: StatusMessage::resource_found(),
