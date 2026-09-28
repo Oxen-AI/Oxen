@@ -61,6 +61,20 @@ impl NameTable {
         })
     }
 
+    /// The UUIDs of the repositories recorded under `namespace`, in name order.
+    pub(crate) fn uuids_in_namespace(&self, namespace: &str) -> Result<Vec<Uuid>, OxenError> {
+        let prefix = key(namespace, "");
+        self.read(|db, txn| {
+            db.prefix_iter(txn, &prefix)?
+                .map(|entry| {
+                    let (key, recorded) = entry?;
+                    let name = String::from_utf8_lossy(&key[prefix.len()..]);
+                    parse_uuid(recorded, namespace, &name)
+                })
+                .collect()
+        })
+    }
+
     /// Record `repo_uuid` as the repository named `namespace`/`name`, reporting whether this call
     /// is what recorded it. Claiming a name that repository already holds writes nothing and
     /// reports `false`, so a caller may repeat a claim it is unsure landed.
@@ -276,6 +290,12 @@ mod tests {
             // move below a conflict rather than a rename.
             let impostor = Uuid::new_v4();
             table.claim("cow", "cats", impostor)?;
+            assert_eq!(table.uuids_in_namespace("COW")?, vec![impostor]);
+            assert_eq!(table.uuids_in_namespace("ox")?, vec![cats]);
+            assert!(
+                table.uuids_in_namespace("co")?.is_empty(),
+                "a namespace whose name begins another's holds none of that one's repositories"
+            );
             let err = table
                 .move_to_namespace("ox", "cats", "cow", cats)
                 .expect_err("a name the destination holds refuses the move");
