@@ -6,7 +6,7 @@ use crate::{
     constants::{LAST_MIGRATION_FILE, OXEN_HIDDEN_DIR},
     error::OxenError,
     model::{LocalRepository, RepoIdentity},
-    namespaces, repositories, sync_dir,
+    repositories, sync_dir,
     view::repository::RepositoryListView,
 };
 
@@ -38,15 +38,17 @@ pub fn list_unmigrated(
         return Ok(vec![]);
     }
 
-    let legacy = namespaces::list(data_dir)
+    let legacy = sync_dir::namespace_dirs(data_dir)?
         .into_iter()
-        .flat_map(|namespace| {
-            repositories::list_repos_in_namespace(&data_dir.join(&namespace)).filter_map(
-                move |repo| {
-                    let name = repo.path.file_name().and_then(OsStr::to_str)?.to_string();
-                    Some((repo, namespace.clone(), name))
-                },
-            )
+        .flat_map(|namespace_dir| {
+            let namespace = namespace_dir
+                .file_name()
+                .and_then(OsStr::to_str)
+                .map(str::to_string);
+            repositories::list_repos_in_namespace(&namespace_dir).filter_map(move |repo| {
+                let name = repo.path.file_name().and_then(OsStr::to_str)?.to_string();
+                Some((repo, namespace.clone()?, name))
+            })
         });
     let placed = sync_dir::placed_repo_dirs(data_dir)?
         .into_iter()
