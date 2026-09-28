@@ -1,7 +1,10 @@
 use pyo3::prelude::*;
 
 use liboxen::model::Commit as OxenCommit;
-use liboxen::view::PaginatedCommits as OxenPaginatedCommits;
+use liboxen::view::{
+    PaginatedCommits as OxenPaginatedCommits, Pagination as OxenPagination,
+    PathHistoryPage as OxenPathHistoryPage,
+};
 
 use crate::py_pagination::PyPagination;
 // use crate::error::PyOxenError;
@@ -73,14 +76,16 @@ impl From<OxenCommit> for PyCommit {
 
 #[pyclass]
 pub struct PyPaginatedCommits {
-    pub _commits: OxenPaginatedCommits,
+    commits: Vec<OxenCommit>,
+    // Absent for a file or directory's history, which is not counted.
+    pagination: Option<OxenPagination>,
+    has_more: bool,
 }
 
 #[pymethods]
 impl PyPaginatedCommits {
     fn __repr__(&self) -> String {
         let commits_str = self
-            ._commits
             .commits
             .iter()
             .map(|c| PyCommit::from(c.clone()).__repr__())
@@ -91,7 +96,6 @@ impl PyPaginatedCommits {
 
     fn __str__(&self) -> String {
         let commits_str = self
-            ._commits
             .commits
             .iter()
             .map(|c| PyCommit::from(c.clone()).__str__())
@@ -102,24 +106,28 @@ impl PyPaginatedCommits {
 
     #[getter]
     pub fn commits(&self) -> Vec<PyCommit> {
-        self._commits
-            .commits
+        self.commits
             .iter()
             .map(|c| PyCommit::from(c.to_owned()))
             .collect()
     }
 
     #[getter]
-    pub fn pagination(&self) -> PyPagination {
-        self._commits.pagination.clone().into()
+    pub fn pagination(&self) -> Option<PyPagination> {
+        self.pagination.clone().map(PyPagination::from)
+    }
+
+    #[getter]
+    pub fn has_more(&self) -> bool {
+        self.has_more
     }
 
     fn __len__(&self) -> usize {
-        self._commits.commits.len()
+        self.commits.len()
     }
 
     fn __getitem__(&self, idx: isize) -> PyResult<PyCommit> {
-        let len = self._commits.commits.len() as isize;
+        let len = self.commits.len() as isize;
         let idx = if idx < 0 { len + idx } else { idx };
 
         if idx < 0 || idx >= len {
@@ -128,22 +136,19 @@ impl PyPaginatedCommits {
             ));
         }
 
-        Ok(PyCommit::from(self._commits.commits[idx as usize].clone()))
+        Ok(PyCommit::from(self.commits[idx as usize].clone()))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyCommitIterator>> {
         let iter = PyCommitIterator {
-            commits: slf._commits.commits.clone(),
+            commits: slf.commits.clone(),
             index: 0,
         };
         Py::new(slf.py(), iter)
     }
 
     fn __contains__(&self, commit: &PyCommit) -> bool {
-        self._commits
-            .commits
-            .iter()
-            .any(|c| c.id == commit.commit.id)
+        self.commits.iter().any(|c| c.id == commit.commit.id)
     }
 }
 
@@ -171,7 +176,21 @@ impl PyCommitIterator {
 }
 
 impl From<OxenPaginatedCommits> for PyPaginatedCommits {
-    fn from(commits: OxenPaginatedCommits) -> PyPaginatedCommits {
-        PyPaginatedCommits { _commits: commits }
+    fn from(page: OxenPaginatedCommits) -> PyPaginatedCommits {
+        PyPaginatedCommits {
+            commits: page.commits,
+            has_more: page.pagination.page_number < page.pagination.total_pages,
+            pagination: Some(page.pagination),
+        }
+    }
+}
+
+impl From<OxenPathHistoryPage> for PyPaginatedCommits {
+    fn from(page: OxenPathHistoryPage) -> PyPaginatedCommits {
+        PyPaginatedCommits {
+            commits: page.commits,
+            pagination: None,
+            has_more: page.has_more,
+        }
     }
 }

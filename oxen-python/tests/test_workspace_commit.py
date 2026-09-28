@@ -10,6 +10,10 @@ def test_commit_one_file(
     _, remote_repo = celeba_remote_repo_one_image_pushed
     # 1 commit pushed in setup
     assert len(remote_repo.log()) == 1
+    images_history = remote_repo.log(path="images")
+    assert len(images_history) == 1, "the setup commit added the images directory"
+    assert not images_history.has_more, "a single commit leaves no later page"
+    assert images_history.pagination is None, "a path's history is not counted"
     images_path = str(PurePath("CelebA", "images", "1.jpg"))
     full_path = os.path.join(shared_datadir, images_path)
     workspace = Workspace(remote_repo, "main")
