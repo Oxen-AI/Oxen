@@ -661,6 +661,10 @@ impl VersionStore for UnconfiguredS3VersionStore {
         Err(OxenError::S3BackendMissingServerOpts)
     }
 
+    async fn find_missing_versions(&self, _hashes: &[String]) -> Result<Vec<String>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
     async fn delete_version(&self, _hash: &str) -> Result<(), OxenError> {
         Err(OxenError::S3BackendMissingServerOpts)
     }
@@ -707,6 +711,11 @@ mod tests {
         assert!(
             matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
             "expected S3BackendMissingServerOpts, got {result:?}",
+        );
+        let result = store.find_missing_versions(&[]).await;
+        assert!(
+            matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
+            "even a probe of no versions fails, got {result:?}",
         );
     }
 
