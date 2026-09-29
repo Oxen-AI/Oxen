@@ -336,62 +336,25 @@ fn list_changed_dirs_sync(
     base_commit: &Commit,
     head_commit: &Commit,
 ) -> Result<Vec<(PathBuf, DiffEntryStatus)>, OxenError> {
-    let mut changed_dirs: Vec<(PathBuf, DiffEntryStatus)> = vec![];
+    let base_dirs = CommitMerkleTree::dir_hashes(repo, base_commit)?;
+    let head_dirs = CommitMerkleTree::dir_hashes(repo, head_commit)?;
 
-    let Some(base_tree) = repositories::tree::get_root_with_children(repo, base_commit)? else {
-        return Err(OxenError::basic_str(format!(
-            "Failed to get base tree for commit: {base_commit}"
-        )));
-    };
-    let Some(head_tree) = repositories::tree::get_root_with_children(repo, head_commit)? else {
-        return Err(OxenError::basic_str(format!(
-            "Failed to get head tree for commit: {head_commit}"
-        )));
-    };
-
-    let base_dirs = repositories::tree::list_all_dirs(&base_tree)?;
-    let head_dirs = repositories::tree::list_all_dirs(&head_tree)?;
-
-    let added_dirs = head_dirs.difference(&base_dirs).collect::<HashSet<_>>();
-    let removed_dirs = base_dirs.difference(&head_dirs).collect::<HashSet<_>>();
-    let modified_or_unchanged_dirs = head_dirs.intersection(&base_dirs).collect::<HashSet<_>>();
-
-    for dir in added_dirs.iter() {
-        changed_dirs.push((dir.path.clone(), DiffEntryStatus::Added));
-    }
-
-    for dir in removed_dirs.iter() {
-        changed_dirs.push((dir.path.clone(), DiffEntryStatus::Removed));
-    }
-
-    for dir in modified_or_unchanged_dirs.iter() {
-        let head_dir = head_tree.get_by_path(&dir.path)?;
-        let base_dir = base_tree.get_by_path(&dir.path)?;
-
-        let base_dir_hash = match base_dir {
-            Some(base_dir) => base_dir.hash,
-            None => {
-                return Err(OxenError::basic_str(format!(
-                    "Could not calculate dir diff tree: base_dir_hash not found for dir {:?} in commit {}",
-                    dir, base_commit.id
-                )));
+    let mut changed_dirs: Vec<_> = head_dirs
+        .iter()
+        .filter_map(|(path, head_hash)| match base_dirs.get(path) {
+            None => Some((path.clone(), DiffEntryStatus::Added)),
+            Some(base_hash) if base_hash != head_hash => {
+                Some((path.clone(), DiffEntryStatus::Modified))
             }
-        };
-
-        let head_dir_hash = match head_dir {
-            Some(head_dir) => head_dir.hash,
-            None => {
-                return Err(OxenError::basic_str(format!(
-                    "Could not calculate dir diff tree: head_dir_hash not found for dir {:?} in commit {}",
-                    dir, head_commit.id
-                )));
-            }
-        };
-
-        if base_dir_hash != head_dir_hash {
-            changed_dirs.push((dir.path.clone(), DiffEntryStatus::Modified));
-        }
-    }
+            Some(_) => None,
+        })
+        .chain(
+            base_dirs
+                .keys()
+                .filter(|path| !head_dirs.contains_key(*path))
+                .map(|path| (path.clone(), DiffEntryStatus::Removed)),
+        )
+        .collect();
 
     // Sort by path for consistency
     changed_dirs.sort_by(|a, b| a.0.cmp(&b.0));
