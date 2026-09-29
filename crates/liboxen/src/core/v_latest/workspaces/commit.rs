@@ -109,11 +109,10 @@ async fn commit_inner(
     let commit = {
         let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
 
-        // Read all the staged entries
-        let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &commit_progress_bar,
-        )?;
+        // Read all the staged entries, keeping the snapshot so only what this commit read is
+        // unstaged afterwards
+        let (dir_entries, snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+            .read_staged_entries_for_commit(&commit_progress_bar)?;
 
         let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
         if !conflicts.is_empty() {
@@ -122,18 +121,20 @@ async fn commit_inner(
 
         let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
 
-        repositories::commits::commit_writer::commit_dir_entries(
+        let commit = repositories::commits::commit_writer::commit_dir_entries(
             &workspace.base_repo,
             dir_entries,
             new_commit,
             branch_name,
-        )?
-    };
+        )?;
 
-    // Clear through the shared handle rather than dropping it and removing the directory: the next
-    // reader's open would collide with RocksDB's per-directory LOCK until the last holder finishes.
-    log::debug!("Clearing staged db: {staged_db_path:?}");
-    get_staged_db_manager(&workspace.workspace_repo)?.clear()?;
+        // Unstage through the shared handle rather than dropping it and removing the directory:
+        // the next reader's open would collide with RocksDB's per-directory LOCK until the last
+        // holder finishes. Anything staged or re-staged since the read stays for the next commit.
+        log::debug!("Unstaging committed entries: {staged_db_path:?}");
+        get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&snapshot)?;
+        commit
+    };
 
     // DEBUG
     // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;

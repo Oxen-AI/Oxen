@@ -10,12 +10,11 @@ use std::thread::sleep;
 use indicatif::ProgressBar;
 use parking_lot::{Mutex, RwLock};
 use rmp_serde::Serializer;
-use rocksdb::{DB, IteratorMode};
+use rocksdb::{DB, IteratorMode, WriteBatch};
 use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
 use crate::core::db;
-use crate::core::db::key_val::kv_db;
 use crate::core::db::weak_cache::WeakDbCache;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -37,9 +36,15 @@ const WARM_STAGED_DBS: NonZeroUsize = NonZeroUsize::new(64).unwrap();
 static STAGED_DBS: LazyLock<WeakDbCache<RwLock<DB>>> =
     LazyLock::new(|| WeakDbCache::new(WARM_STAGED_DBS));
 
+/// The raw key/value pairs of the staged db as one read saw them, for
+/// [`StagedDBManager::remove_unchanged`].
+pub(crate) struct StagedSnapshot(Vec<RawEntry>);
+
+type RawEntry = (Box<[u8]>, Box<[u8]>);
+
 /// Closes this repository's staged DB so its directory can be removed, blocking briefly while
 /// other callers drop their handles. Callers that only want the entries gone want
-/// [`StagedDBManager::clear`], which keeps the shared handle open.
+/// [`StagedDBManager::remove_unchanged`], which keeps the shared handle open.
 ///
 /// Errors when a handle is still open once the wait runs out, keeping the registry entry so later
 /// callers go on sharing that handle. Leave the directory in place until a later close succeeds.
@@ -302,10 +307,19 @@ impl StagedDBManager {
         self.delete_entry_with_lock(path, None)
     }
 
-    /// Delete every staged entry, leaving the staged db open and shared with other callers.
-    /// A concurrent reader sees either the full set of entries or none of them.
-    pub(crate) fn clear(&self) -> Result<(), OxenError> {
-        kv_db::clear(&self.staged_db.write())
+    /// Delete each entry in `snapshot` whose staged value is still the one the snapshot read. An
+    /// entry staged or re-staged since the snapshot is kept. A concurrent reader sees either all of
+    /// the deletions or none of them.
+    pub(crate) fn remove_unchanged(&self, snapshot: &StagedSnapshot) -> Result<(), OxenError> {
+        let db = self.staged_db.write();
+        let mut batch = WriteBatch::default();
+        for (key, value) in &snapshot.0 {
+            if db.get_pinned(key)?.as_deref() == Some(&value[..]) {
+                batch.delete(key);
+            }
+        }
+        db.write(batch)?;
+        Ok(())
     }
 
     /// Write a directory node to the staged db
@@ -397,22 +411,58 @@ impl StagedDBManager {
         start_path: impl AsRef<Path>,
         read_progress: &ProgressBar,
     ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
+        let (dir_entries, total_entries, _) =
+            self.read_entries_below_path(start_path.as_ref(), read_progress, false)?;
+        Ok((dir_entries, total_entries))
+    }
+
+    /// Read every staged entry, along with a snapshot of the staged db taken in the same read.
+    /// Passing the snapshot to [`Self::remove_unchanged`] once the entries are committed removes
+    /// exactly what the commit read, including undecodable entries that could never be committed.
+    pub(crate) fn read_staged_entries_for_commit(
+        &self,
+        read_progress: &ProgressBar,
+    ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, StagedSnapshot), OxenError> {
+        let (dir_entries, _, snapshot) =
+            self.read_entries_below_path(Path::new(""), read_progress, true)?;
+        Ok((dir_entries, snapshot))
+    }
+
+    /// Read all entries below a path from the staged db, and when `keep_raw` is set, a snapshot
+    /// holding the raw key/value pair of each entry read.
+    #[allow(clippy::type_complexity)]
+    fn read_entries_below_path(
+        &self,
+        start_path: &Path,
+        read_progress: &ProgressBar,
+        keep_raw: bool,
+    ) -> Result<
+        (
+            HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+            usize,
+            StagedSnapshot,
+        ),
+        OxenError,
+    > {
         let db = self.staged_db.read();
-        let start_path =
-            util::fs::path_relative_to_dir(start_path.as_ref(), &self.repository.path)?;
+        let start_path = util::fs::path_relative_to_dir(start_path, &self.repository.path)?;
         let mut total_entries = 0;
         let iter = db.iterator(IteratorMode::Start);
         let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
+        let mut raw_entries = vec![];
         for item in iter {
             match item {
                 // key = file path, value = EntryMetaData
-                Ok((key, value)) => {
+                Ok((raw_key, value)) => {
                     // log::debug!("Key is {key:?}, value is {value:?}");
-                    let key =
-                        str::from_utf8(&key).map_err(|e| OxenError::basic_str(e.to_string()))?;
+                    let key = str::from_utf8(&raw_key)
+                        .map_err(|e| OxenError::basic_str(e.to_string()))?;
                     let path = Path::new(key);
                     if !path.starts_with(&start_path) {
                         continue;
+                    }
+                    if keep_raw {
+                        raw_entries.push((raw_key.clone(), value.clone()));
                     }
 
                     // Older versions may have a corrupted StagedMerkleTreeNode that was staged
@@ -464,7 +514,7 @@ impl StagedDBManager {
             }
         }
 
-        Ok((dir_entries, total_entries))
+        Ok((dir_entries, total_entries, StagedSnapshot(raw_entries)))
     }
 
     /// Remove staged entries and parent dir from staged db
@@ -553,5 +603,71 @@ impl StagedDBManager {
             db_w.delete(normalize_key(path).as_bytes())?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repositories;
+    use crate::test;
+    use crate::util;
+
+    #[tokio::test]
+    async fn test_remove_unchanged_keeps_entries_staged_after_the_read() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &head,
+                "remove-unchanged-test",
+                Some("remove-unchanged-test-ws".to_string()),
+                true,
+            )
+            .await?;
+            let stage = |name: &'static str, contents: &'static str| {
+                let workspace = &workspace;
+                async move {
+                    let path = workspace.workspace_repo.path.join(name);
+                    util::fs::write_to_path(&path, contents)?;
+                    repositories::workspaces::files::add(workspace, &path).await
+                }
+            };
+
+            stage("uploads/unchanged.txt", "unchanged").await?;
+            stage("uploads/modified.txt", "modified").await?;
+            let (_, snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_staged_entries_for_commit(&ProgressBar::hidden())?;
+
+            // Staged after the read: a new file in the same directory, which re-stages the
+            // directory's entry with the same bytes, and a snapshot file with new content.
+            stage("uploads/new.txt", "new").await?;
+            stage("uploads/modified.txt", "changed").await?;
+
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            staged_db_manager.remove_unchanged(&snapshot)?;
+            for (path, staged, why) in [
+                ("uploads/new.txt", true, "it was staged after the read"),
+                (
+                    "uploads/modified.txt",
+                    true,
+                    "it was re-staged with new content",
+                ),
+                (
+                    "uploads/unchanged.txt",
+                    false,
+                    "the snapshot read it unchanged",
+                ),
+                (
+                    "uploads",
+                    false,
+                    "it was re-staged with the bytes the snapshot read",
+                ),
+            ] {
+                assert_eq!(staged_db_manager.exists(path)?, staged, "{path}: {why}");
+            }
+            Ok(())
+        })
+        .await
     }
 }
