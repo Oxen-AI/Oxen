@@ -2019,8 +2019,7 @@ mod tests {
 
             let (removed, yielded) = test::run_and_report_yield(
                 repositories::workspaces::files::rm(&workspace, slice::from_ref(&file_path)),
-            )
-            .await;
+            );
             let err_files = removed?;
             assert!(yielded, "rm held the thread it was called on");
             assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
