@@ -48,7 +48,8 @@ pub fn get(
     let legacy_directory = legacy_directory.unwrap_or(name);
     let namespace_path = repositories::namespace_dir(data_dir, legacy_directory)?;
     let legacy = (!is_server_owned(legacy_directory) && namespace_path.is_dir())
-        .then(|| repositories::list_repos_in_namespace(&namespace_path));
+        .then(|| repositories::list_repos_in_namespace(&namespace_path))
+        .transpose()?;
     let placed = repositories::list_placed_repos_in_namespace(data_dir, name)?;
     if legacy.is_none() && placed.is_empty() {
         return Ok(None);

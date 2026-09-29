@@ -38,18 +38,18 @@ pub fn list_unmigrated(
         return Ok(vec![]);
     }
 
-    let legacy = sync_dir::namespace_dirs(data_dir)?
-        .into_iter()
-        .flat_map(|namespace_dir| {
-            let namespace = namespace_dir
-                .file_name()
-                .and_then(OsStr::to_str)
-                .map(str::to_string);
-            repositories::list_repos_in_namespace(&namespace_dir).filter_map(move |repo| {
+    let mut legacy = vec![];
+    for namespace_dir in sync_dir::namespace_dirs(data_dir)? {
+        let Some(namespace) = namespace_dir.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        legacy.extend(
+            repositories::list_repos_in_namespace(&namespace_dir)?.filter_map(|repo| {
                 let name = repo.path.file_name().and_then(OsStr::to_str)?.to_string();
-                Some((repo, namespace.clone()?, name))
-            })
-        });
+                Some((repo, namespace.to_string(), name))
+            }),
+        );
+    }
     let placed = sync_dir::placed_repo_dirs(data_dir)?
         .into_iter()
         .filter_map(|repo_dir| {
@@ -72,6 +72,7 @@ pub fn list_unmigrated(
         });
 
     Ok(legacy
+        .into_iter()
         .chain(placed)
         .filter(|(repo, ..)| {
             // A repository recording no migration of its own is at the global one, which is

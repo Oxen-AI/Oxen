@@ -18,12 +18,11 @@ use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
 use crate::storage::{S3Opts, StorageKind};
-use crate::sync_dir::{is_server_owned, placed_repo_dir};
+use crate::sync_dir::{is_server_owned, placed_repo_dir, repo_dirs};
 use crate::util;
 use crate::util::fs::AtomicFile;
 use crate::view::repository::RepositoryListView;
 use bytes::Bytes;
-use jwalk::WalkDir;
 use regex::Regex;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
@@ -183,7 +182,7 @@ pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
     let mut namespaces: Vec<String> = vec![];
     for path in std::fs::read_dir(sync_dir)? {
         let path = path.unwrap().path();
-        if is_namespace_dir(&path) {
+        if is_namespace_dir(&path)? {
             let name = path.file_name().unwrap().to_str().unwrap();
             namespaces.push(String::from(name));
         }
@@ -192,14 +191,14 @@ pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
     Ok(namespaces)
 }
 
-fn is_namespace_dir(path: &Path) -> bool {
+fn is_namespace_dir(path: &Path) -> Result<bool, OxenError> {
     if let Some(name) = path.to_str() {
         // Make sure it is a directory, that doesn't start with .oxen and has repositories in it
-        return path.is_dir()
+        return Ok(path.is_dir()
             && !name.starts_with(constants::OXEN_HIDDEN_DIR)
-            && list_repos_in_namespace(path).next().is_some();
+            && list_repos_in_namespace(path)?.next().is_some());
     }
-    false
+    Ok(false)
 }
 
 /// The repositories in `namespace` under `sync_dir`, each under the namespace and name it is listed
@@ -215,6 +214,7 @@ pub fn namespace_listing(
     let namespace_path = namespace_dir(sync_dir, namespace)?;
     let legacy = (!is_server_owned(namespace))
         .then(|| list_repos_in_namespace(&namespace_path))
+        .transpose()?
         .into_iter()
         .flatten()
         .map(|repo| RepositoryListView {
@@ -265,27 +265,29 @@ pub(crate) fn list_placed_repos_in_namespace(
         .collect())
 }
 
-/// Lazily-load each repository in a namespace's directory.
+/// Lazily-load each repository in a namespace's directory, in path order. A path with no directory
+/// holds no repositories.
 ///
-/// Skips sub-directories that either don't have an `.oxen/` dir within them or that
-/// fail to load via [`LocalRepository::from_dir`].
+/// Skips repository directories that fail to load via [`LocalRepository::from_dir`].
+///
+/// # Errors
+/// When the directory or one of its entries cannot be read.
 pub fn list_repos_in_namespace(
     namespace_path: &Path,
-) -> impl Iterator<Item = LocalRepository> + use<> {
+) -> Result<impl Iterator<Item = LocalRepository> + use<>, OxenError> {
     log::debug!(
         "repositories::entries::list_repos_in_namespace repositories for dir: {namespace_path:?}"
     );
-    WalkDir::new(namespace_path)
+    let dirs = if namespace_path.is_dir() {
+        repo_dirs(namespace_path).map_err(|err| {
+            OxenError::internal_error(format!("Cannot read {namespace_path:?}: {err}"))
+        })?
+    } else {
+        vec![]
+    };
+    Ok(dirs
         .into_iter()
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let local_dir = entry.path();
-            let oxen_dir = util::fs::oxen_hidden_dir(&local_dir);
-            if !oxen_dir.exists() {
-                return None;
-            }
-            LocalRepository::from_dir(&local_dir).ok()
-        })
+        .filter_map(|repo_dir| LocalRepository::from_dir(&repo_dir).ok()))
 }
 
 /// Record what this repository and its namespace are called, filling only hints the repository
@@ -1525,7 +1527,7 @@ mod tests {
             let _ = repositories::init(namespace_dir.join("testing2"))?;
             let _ = repositories::init(namespace_dir.join("testing3"))?;
 
-            let repos = repositories::list_repos_in_namespace(&namespace_dir);
+            let repos = repositories::list_repos_in_namespace(&namespace_dir)?;
             assert_eq!(repos.count(), 3);
 
             Ok(())
@@ -1744,8 +1746,8 @@ mod tests {
             let repo_new = RepoNew::from_root_commit(old_namespace, name, root_commit);
             let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
-            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
-            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
+            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir)?;
+            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir)?;
 
             assert_eq!(old_namespace_repos.count(), 1);
             assert_eq!(new_namespace_repos.count(), 0);
@@ -1772,8 +1774,8 @@ mod tests {
             assert_eq!(updated_repo.path, new_repo_path);
 
             // Check that the old namespace is empty
-            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
-            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
+            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir)?;
+            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir)?;
 
             assert_eq!(old_namespace_repos.count(), 0);
             assert_eq!(new_namespace_repos.count(), 1);
