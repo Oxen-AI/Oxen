@@ -195,3 +195,38 @@ impl PaginatedCommits {
         }
     }
 }
+
+/// One page of the commits that changed a file or directory, newest first. The history is not
+/// counted, so the page reports whether a later one exists rather than how many there are.
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
+#[schema(
+    example = json!({
+        "status": "success",
+        "status_message": "resource_found",
+        "commits": [
+            {
+                "id": "a1b2c3d4e5f67890abcdef1234567890",
+                "parent_ids": ["f1e2d3c4b5a67890fedcba9876543210"],
+                "message": "Relabel the validation images.",
+                "author": "ox",
+                "email": "ox@example.com",
+                "timestamp": "2025-01-01T10:00:00Z"
+            }
+        ],
+        "page_number": 1,
+        "page_size": 10,
+        "has_more": true
+    })
+)]
+pub struct PathHistoryPage {
+    #[serde(flatten)]
+    #[schema(
+        value_type = StatusMessage,
+        example = json!({"status": "success", "status_message": "resource_found"})
+    )]
+    pub status: StatusMessage,
+    pub commits: Vec<Commit>,
+    pub page_number: usize,
+    pub page_size: usize,
+    pub has_more: bool,
+}

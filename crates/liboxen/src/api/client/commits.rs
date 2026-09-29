@@ -14,8 +14,8 @@ use crate::{current_function, util};
 // use crate::util::ReadProgress;
 use crate::view::entries::ListCommitEntryResponse;
 use crate::view::{
-    CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, RootCommitResponse,
-    StatusMessage,
+    CommitResponse, ListCommitResponse, MerkleHashesResponse, PaginatedCommits, PathHistoryPage,
+    RootCommitResponse, StatusMessage,
 };
 
 use std::collections::HashSet;
@@ -64,15 +64,13 @@ pub async fn get_by_id(
     }
 }
 
-/// List commits for a file
+/// Get one page of the commits that changed a file or directory, newest first
 pub async fn list_commits_for_path(
     remote_repo: &RemoteRepository,
-    revision: impl AsRef<str>,
-    path: impl AsRef<Path>,
+    revision: &str,
+    path: &Path,
     page_opts: &PaginateOpts,
-) -> Result<PaginatedCommits, OxenError> {
-    let revision = revision.as_ref();
-    let path = path.as_ref();
+) -> Result<PathHistoryPage, OxenError> {
     let path_str = path.to_string_lossy();
     let uri = format!(
         "/commits/history/{revision}/{path_str}?page={}&page_size={}",
@@ -82,7 +80,7 @@ pub async fn list_commits_for_path(
     let client = client::new_for_url(&url)?;
     let res = client.get(&url).send().await?;
     let body = client::parse_json_body(&url, res).await?;
-    let response: Result<PaginatedCommits, serde_json::Error> = serde_json::from_str(&body);
+    let response: Result<PathHistoryPage, serde_json::Error> = serde_json::from_str(&body);
     match response {
         Ok(j_res) => Ok(j_res),
         Err(err) => Err(OxenError::basic_str(format!(

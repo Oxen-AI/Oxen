@@ -9,7 +9,7 @@ use crate::model::User;
 use crate::model::{Commit, LocalRepository};
 use crate::opts::PaginateOpts;
 use crate::util;
-use crate::view::{PaginatedCommits, StatusMessage};
+use crate::view::{PaginatedCommits, PathHistoryPage, StatusMessage};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -255,13 +255,14 @@ pub async fn list_from_paginated(
     .await?
 }
 
-/// List paginated commits by resource
+/// Get one page of the commits in `commit`'s history that changed `path` (a file or directory),
+/// newest first. The page reports whether a later one exists rather than a total.
 pub async fn list_by_path_from_paginated(
     repo: &LocalRepository,
     commit: &Commit,
     path: &Path,
     pagination: PaginateOpts,
-) -> Result<PaginatedCommits, OxenError> {
+) -> Result<PathHistoryPage, OxenError> {
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.to_path_buf();
@@ -1587,6 +1588,10 @@ A: Oxen.ai
             .await?;
 
             assert_eq!(paginated_result.commits.len(), expected_commits.len());
+            assert!(
+                !paginated_result.has_more,
+                "one page holds the whole history"
+            );
 
             for (i, commit) in paginated_result.commits.iter().enumerate() {
                 assert_eq!(
@@ -1594,6 +1599,26 @@ A: Oxen.ai
                     "Commits should match expected list at index {i}"
                 );
             }
+
+            let page_of_two = |page_num| {
+                repositories::commits::list_by_path_from_paginated(
+                    &repo,
+                    &head_commit,
+                    &target_file_path,
+                    PaginateOpts {
+                        page_num,
+                        page_size: 2,
+                    },
+                )
+            };
+            let first = page_of_two(1).await?;
+            let ids: Vec<&str> = first.commits.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, [commit_e.id.as_str(), commit_c.id.as_str()]);
+            assert!(first.has_more, "commit a is still to come");
+            let second = page_of_two(2).await?;
+            let ids: Vec<&str> = second.commits.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, [commit_a.id.as_str()]);
+            assert!(!second.has_more, "commit a is the path's first commit");
 
             Ok(())
         })
@@ -1955,6 +1980,29 @@ A: Oxen.ai
                 all_commits.len(),
                 "count_from ({merge_count}) should match list_from ({})",
                 all_commits.len()
+            );
+
+            // e.txt differs from the merge's main-side parent, which lacks it, so the merge
+            // counts as touching it along with E.
+            let e_page = |page_num| {
+                repositories::commits::list_by_path_from_paginated(
+                    &repo,
+                    &merge_commit,
+                    Path::new("e.txt"),
+                    PaginateOpts {
+                        page_num,
+                        page_size: 1,
+                    },
+                )
+            };
+            let first = e_page(1).await?;
+            assert_eq!(first.commits[0].id, merge_commit.id);
+            assert!(first.has_more, "E is still to come");
+            let second = e_page(2).await?;
+            assert_eq!(second.commits[0].message, "Commit E");
+            assert!(
+                !second.has_more,
+                "E added e.txt, on the feature side of the merge"
             );
 
             Ok(())

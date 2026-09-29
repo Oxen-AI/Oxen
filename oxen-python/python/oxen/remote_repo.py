@@ -517,6 +517,11 @@ class RemoteRepo:
                 The page number to return. Defaults to 1
             page_size: `int`
                 The number of items to return per page. Defaults to 10
+
+        Returns:
+            One page of commits, newest first. `has_more` says whether a later page exists.
+            `pagination` carries the totals for a revision's history, and is `None` for a path's
+            history, which is not counted.
         """
         if revision is None:
             revision = self.revision
