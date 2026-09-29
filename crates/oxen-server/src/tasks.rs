@@ -104,6 +104,7 @@ fn inherited_hub() -> Arc<Hub> {
 mod tests {
     use super::*;
     use actix_web::body::to_bytes;
+    use actix_web::middleware::from_fn;
     use actix_web::test::{TestRequest, call_service, init_service};
     use actix_web::{App, HttpResponse, web};
     use liboxen::error::OxenError;
@@ -112,7 +113,7 @@ mod tests {
     use sentry::{ClientOptions, Level, capture_message};
 
     use crate::helpers::stream_with_heartbeat;
-    use crate::middleware::{OXEN_REQUEST_ID, RequestIdMiddleware};
+    use crate::middleware::{OXEN_REQUEST_ID, RequestIdMiddleware, run_request_as_task};
 
     /// The route actix matches, the URI that matches it, and the transaction name `sentry-actix`
     /// derives from the two — what a task spawned anywhere under this request must report against.
@@ -122,7 +123,7 @@ mod tests {
     /// The id the caller sends, which `RequestIdMiddleware` adopts in place of generating one.
     const CALLER_REQUEST_ID: &str = "3f2d9c14-0b6a-4e77-9a21-5c8e7d40b1f3";
 
-    /// Drives one GET through the same Sentry middleware configuration as `main` and returns the
+    /// Drives one GET through the same Sentry and request-task middleware as `main` and returns the
     /// events `handler`'s tasks reported. The response body is read to the end, so work deferred
     /// behind a streaming body has run by the time the events are collected.
     ///
@@ -155,7 +156,8 @@ mod tests {
                         .capture_server_errors(false)
                         .with_hub(hub)
                         .finish(),
-                ),
+                )
+                .wrap(from_fn(run_request_as_task)),
         )
         .await;
         let request = TestRequest::get()

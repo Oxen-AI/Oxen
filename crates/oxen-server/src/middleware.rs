@@ -3,10 +3,19 @@ use actix_web::{
     body::MessageBody,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::header,
+    middleware::Next,
 };
 use futures_util::future::LocalBoxFuture;
+use liboxen::core::repo_locks;
+use liboxen::error::OxenError;
+use liboxen::model::LocalRepository;
 use liboxen::request_context::REQUEST_ID;
-use std::future::{Ready, ready};
+use std::future::{Future, Ready, ready};
+use std::panic;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio_util::sync::CancellationToken;
+
+use crate::errors::OxenHttpError;
 use tracing::Span;
 use tracing_actix_web::{DefaultRootSpanBuilder, RootSpanBuilder, root_span};
 
@@ -63,6 +72,66 @@ pub fn request_id(req: &HttpRequest) -> String {
         .get::<RequestId>()
         .map(|id| id.0.clone())
         .unwrap_or_else(|| "-".to_string())
+}
+
+/// Canceled when the client goes away before the handler has returned its response. Stored in the
+/// request's extensions by [`run_request_as_task`].
+struct ClientDeparture(CancellationToken);
+
+/// Runs each request as a task of its own, so a client that drops its connection leaves the request
+/// to run to completion, holding its write guards until it finishes, rather than canceling it
+/// partway. Wrap it outermost, so every other middleware runs inside the task. Use with
+/// [`actix_web::middleware::from_fn`].
+pub async fn run_request_as_task<B: MessageBody + 'static>(
+    req: ServiceRequest,
+    next: Next<B>,
+) -> Result<ServiceResponse<B>, Error> {
+    let departure = CancellationToken::new();
+    req.extensions_mut()
+        .insert(ClientDeparture(departure.clone()));
+    let request = actix_web::rt::spawn(next.call(req));
+    // Fires if the client goes away first, which drops this future before the request finishes.
+    let client_waiting = departure.drop_guard();
+    // Re-raise a panic inside the request here, on the connection that made it.
+    let response = request
+        .await
+        .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()));
+    client_waiting.disarm();
+    response
+}
+
+/// [`repo_locks::with_repo_exclusive`] for the request `req`. If the client goes away before `work`
+/// starts, this gives the repository back to writers at once and returns
+/// [`OxenHttpError::ClientDisconnected`], and `work` never runs. Once started, `work` runs to
+/// completion whether or not the client stays.
+pub(crate) async fn with_repo_exclusive_for_client<T>(
+    req: &HttpRequest,
+    repo: &LocalRepository,
+    work: impl Future<Output = Result<T, OxenError>>,
+) -> Result<T, OxenHttpError> {
+    let departure = req
+        .extensions()
+        .get::<ClientDeparture>()
+        .map(|departure| departure.0.clone())
+        .unwrap_or_default();
+    let started = AtomicBool::new(false);
+    let exclusive = repo_locks::with_repo_exclusive(repo, async {
+        if departure.is_cancelled() {
+            return Ok(None);
+        }
+        started.store(true, Ordering::Relaxed);
+        work.await.map(Some)
+    });
+    tokio::pin!(exclusive);
+    tokio::select! {
+        biased;
+        result = &mut exclusive => return result?.ok_or(OxenHttpError::ClientDisconnected),
+        () = departure.cancelled() => {}
+    }
+    if !started.load(Ordering::Relaxed) {
+        return Err(OxenHttpError::ClientDisconnected);
+    }
+    exclusive.await?.ok_or(OxenHttpError::ClientDisconnected)
 }
 
 /// Assigns every request an id (the inbound `x-oxen-request-id` header when the caller sent a
@@ -461,6 +530,87 @@ mod tests {
 
         // Should be valid UUID format
         assert_eq!(id.len(), 36); // UUID length with hyphens
+    }
+
+    #[actix_web::test]
+    async fn test_run_request_as_task_finishes_a_request_its_caller_dropped()
+    -> Result<(), OxenError> {
+        use actix_web::middleware::from_fn;
+        use actix_web::{App, HttpResponse, test, web};
+        use liboxen::config::RepositoryConfig;
+        use tokio::sync::mpsc;
+
+        liboxen::test::run_empty_dir_test_async(|dir| async move {
+            let repo = LocalRepository::new(&dir, RepositoryConfig::default())?;
+            let (started_tx, mut started_rx) = mpsc::channel::<()>(1);
+            // Carries whether the handler's exclusive work ran, rather than being refused with
+            // `ClientDisconnected`.
+            let (finished_tx, mut finished_rx) = mpsc::channel::<bool>(1);
+            let handler = {
+                let repo = repo.clone();
+                move |req: HttpRequest| {
+                    let (started_tx, finished_tx) = (started_tx.clone(), finished_tx.clone());
+                    let repo = repo.clone();
+                    async move {
+                        started_tx.send(()).await.expect("the test awaits the start");
+                        let ran = match with_repo_exclusive_for_client(&req, &repo, async {
+                            Ok(())
+                        })
+                        .await
+                        {
+                            Ok(()) => true,
+                            Err(OxenHttpError::ClientDisconnected) => false,
+                            Err(err) => panic!("unexpected error from the exclusive section: {err}"),
+                        };
+                        finished_tx.send(ran).await.expect("the test awaits the finish");
+                        HttpResponse::Ok().finish()
+                    }
+                }
+            };
+            let app = test::init_service(
+                App::new()
+                    .route("/", web::get().to(handler))
+                    .wrap(from_fn(run_request_as_task)),
+            )
+            .await;
+
+            let response =
+                test::call_service(&app, test::TestRequest::get().uri("/").to_request()).await;
+            assert!(response.status().is_success());
+            started_rx.recv().await;
+            assert_eq!(
+                finished_rx.recv().await,
+                Some(true),
+                "exclusive work runs while its client waits"
+            );
+
+            // A write in flight holds the next request's exclusive section in its drain.
+            let write = repo_locks::begin_write(&repo)?;
+            let mut call = Box::pin(app.call(test::TestRequest::get().uri("/").to_request()));
+            tokio::select! {
+                _ = &mut call => panic!("the exclusive section finished while a write was in flight"),
+                _ = started_rx.recv() => {}
+            }
+            // The client goes away mid-drain: nothing polls the call again, and the app is gone
+            // too, so the only sender left to report the finish is the one the handler holds.
+            drop(call);
+            drop(app);
+
+            assert_eq!(
+                finished_rx.recv().await,
+                Some(false),
+                "the request ran to completion after its caller stopped waiting for it, giving up \
+                 the exclusive section it had not started"
+            );
+            assert!(
+                repo_locks::begin_write(&repo).is_ok(),
+                "a departed client's exclusive section releases the repository without waiting \
+                 out the drain"
+            );
+            drop(write);
+            Ok(())
+        })
+        .await
     }
 
     #[actix_web::test]

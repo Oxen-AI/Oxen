@@ -303,8 +303,10 @@ mod tests {
     async fn test_exclusive_times_out_when_writes_never_drain() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
             let guard = begin_write(&repo)?;
+            let mut ran = false;
             let result =
                 with_repo_exclusive_with_timeout(&repo, Duration::from_millis(100), async {
+                    ran = true;
                     Ok::<(), OxenError>(())
                 })
                 .await;
@@ -312,6 +314,7 @@ mod tests {
                 matches!(result, Err(OxenError::LockTimeout(_))),
                 "an undrained write must time out the exclusive acquire"
             );
+            assert!(!ran, "an exclusive operation that timed out must not run");
             drop(guard);
 
             // The timed-out acquire must clear the exclusive marker on its way out (via

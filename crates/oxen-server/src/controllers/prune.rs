@@ -1,8 +1,8 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
+use crate::middleware::with_repo_exclusive_for_client;
 use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse, web};
-use liboxen::core::repo_locks;
 use liboxen::repositories;
 use liboxen::view::http::STATUS_SUCCESS;
 use liboxen::view::oxen_response::ErrorResponse;
@@ -56,8 +56,12 @@ pub async fn prune(
     let stats = if dry_run {
         repositories::prune::prune(&repository, true).await?
     } else {
-        repo_locks::with_repo_exclusive(&repository, repositories::prune::prune(&repository, false))
-            .await?
+        with_repo_exclusive_for_client(
+            &req,
+            &repository,
+            repositories::prune::prune(&repository, false),
+        )
+        .await?
     };
 
     let status_message = if dry_run {
