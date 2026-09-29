@@ -55,15 +55,17 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
 
-    let namespace_path = repositories::namespace_dir(&app_data.path, &namespace)?;
-
-    let repos: Vec<RepositoryListView> = repositories::list_repos_in_namespace(&namespace_path)
-        .map(|repo| RepositoryListView {
-            name: repo.dirname(),
-            namespace: namespace.to_string(),
-            min_version: Some("0.36.0".to_string()),
-        })
-        .collect();
+    let sync_dir = app_data.path.clone();
+    let repos: Vec<RepositoryListView> =
+        tasks::spawn_blocking(move || repositories::namespace_listing(&sync_dir, &namespace))
+            .await
+            .map_err(OxenError::from)??
+            .into_iter()
+            .map(|repo| RepositoryListView {
+                min_version: Some("0.36.0".to_string()),
+                ..repo
+            })
+            .collect();
     let view = ListRepositoryResponse {
         status: StatusMessage::resource_found(),
         repositories: repos,

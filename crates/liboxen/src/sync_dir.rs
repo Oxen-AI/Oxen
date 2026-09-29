@@ -87,12 +87,16 @@ pub fn repo_dirs(namespace_dir: &Path) -> io::Result<Vec<PathBuf>> {
     sorted_dirs(namespace_dir, |path| path.join(OXEN_HIDDEN_DIR).is_dir())
 }
 
-/// The entries of `dir` that `keep` accepts, in path order.
+/// The entries of `dir` that `keep` accepts, in path order. An entry that cannot be read fails the
+/// whole listing.
 fn sorted_dirs(dir: &Path, keep: impl Fn(&Path) -> bool) -> io::Result<Vec<PathBuf>> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| keep(path))
-        .collect();
+    let mut dirs = vec![];
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if keep(&path) {
+            dirs.push(path);
+        }
+    }
     dirs.sort();
     Ok(dirs)
 }

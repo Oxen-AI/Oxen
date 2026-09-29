@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use std::collections::HashSet;
 use std::path::Path;
 
 use crate::error::OxenError;
@@ -6,15 +7,29 @@ use crate::model::{LocalRepository, Namespace};
 use crate::repositories;
 use crate::repositories::name_table::NameTable;
 use crate::repositories::size::{self, RepoSizeFile, SizeStatus};
-use crate::sync_dir::{is_server_owned, namespace_dirs, placed_repo_dir};
+use crate::sync_dir::{is_server_owned, namespace_dirs};
 
-pub fn list(path: &Path) -> Vec<String> {
+/// The namespaces under `path`, in name order: its namespace directories, and the namespaces the
+/// name table records a repository under that no directory's name matches ignoring case. A
+/// namespace only the table records is listed lowercased.
+pub fn list(path: &Path) -> Result<Vec<String>, OxenError> {
     log::debug!("repositories::namespaces::list",);
-    namespace_dirs(path)
-        .unwrap_or_default()
+    let mut namespaces: Vec<String> = namespace_dirs(path)?
         .iter()
         .filter_map(|dir| dir.file_name()?.to_str().map(str::to_string))
-        .collect()
+        .collect();
+    let in_directories: HashSet<String> = namespaces
+        .iter()
+        .map(|namespace| namespace.to_ascii_lowercase())
+        .collect();
+    namespaces.extend(
+        NameTable::new(path)
+            .namespaces()?
+            .into_iter()
+            .filter(|namespace| !in_directories.contains(namespace)),
+    );
+    namespaces.sort();
+    Ok(namespaces)
 }
 
 /// The namespace called `name`, whose total counts the repositories in the directory
@@ -33,25 +48,9 @@ pub fn get(
     let legacy_directory = legacy_directory.unwrap_or(name);
     let namespace_path = repositories::namespace_dir(data_dir, legacy_directory)?;
     let legacy = (!is_server_owned(legacy_directory) && namespace_path.is_dir())
-        .then(|| repositories::list_repos_in_namespace(&namespace_path));
-    let placed: Vec<LocalRepository> = NameTable::new(data_dir)
-        .uuids_in_namespace(name)?
-        .into_iter()
-        .map(|repo_uuid| placed_repo_dir(data_dir, repo_uuid))
-        // A UUID with no directory placed by it is a repository still in its legacy directory.
-        .filter(|repo_dir| repo_dir.is_dir())
-        .filter_map(|repo_dir| match LocalRepository::from_dir(&repo_dir) {
-            Ok(repo) => Some(repo),
-            Err(cause) => {
-                tracing::warn!(
-                    ?repo_dir,
-                    ?cause,
-                    "Leaving a repository placed by UUID that did not open out of the total"
-                );
-                None
-            }
-        })
-        .collect();
+        .then(|| repositories::list_repos_in_namespace(&namespace_path))
+        .transpose()?;
+    let placed = repositories::list_placed_repos_in_namespace(data_dir, name)?;
     if legacy.is_none() && placed.is_empty() {
         return Ok(None);
     }
@@ -99,6 +98,7 @@ pub fn get(
 mod tests {
     use super::*;
     use crate::repositories::size::repo_size_path;
+    use crate::sync_dir::placed_repo_dir;
     use crate::test;
     use crate::util;
     use crate::util::fs::AtomicFile;

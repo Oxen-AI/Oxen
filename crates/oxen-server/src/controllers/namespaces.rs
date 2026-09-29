@@ -29,7 +29,10 @@ pub struct NamespaceQuery {
 pub async fn index(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
 
-    let namespaces: Vec<NamespaceView> = namespaces::list(&app_data.path)
+    let sync_dir = app_data.path.clone();
+    let namespaces: Vec<NamespaceView> = tasks::spawn_blocking(move || namespaces::list(&sync_dir))
+        .await
+        .map_err(OxenError::from)??
         .into_iter()
         .map(|namespace| NamespaceView { namespace })
         .collect();

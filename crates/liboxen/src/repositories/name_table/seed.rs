@@ -277,6 +277,11 @@ mod tests {
             assert_eq!(table.get("ox", "dogs")?, Some(dogs.repo_uuid));
             assert!(table.is_seeded()?);
             assert_eq!(
+                table.namespaces()?,
+                vec!["cow".to_string(), "ox".to_string()],
+                "the namespaces are those of the names, and the seeded marker is none of them"
+            );
+            assert_eq!(
                 run_if_incomplete(sync_dir)?,
                 None,
                 "a table covering every repository is not walked again"

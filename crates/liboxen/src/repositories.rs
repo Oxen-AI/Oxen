@@ -18,11 +18,11 @@ use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
 use crate::model::merkle_tree;
 use crate::storage::{S3Opts, StorageKind};
-use crate::sync_dir::{is_server_owned, placed_repo_dir};
+use crate::sync_dir::{is_server_owned, placed_repo_dir, repo_dirs};
 use crate::util;
 use crate::util::fs::AtomicFile;
+use crate::view::repository::RepositoryListView;
 use bytes::Bytes;
-use jwalk::WalkDir;
 use regex::Regex;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
@@ -182,7 +182,7 @@ pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
     let mut namespaces: Vec<String> = vec![];
     for path in std::fs::read_dir(sync_dir)? {
         let path = path.unwrap().path();
-        if is_namespace_dir(&path) {
+        if is_namespace_dir(&path)? {
             let name = path.file_name().unwrap().to_str().unwrap();
             namespaces.push(String::from(name));
         }
@@ -191,37 +191,103 @@ pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
     Ok(namespaces)
 }
 
-fn is_namespace_dir(path: &Path) -> bool {
+fn is_namespace_dir(path: &Path) -> Result<bool, OxenError> {
     if let Some(name) = path.to_str() {
         // Make sure it is a directory, that doesn't start with .oxen and has repositories in it
-        return path.is_dir()
+        return Ok(path.is_dir()
             && !name.starts_with(constants::OXEN_HIDDEN_DIR)
-            && list_repos_in_namespace(path).next().is_some();
+            && list_repos_in_namespace(path)?.next().is_some());
     }
-    false
+    Ok(false)
 }
 
-/// Lazily-load each repository in a namespace's directory.
+/// The repositories in `namespace` under `sync_dir`, each under the namespace and name it is listed
+/// by: those in the namespace's directory under that directory's names, then those placed by UUID
+/// that the name table records under `namespace`, under the names they record. A namespace named
+/// in any case like a directory the server keeps for its own state has no directory to list.
 ///
-/// Skips sub-directories that either don't have an `.oxen/` dir within them or that
-/// fail to load via [`LocalRepository::from_dir`].
+/// `namespace` must be a single ordinary path component.
+pub fn namespace_listing(
+    sync_dir: &Path,
+    namespace: &str,
+) -> Result<Vec<RepositoryListView>, OxenError> {
+    let namespace_path = namespace_dir(sync_dir, namespace)?;
+    let legacy = (!is_server_owned(namespace))
+        .then(|| list_repos_in_namespace(&namespace_path))
+        .transpose()?
+        .into_iter()
+        .flatten()
+        .map(|repo| RepositoryListView {
+            namespace: namespace.to_string(),
+            name: repo.dirname(),
+            min_version: None,
+        });
+    let placed = list_placed_repos_in_namespace(sync_dir, namespace)?
+        .into_iter()
+        .filter_map(|repo| match repo.identity? {
+            RepoIdentity {
+                namespace: Some(namespace),
+                name: Some(name),
+                ..
+            } => Some(RepositoryListView {
+                namespace,
+                name,
+                min_version: None,
+            }),
+            _ => None,
+        });
+    Ok(legacy.chain(placed).collect())
+}
+
+/// The repositories placed by UUID that the name table records under `namespace`, in name order.
+/// One whose directory exists but does not open is left out, with a warning.
+pub(crate) fn list_placed_repos_in_namespace(
+    sync_dir: &Path,
+    namespace: &str,
+) -> Result<Vec<LocalRepository>, OxenError> {
+    Ok(name_table::NameTable::new(sync_dir)
+        .uuids_in_namespace(namespace)?
+        .into_iter()
+        .map(|repo_uuid| placed_repo_dir(sync_dir, repo_uuid))
+        // A UUID with no directory placed by it is a repository still in its legacy directory.
+        .filter(|repo_dir| repo_dir.is_dir())
+        .filter_map(|repo_dir| match LocalRepository::from_dir(&repo_dir) {
+            Ok(repo) => Some(repo),
+            Err(cause) => {
+                tracing::warn!(
+                    ?repo_dir,
+                    ?cause,
+                    "Leaving out a repository placed by UUID that did not open"
+                );
+                None
+            }
+        })
+        .collect())
+}
+
+/// Lazily-load each repository in a namespace's directory, in path order. A path with no directory
+/// holds no repositories.
+///
+/// Skips repository directories that fail to load via [`LocalRepository::from_dir`].
+///
+/// # Errors
+/// When the directory or one of its entries cannot be read.
 pub fn list_repos_in_namespace(
     namespace_path: &Path,
-) -> impl Iterator<Item = LocalRepository> + use<> {
+) -> Result<impl Iterator<Item = LocalRepository> + use<>, OxenError> {
     log::debug!(
         "repositories::entries::list_repos_in_namespace repositories for dir: {namespace_path:?}"
     );
-    WalkDir::new(namespace_path)
+    let dirs = if namespace_path.is_dir() {
+        repo_dirs(namespace_path).map_err(|err| {
+            OxenError::internal_error(format!("Cannot read {namespace_path:?}: {err}"))
+        })?
+    } else {
+        vec![]
+    };
+    Ok(dirs
         .into_iter()
-        .filter_map(|entry| {
-            let entry = entry.ok()?;
-            let local_dir = entry.path();
-            let oxen_dir = util::fs::oxen_hidden_dir(&local_dir);
-            if !oxen_dir.exists() {
-                return None;
-            }
-            LocalRepository::from_dir(&local_dir).ok()
-        })
+        .filter_map(|repo_dir| LocalRepository::from_dir(&repo_dir).ok()))
 }
 
 /// Record what this repository and its namespace are called, filling only hints the repository
@@ -1393,7 +1459,7 @@ mod tests {
             let namespaces = repositories::list_namespaces(sync_dir)?;
             assert_eq!(namespaces.len(), 1);
             assert_eq!(namespaces[0], namespace);
-            assert_eq!(namespaces::list(sync_dir), vec![namespace]);
+            assert_eq!(namespaces::list(sync_dir)?, vec![namespace]);
             assert!(
                 namespaces::get(sync_dir, NAME_TABLE_DIR, None)?.is_none(),
                 "the server's own directory is not a namespace to look up either"
@@ -1461,7 +1527,7 @@ mod tests {
             let _ = repositories::init(namespace_dir.join("testing2"))?;
             let _ = repositories::init(namespace_dir.join("testing3"))?;
 
-            let repos = repositories::list_repos_in_namespace(&namespace_dir);
+            let repos = repositories::list_repos_in_namespace(&namespace_dir)?;
             assert_eq!(repos.count(), 3);
 
             Ok(())
@@ -1615,6 +1681,40 @@ mod tests {
                 ]),
                 "where positions carry UUIDs, a placed repository is listed by its UUID"
             );
+
+            let in_namespace = |namespace: &str| {
+                Ok::<_, OxenError>(
+                    repositories::namespace_listing(sync_dir, namespace)?
+                        .into_iter()
+                        .map(|repo| (repo.namespace, repo.name))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            assert_eq!(
+                in_namespace("OX")?,
+                names(&[("ox", "cats")]),
+                "a namespace lists its placed repositories under the names they record"
+            );
+            assert_eq!(
+                in_namespace(namespace)?,
+                names(&[(namespace, name)]),
+                "a repository in its namespace's directory is listed once, whatever the table holds"
+            );
+            for owned in ["repo", "Repo"] {
+                assert!(
+                    in_namespace(owned)?.is_empty(),
+                    "the directory of repositories placed by UUID is no namespace's, as {owned}"
+                );
+            }
+            util::fs::create_dir_all(sync_dir.join("Cow"))?;
+            table.claim("cow", "calf", Uuid::new_v4())?;
+            table.claim("OX", "Dogs", Uuid::new_v4())?;
+            assert_eq!(
+                namespaces::list(sync_dir)?,
+                vec!["Cow".to_string(), namespace.to_string(), "ox".to_string()],
+                "the namespaces the table records are listed once beside the directories, under \
+                 the directory's spelling where one matches ignoring case"
+            );
             Ok(())
         })
     }
@@ -1646,8 +1746,8 @@ mod tests {
             let repo_new = RepoNew::from_root_commit(old_namespace, name, root_commit);
             let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
 
-            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
-            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
+            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir)?;
+            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir)?;
 
             assert_eq!(old_namespace_repos.count(), 1);
             assert_eq!(new_namespace_repos.count(), 0);
@@ -1674,8 +1774,8 @@ mod tests {
             assert_eq!(updated_repo.path, new_repo_path);
 
             // Check that the old namespace is empty
-            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir);
-            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir);
+            let old_namespace_repos = repositories::list_repos_in_namespace(&old_namespace_dir)?;
+            let new_namespace_repos = repositories::list_repos_in_namespace(&new_namespace_dir)?;
 
             assert_eq!(old_namespace_repos.count(), 0);
             assert_eq!(new_namespace_repos.count(), 1);
