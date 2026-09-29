@@ -3,19 +3,20 @@
 //! decode value bytes themselves.
 //!
 //! KEY ORDERING: keys are ordered by LMDB's lexicographic byte comparison. That is correct for the
-//! equality-only point lookups and for ordered scans over byte/string keys should one ever be
-//! needed (UTF-8 byte order equals code-point order). A key that needs *numeric* range scans — a
-//! multi-byte integer scanned in numeric order — would have to be encoded big-endian so byte order
-//! matches numeric order, so this layer does not model it (and exposes no scan API).
+//! equality-only point lookups and for scans over the keys sharing a prefix (UTF-8 byte order
+//! equals code-point order). A key that needs *numeric* range scans — a multi-byte integer scanned
+//! in numeric order — would have to be encoded big-endian so byte order matches numeric order, so
+//! this layer does not model it (and exposes no range scan).
 //!
 //! READ SAFETY: every value a read returns is COPIED out of the read txn into owned `bytes::Bytes`,
 //! so it can outlive the short `RoTxn` it was read under and no caller has to keep a txn open just
-//! to hold a value. Keys are copied the same way except in `iter_keys`, which borrows them from the
-//! mmap: its items cannot outlive the txn, so copy any key that has to be kept.
+//! to hold a value. Keys are copied the same way. The exceptions are `iter_keys`, which borrows its
+//! keys from the mmap, and `prefix_iter`, which borrows keys and values: their items cannot outlive
+//! the txn, so copy anything that has to be kept.
 
 use bytes::Bytes;
 use heed::types::{Bytes as HeedBytes, DecodeIgnore};
-use heed::{Database, RoIter, RoTxn, RwTxn, WithoutTls};
+use heed::{Database, RoIter, RoPrefix, RoTxn, RwTxn, WithoutTls};
 
 use super::lmdb_env::LmdbEnv;
 use super::lmdb_error::LmdbLayerError;
@@ -115,6 +116,21 @@ impl LmdbDb {
             .map_err(LmdbLayerError::Read)?;
         Ok(LmdbDbKeysIter { inner })
     }
+
+    /// Iterate the entries whose key starts with `prefix`, in key byte order, borrowing each key
+    /// and value from the txn. The borrowed items cannot outlive the txn: copy anything that has to
+    /// be kept.
+    pub(crate) fn prefix_iter<'txn>(
+        &self,
+        txn: &'txn RoTxn<'_, WithoutTls>,
+        prefix: &[u8],
+    ) -> Result<LmdbDbPrefixIter<'txn>, LmdbLayerError> {
+        let inner = self
+            .db
+            .prefix_iter(txn, prefix)
+            .map_err(LmdbLayerError::Read)?;
+        Ok(LmdbDbPrefixIter { inner })
+    }
 }
 
 /// Open or create a single named sub-database in `lmdb_env`, running the heed-required write txn.
@@ -154,6 +170,20 @@ impl<'txn> Iterator for LmdbDbKeysIter<'txn> {
     fn next(&mut self) -> Option<Self::Item> {
         let item = self.inner.next()?;
         Some(item.map(|(key, ())| key).map_err(LmdbLayerError::Read))
+    }
+}
+
+/// Iterator over the entries of a [`LmdbDb`] whose key starts with a prefix, yielding each key and
+/// value borrowed from the txn's mapped pages.
+pub(crate) struct LmdbDbPrefixIter<'txn> {
+    inner: RoPrefix<'txn, HeedBytes, HeedBytes>,
+}
+
+impl<'txn> Iterator for LmdbDbPrefixIter<'txn> {
+    type Item = Result<(&'txn [u8], &'txn [u8]), LmdbLayerError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(self.inner.next()?.map_err(LmdbLayerError::Read))
     }
 }
 
@@ -254,6 +284,22 @@ mod tests {
                 (Bytes::from_static(b"c"), Bytes::from_static(b"3")),
             ]
         );
+
+        with_write_txn(&lmdb_env, |txn| db.put(txn, b"ba", b"4")).expect("put");
+        let prefixed = |prefix: &[u8]| {
+            with_read_txn(&lmdb_env, |txn| {
+                db.prefix_iter(txn, prefix)?
+                    .map(|item| item.map(|(key, _)| Bytes::copy_from_slice(key)))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .expect("prefix scan")
+        };
+        assert_eq!(
+            prefixed(b"b"),
+            vec![Bytes::from_static(b"b"), Bytes::from_static(b"ba")],
+            "a prefix scan yields exactly the keys starting with the prefix, in key order"
+        );
+        assert!(prefixed(b"d").is_empty(), "no key starts with d");
     }
 
     #[test]

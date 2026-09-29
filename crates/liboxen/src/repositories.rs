@@ -1395,8 +1395,12 @@ mod tests {
             assert_eq!(namespaces[0], namespace);
             assert_eq!(namespaces::list(sync_dir), vec![namespace]);
             assert!(
-                namespaces::get(sync_dir, NAME_TABLE_DIR).is_none(),
+                namespaces::get(sync_dir, NAME_TABLE_DIR, None)?.is_none(),
                 "the server's own directory is not a namespace to look up either"
+            );
+            assert!(
+                namespaces::get(sync_dir, &NAME_TABLE_DIR.to_uppercase(), None)?.is_none(),
+                "nor is it under a name differing only in case"
             );
 
             // Literal names, since they are the on-disk layout.
