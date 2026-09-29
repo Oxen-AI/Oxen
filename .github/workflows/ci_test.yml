@@ -79,12 +79,6 @@ jobs:
         with:
           python-version: "3.11" # Test against the earliest supported Python version
 
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew update
-          brew install pkg-config
-
       # Ramdisk for test data
       - name: Setup ramdisk (Linux)
         if: matrix.platform == 'linux'
@@ -222,12 +216,6 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11" # Test against the earliest supported Python version
-
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew update
-          brew install pkg-config
 
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'
