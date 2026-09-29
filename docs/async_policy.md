@@ -80,7 +80,9 @@ pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
 
 The inner sync functions (`with_ref_manager`, `RefManager::list_branches`) stay synchronous; only the public API grows the `async` / `spawn_blocking` edge. Callers ripple outward to `.await` it — a thin sync wrapper that only forwards (e.g. `repositories::is_empty`) becomes `async` in turn, and its own callers, already `async` handlers, add `.await`. The conversion stops at the first `async` boundary above each caller.
 
-The granularity is **one `spawn_blocking` per converted API, not per handler.** A handler or CLI command that needs several reads resolves the repo once (`get_repo`) and `.await`s each converted API in sequence; it does **not** wrap them in one bespoke closure. The per-request hop overhead is negligible — µs-scale hops against ms-to-second-scale reads — and keeping one offload per API is what lets leaf endpoints convert independently.
+The granularity is **one `spawn_blocking` per converted API, not per handler.** A handler or CLI command that needs several *different* reads resolves the repo once (`get_repo_async`, then `parse_resource_async` when it needs a branch or commit) and `.await`s each converted API in sequence; it does **not** wrap them in one bespoke closure. The per-request hop overhead is negligible — µs-scale hops against ms-to-second-scale reads — and keeping one offload per API is what lets leaf endpoints convert independently.
+
+That sequence rule covers reads that differ from each other. **Repeating one operation per item is a single operation, not a sequence:** a handler that loops over a path list awaiting a one-item API pays a hop per element, which is the dispatch tax the read-loop rule below forbids. Give the API a slice parameter and move the loop inside its closure, the way `workspaces::files::rm` takes `&[PathBuf]` and stages every path in one hop.
 
 Two granularity rules that `branches::list` doesn't exercise but the leaf conversions will:
 
