@@ -650,39 +650,6 @@ fn r_list_all_files(
     Ok(())
 }
 
-/// Collect MerkleTree into Directories
-pub fn list_all_dirs(node: &MerkleTreeNode) -> Result<HashSet<DirNodeWithPath>, OxenError> {
-    let mut dir_nodes = HashSet::new();
-    r_list_all_dirs(node, PathBuf::from(""), &mut dir_nodes)?;
-    Ok(dir_nodes)
-}
-
-fn r_list_all_dirs(
-    node: &MerkleTreeNode,
-    traversed_path: impl AsRef<Path>,
-    dir_nodes: &mut HashSet<DirNodeWithPath>,
-) -> Result<(), OxenError> {
-    let traversed_path = traversed_path.as_ref();
-    for child in &node.children {
-        // log::debug!("Found child: {child}");
-        match &child.node {
-            EMerkleTreeNode::Directory(dir_node) => {
-                let new_path = traversed_path.join(dir_node.name());
-                dir_nodes.insert(DirNodeWithPath {
-                    dir_node: dir_node.to_owned(),
-                    path: new_path.to_owned(),
-                });
-                r_list_all_dirs(child, new_path, dir_nodes)?;
-            }
-            EMerkleTreeNode::VNode(_) => {
-                r_list_all_dirs(child, traversed_path, dir_nodes)?;
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 /// Collect MerkleTree into Directories and Files
 pub fn list_files_and_dirs(
     root: &MerkleTreeNode,
