@@ -67,9 +67,10 @@ pub struct LocalRepository {
 
 impl LocalRepository {
     /// Load a repo from disk without any server-side S3 opts. Use this from the CLI and any code
-    /// path that doesn't talk to the server's storage config — an on-disk `[storage] kind = "s3"`
-    /// will surface as [`OxenError::S3BackendMissingServerOpts`]. Server code should call
-    /// [`Self::from_dir_with_server_opts`] instead.
+    /// path that doesn't talk to the server's storage config. An on-disk `[storage] kind = "s3"`
+    /// repo loads, and its version store fails every operation with
+    /// [`OxenError::S3BackendMissingServerOpts`]. Server code that reaches version files should
+    /// call [`Self::from_dir_with_server_opts`] instead.
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
         Self::from_dir_with_server_opts(path, None)
     }
@@ -898,12 +899,17 @@ mod tests {
     /// across or a save on any unrelated path silently erases it.
     #[test]
     fn test_identity_survives_a_save() -> Result<(), OxenError> {
+        use crate::storage::{StorageConfig, StorageKind};
         let temp_dir = TempDir::new()?;
         let identity = Some(RepoIdentity::minted("ox", "cats"));
         let repo = LocalRepository::new(
             temp_dir.path(),
             RepositoryConfig {
                 identity: identity.clone(),
+                storage: Some(StorageConfig {
+                    kind: StorageKind::S3,
+                    versions_path: None,
+                }),
                 ..Default::default()
             },
         )?;
@@ -911,6 +917,11 @@ mod tests {
 
         let reloaded = LocalRepository::from_dir(temp_dir.path())?;
         assert_eq!(reloaded.identity, identity);
+        assert_eq!(
+            reloaded.version_store().storage_kind(),
+            StorageKind::S3,
+            "an S3 repo opens without the server's S3 opts"
+        );
 
         // A second save, of a repo that only ever loaded its identity, must preserve it too.
         reloaded.save()?;
