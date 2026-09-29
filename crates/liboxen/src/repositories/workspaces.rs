@@ -166,6 +166,16 @@ pub fn get_by_name(
     Ok(iter_workspaces(repo)?.find(|workspace| workspace.name.as_deref() == Some(workspace_name)))
 }
 
+/// [`get_by_name`], off the async worker.
+pub async fn get_by_name_async(
+    repo: &LocalRepository,
+    workspace_name: &str,
+) -> Result<Option<Workspace>, OxenError> {
+    let repo = repo.clone();
+    let workspace_name = workspace_name.to_string();
+    tokio::task::spawn_blocking(move || get_by_name(&repo, workspace_name)).await?
+}
+
 /// Creates a new workspace and saves it to the filesystem
 pub fn create(
     base_repo: &LocalRepository,
@@ -193,26 +203,37 @@ pub async fn create_with_name(
         ensure_name_index(base_repo).await?;
     }
 
-    let workspace = create_on_disk(base_repo, commit, workspace_id, workspace_name, is_editable)?;
+    let (base_repo, commit, workspace_id) =
+        (base_repo.clone(), commit.clone(), workspace_id.to_string());
+    tokio::task::spawn_blocking(move || {
+        let workspace = create_on_disk(
+            &base_repo,
+            &commit,
+            &workspace_id,
+            workspace_name,
+            is_editable,
+        )?;
 
-    // `put_if_absent` closes the TOCTOU between `validate_create_constraints`'s
-    // `has_name` check and the write — two concurrent `create_with_name` calls
-    // for the same name will both pass validation, but only one wins the atomic
-    // insert; the loser rolls back its just-created workspace dir.
-    if let Some(ref name) = workspace.name {
-        let idx = workspace_name_index::get_index(base_repo)?;
-        if idx.put_if_absent(name, workspace_id)?.is_some() {
-            if let Err(e) = util::fs::remove_dir_all(&workspace.workspace_repo.path) {
-                log::error!(
-                    "Failed to clean up workspace dir {:?} after losing name-index race: {e}",
-                    workspace.workspace_repo.path
-                );
+        // `put_if_absent` closes the TOCTOU between `validate_create_constraints`'s
+        // `has_name` check and the write — two concurrent `create_with_name` calls
+        // for the same name will both pass validation, but only one wins the atomic
+        // insert; the loser rolls back its just-created workspace dir.
+        if let Some(ref name) = workspace.name {
+            let idx = workspace_name_index::get_index(&base_repo)?;
+            if idx.put_if_absent(name, &workspace_id)?.is_some() {
+                if let Err(e) = util::fs::remove_dir_all(&workspace.workspace_repo.path) {
+                    log::error!(
+                        "Failed to clean up workspace dir {:?} after losing name-index race: {e}",
+                        workspace.workspace_repo.path
+                    );
+                }
+                return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
             }
-            return Err(OxenError::WorkspaceAlreadyExists(name.to_string()));
         }
-    }
 
-    Ok(workspace)
+        Ok(workspace)
+    })
+    .await?
 }
 
 /// Core sync workspace creation logic shared by `create` and `create_with_name`.
@@ -271,7 +292,7 @@ fn create_on_disk(
 }
 
 /// Validates name uniqueness and non-editable constraints before workspace creation.
-/// Uses the name index for O(1) checks when available, falls back to list() iteration.
+/// Uses the name index for O(1) checks when available, falls back to iterating every workspace.
 fn validate_create_constraints(
     base_repo: &LocalRepository,
     commit: &Commit,
@@ -299,8 +320,7 @@ fn validate_create_constraints(
     }
 
     // Slow path: iterate all workspaces (needed when index doesn't exist or !is_editable)
-    let workspaces = list(base_repo)?;
-    for workspace in workspaces {
+    for workspace in iter_workspaces(base_repo)? {
         if !is_editable {
             check_non_editable_workspace(&workspace, commit)?;
         }
@@ -516,16 +536,16 @@ fn iter_workspaces(
     }))
 }
 
-pub fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
-    Ok(iter_workspaces(repo)?.collect())
+pub async fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || Ok(iter_workspaces(&repo)?.collect())).await?
 }
 
 pub fn get_non_editable_by_commit_id(
     repo: &LocalRepository,
     commit_id: impl AsRef<str>,
 ) -> Result<Workspace, OxenError> {
-    let workspaces = list(repo)?;
-    for workspace in workspaces {
+    for workspace in iter_workspaces(repo)? {
         if workspace.commit.id == commit_id.as_ref() && !workspace.is_editable {
             return Ok(workspace);
         }
@@ -571,6 +591,12 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
     }
 
     Ok(())
+}
+
+/// [`delete`], off the async worker.
+pub async fn delete_async(workspace: &Workspace) -> Result<(), OxenError> {
+    let workspace = workspace.clone();
+    tokio::task::spawn_blocking(move || delete(&workspace)).await?
 }
 
 pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
@@ -1389,9 +1415,17 @@ mod tests {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
             let before = OffsetDateTime::now_utc();
-            let workspace =
-                repositories::workspaces::create(&repo, &commit, "ws-created-at", true)?;
+            let (workspace, yielded) = test::run_and_report_yield(create_with_name(
+                &repo,
+                &commit,
+                "ws-created-at",
+                None,
+                true,
+            ))
+            .await;
+            let workspace = workspace?;
             let after = OffsetDateTime::now_utc();
+            assert!(yielded, "create_with_name held the thread it was called on");
 
             let created_at = workspace
                 .created_at
@@ -1498,16 +1532,19 @@ mod tests {
 
             let reader = get_staged_db_manager(&workspace.workspace_repo)?;
 
-            repositories::workspaces::commit(
-                &workspace,
-                &NewCommitBody {
-                    message: "Updating hello file".to_string(),
-                    author: "Bessie".to_string(),
-                    email: "bessie@oxen.ai".to_string(),
-                },
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
+            let (committed, yielded) =
+                test::run_and_report_yield(repositories::workspaces::commit(
+                    &workspace,
+                    &NewCommitBody {
+                        message: "Updating hello file".to_string(),
+                        author: "Bessie".to_string(),
+                        email: "bessie@oxen.ai".to_string(),
+                    },
+                    DEFAULT_BRANCH_NAME,
+                ))
+                .await;
+            committed?;
+            assert!(yielded, "commit held the thread it was called on");
 
             let after = get_staged_db_manager(&workspace.workspace_repo)?;
             assert!(after.read_from_staged_db("hello.txt")?.is_none());
@@ -1580,7 +1617,10 @@ mod tests {
             let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
             AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
 
-            let listed = repositories::workspaces::list(&repo)?;
+            let (listed, yielded) =
+                test::run_and_report_yield(repositories::workspaces::list(&repo)).await;
+            assert!(yielded, "list held the thread it was called on");
+            let listed = listed?;
             let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
             assert_eq!(ids, vec!["ws-good"]);
 
@@ -1602,7 +1642,7 @@ mod tests {
             config.workspace_commit_id = "0123456789abcdef0123456789abcdef".to_string();
             write_config(&dangling.dir(), &config)?;
 
-            let listed = repositories::workspaces::list(&repo)?;
+            let listed = repositories::workspaces::list(&repo).await?;
             let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
             assert_eq!(ids, vec!["ws-good"]);
 
@@ -1652,7 +1692,7 @@ mod tests {
             AtomicFile::new(util::fs::config_filepath(&repo.path)).write(b"not valid toml {{{")?;
 
             assert!(
-                repositories::workspaces::list(&repo).is_err(),
+                repositories::workspaces::list(&repo).await.is_err(),
                 "a broken repository config must not read as an empty workspace list"
             );
 
