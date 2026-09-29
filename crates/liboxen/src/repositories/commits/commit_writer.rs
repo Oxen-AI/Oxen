@@ -1233,22 +1233,22 @@ mod tests {
     use test::add_n_files_m_dirs;
 
     #[tokio::test]
-    async fn test_first_commit() -> Result<(), OxenError> {
+    async fn test_first_second_and_third_commits() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
             // Instantiate the correct version of the repo
             let repo = repositories::init::init(dir)?;
 
             // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 2).await?;
+            add_n_files_m_dirs(&repo, 10, 3).await?;
             let status = repositories::status(&repo).await?;
             status.print();
 
             // Commit the data
-            let commit = super::commit(&repo, "First commit")?;
+            let first_commit = super::commit(&repo, "First commit")?;
 
             // Read the merkle tree
-            let tree = CommitMerkleTree::from_commit(&repo, &commit)?;
-            tree.print();
+            let first_tree = CommitMerkleTree::from_commit(&repo, &first_commit)?;
+            first_tree.print();
 
             /*
             [Commit] 861d5cd233eff0940060bd76ce24f10a
@@ -1260,28 +1260,28 @@ mod tests {
                     [VNode]
                       [Dir] dir_0
                         [VNode]
-                          [File] file4.txt
                           [File] file0.txt
-                          [File] file2.txt
+                          [File] file3.txt
                           [File] file6.txt
-                          [File] file8.txt
+                          [File] file9.txt
                       [Dir] dir_1
                         [VNode]
-                          [File] file7.txt
-                          [File] file3.txt
-                          [File] file5.txt
                           [File] file1.txt
-                          [File] file9.txt
+                          [File] file4.txt
+                          [File] file7.txt
+                      [Dir] dir_2
+                        [VNode]
+                          [File] file2.txt
+                          [File] file5.txt
+                          [File] file8.txt
             */
 
-            // Make sure we have 4 vnodes
-            let vnodes = tree.total_vnodes();
-            assert_eq!(vnodes, 4);
+            // Make sure we have 5 vnodes
+            assert_eq!(first_tree.total_vnodes(), 5);
 
             // Make sure the root is a commit node
-            let root = &tree.root;
-            let commit = root.commit();
-            assert!(commit.is_ok());
+            let root = &first_tree.root;
+            assert!(root.commit().is_ok());
 
             // Make sure the root commit has 1 child, the root dir node
             let root_commit_children = &root.children;
@@ -1294,163 +1294,22 @@ mod tests {
 
             // Make sure dir node has one child, the VNode
             let vnode_data = dir_node_data.children.first().unwrap();
-            let vnode = vnode_data.vnode();
-            assert!(vnode.is_ok());
+            assert!(vnode_data.vnode().is_ok());
 
             // Make sure the vnode has 3 children, the 2 files and the dir
-            let vnode_children = &vnode_data.children;
-            assert_eq!(vnode_children.len(), 3);
+            assert_eq!(vnode_data.children.len(), 3);
 
-            // Check that files.csv is in the merkle tree
-            let has_paths_csv = tree.has_path(Path::new("files.csv"))?;
-            assert!(has_paths_csv);
+            assert!(first_tree.has_path(Path::new("files.csv"))?);
+            assert!(first_tree.has_path(Path::new("README.md"))?);
+            assert!(first_tree.has_path(Path::new("files/dir_0/file0.txt"))?);
 
-            // Check that README.md is in the merkle tree
-            let has_readme = tree.has_path(Path::new("README.md"))?;
-            assert!(has_readme);
-
-            // Check that files/dir_0/file0.txt is in the merkle tree
-            let has_path0 = tree.has_path(Path::new("files/dir_0/file0.txt"))?;
-            assert!(has_path0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_commit_only_dirs_at_top_level() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(async |dir| {
-            // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
-
-            // Add a new file to files/dir_0/
-            let new_file = repo.path.join("all_files/dir_0/new_file.txt");
-            util::fs::create_dir_all(new_file.parent().unwrap())?;
-            util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &repo.path).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Commit the data
-            let commit = super::commit(&repo, "First commit")?;
-
-            // Read the merkle tree
-            let tree = CommitMerkleTree::from_commit(&repo, &commit)?;
-            tree.print();
-
-            let has_path0 = tree.has_path(Path::new("all_files/dir_0/new_file.txt"))?;
-            assert!(has_path0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
-            // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
-
-            // Add a new file to files/dir_0/
-            let new_file = repo.path.join("files/dir_0/new_file.txt");
-            util::fs::create_dir_all(new_file.parent().unwrap())?;
-            util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Commit the data
-            let commit = super::commit(&repo, "First commit")?;
-
-            // Read the merkle tree
-            let tree = CommitMerkleTree::from_commit(&repo, &commit)?;
-            tree.print();
-
-            let has_path0 = tree.has_path(Path::new("files/dir_0/new_file.txt"))?;
-            assert!(has_path0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_2nd_commit_keeps_num_bytes_and_data_type_counts() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
-            // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
-
-            // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Commit the data
-            let first_commit = super::commit(&repo, "First commit")?;
-
-            // Read the merkle tree
-            let first_tree = CommitMerkleTree::from_commit(&repo, &first_commit)?;
-            first_tree.print();
-
-            // Get the original root dir file count
-            let original_root_node = first_tree.get_by_path(Path::new(""))?.unwrap();
-            let original_root_dir = original_root_node.dir()?;
-            let original_root_dir_file_count = original_root_dir.num_files();
-
-            // Ten image files + README.md + files.csv
-            assert_eq!(original_root_dir_file_count, 12);
-
-            // Add a new file to files/dir_1/
-            let new_file = repo.path.join("README.md");
-            util::fs::write_to_path(&new_file, "Update that README.md")?;
-            repositories::add(&repo, &new_file).await?;
-
-            // Commit the data
-            let second_commit = super::commit(&repo, "Second commit")?;
-
-            // Make sure commit hashes are different
-            assert!(first_commit.id != second_commit.id);
-
-            // Make sure the head commit is updated
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, second_commit.id);
-
-            // Read the merkle tree
-            let second_tree = CommitMerkleTree::from_commit(&repo, &second_commit)?;
-            second_tree.print();
-
-            // Make sure the root dir file count is the same
-            let updated_root_dir = second_tree.get_by_path(Path::new(""))?;
-            let updated_root_dir = updated_root_dir.unwrap().dir()?;
-            let updated_root_dir_file_count = updated_root_dir.num_files();
-            assert_eq!(updated_root_dir_file_count, original_root_dir_file_count);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_second_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
-            // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
-
-            // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Commit the data
-            let first_commit = super::commit(&repo, "First commit")?;
-
-            // Read the merkle tree
-            let first_tree = CommitMerkleTree::from_commit(&repo, &first_commit)?;
-            first_tree.print();
+            // Ten files + README.md + files.csv
+            let first_root_file_count = first_tree
+                .get_by_path(Path::new(""))?
+                .unwrap()
+                .dir()?
+                .num_files();
+            assert_eq!(first_root_file_count, 12);
 
             // Count the number of files in the files/dir_1 dir
             let original_dir_1_node = first_tree.get_by_path(Path::new("files/dir_1"))?;
@@ -1550,6 +1409,102 @@ mod tests {
             let dir_1_node_again = dir_1_node_again.unwrap().dir()?;
             let dir_1_file_count_again = dir_1_node_again.num_files();
             assert_eq!(original_dir_1_file_count, dir_1_file_count_again);
+
+            let second_root_file_count = second_tree
+                .get_by_path(Path::new(""))?
+                .unwrap()
+                .dir()?
+                .num_files();
+            let original_readme_hash = second_tree
+                .get_by_path(Path::new("README.md"))?
+                .unwrap()
+                .hash;
+
+            // Update README.md
+            let new_file = repo.path.join("README.md");
+            util::fs::write_to_path(&new_file, "Update README.md in third commit")?;
+            repositories::add(&repo, &new_file).await?;
+
+            // Commit the data
+            let third_commit = super::commit(&repo, "Third commit")?;
+
+            // Read the merkle tree
+            let third_tree = CommitMerkleTree::from_commit(&repo, &third_commit)?;
+            third_tree.print();
+
+            // Make sure the head commit is updated
+            let head_commit = repositories::commits::head_commit(&repo)?;
+            assert_eq!(head_commit.id, third_commit.id);
+            assert!(third_commit.id != second_commit.id);
+            assert!(third_commit.id != first_commit.id);
+
+            // Make sure the README.md hash is different
+            let updated_readme_hash = third_tree
+                .get_by_path(Path::new("README.md"))?
+                .unwrap()
+                .hash;
+            assert!(original_readme_hash != updated_readme_hash);
+
+            let third_root_file_count = third_tree
+                .get_by_path(Path::new(""))?
+                .unwrap()
+                .dir()?
+                .num_files();
+            assert_eq!(
+                third_root_file_count, second_root_file_count,
+                "modifying a file keeps the root dir's file count"
+            );
+
+            // List the dir hashes
+            let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &third_commit)?;
+
+            for (path, hash) in dir_hashes {
+                println!("dir_hash: {path:?} {hash}");
+                let node = third_tree.get_by_path(&path)?.unwrap();
+                assert_eq!(node.hash, hash);
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_commit_single_file_deep_in_dir() -> Result<(), OxenError> {
+        test::run_empty_dir_test_async(|dir| async move {
+            // Instantiate the correct version of the repo
+            let repo = repositories::init::init(dir)?;
+
+            // Add a new file to files/dir_0/, so the top level holds only a dir
+            let new_file = repo.path.join("files/dir_0/new_file.txt");
+            util::fs::create_dir_all(new_file.parent().unwrap())?;
+            util::fs::write_to_path(&new_file, "New file")?;
+            repositories::add(&repo, &new_file).await?;
+
+            let status = repositories::status(&repo).await?;
+            status.print();
+
+            // Commit the data
+            let commit = super::commit(&repo, "First commit")?;
+
+            // Read the merkle tree
+            let tree = CommitMerkleTree::from_commit(&repo, &commit)?;
+            tree.print();
+
+            assert!(tree.has_path(Path::new("files/dir_0/new_file.txt"))?);
+
+            // Add a second top-level dir by adding the whole repo
+            let new_file = repo.path.join("all_files/dir_0/new_file.txt");
+            util::fs::create_dir_all(new_file.parent().unwrap())?;
+            util::fs::write_to_path(&new_file, "New file")?;
+            repositories::add(&repo, &repo.path).await?;
+            let commit = super::commit(&repo, "Second commit")?;
+
+            let tree = CommitMerkleTree::from_commit(&repo, &commit)?;
+            tree.print();
+
+            assert!(tree.has_path(Path::new("all_files/dir_0/new_file.txt"))?);
+            assert!(tree.has_path(Path::new("files/dir_0/new_file.txt"))?);
 
             Ok(())
         })
@@ -1705,87 +1660,6 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn test_third_commit() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|dir| async move {
-            // Instantiate the correct version of the repo
-            let repo = repositories::init::init(dir)?;
-
-            // Write data to the repo
-            add_n_files_m_dirs(&repo, 10, 3).await?;
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Commit the data
-            let first_commit = super::commit(&repo, "First commit")?;
-
-            // Read the merkle tree
-            let first_tree = CommitMerkleTree::from_commit(&repo, &first_commit)?;
-            first_tree.print();
-
-            let original_readme_node = first_tree.get_by_path(Path::new("README.md"))?;
-            assert!(original_readme_node.is_some());
-            let original_readme_node = original_readme_node.unwrap();
-            let original_readme_hash = original_readme_node.hash;
-
-            // Update README.md
-            let new_file = repo.path.join("README.md");
-            util::fs::write_to_path(&new_file, "Update README.md in second commit")?;
-            repositories::add(&repo, &new_file).await?;
-
-            // Commit the data
-            let second_commit = super::commit(&repo, "Second commit")?;
-
-            // Make sure commit hashes are different
-            assert!(first_commit.id != second_commit.id);
-
-            // Make sure the head commit is updated
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, second_commit.id);
-
-            // Read the merkle tree
-            let second_tree = CommitMerkleTree::from_commit(&repo, &second_commit)?;
-            second_tree.print();
-
-            // Make sure the README.md hash is different
-            let updated_readme_node = second_tree.get_by_path(Path::new("README.md"))?;
-            assert!(updated_readme_node.is_some());
-            let updated_readme_node = updated_readme_node.unwrap();
-            let updated_readme_hash = updated_readme_node.hash;
-            assert!(original_readme_hash != updated_readme_hash);
-
-            // Write a new file to files/dir_1/
-            let new_file = repo.path.join("files/dir_1/new_file.txt");
-            util::fs::write_to_path(&new_file, "New file")?;
-            repositories::add(&repo, &new_file).await?;
-
-            // Commit the data
-            let third_commit = super::commit(&repo, "Third commit")?;
-
-            // Read the merkle tree
-            let third_tree = CommitMerkleTree::from_commit(&repo, &third_commit)?;
-            third_tree.print();
-
-            // Make sure the head commit is updated
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, third_commit.id);
-            assert!(third_commit.id != second_commit.id);
-            assert!(third_commit.id != first_commit.id);
-
-            // List the dir hashes
-            let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &third_commit)?;
-
-            for (path, hash) in dir_hashes {
-                println!("dir_hash: {path:?} {hash}");
-                let node = third_tree.get_by_path(&path)?.unwrap();
-                assert_eq!(node.hash, hash);
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
     /*
     This tests a bug we found where removing a directory breaks the tree by
     updating the root dir hash of the _initial_ commit to the root dir hash from
@@ -1793,9 +1667,13 @@ mod tests {
      */
     #[tokio::test]
     async fn test_rm_dir_doesnt_break_tree() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(async |repo| {
-            // create initial commit
+        test::run_empty_local_repo_test_async(async |repo| {
             let readme = repo.path.join("README.md");
+            util::fs::write_to_path(&readme, "readme")?;
+            test::populate_dir_with_txt_files(repo.path.join("train"), "train", 2)?;
+            test::populate_dir_with_txt_files(repo.path.join("test"), "test", 2)?;
+
+            // create initial commit
             repositories::add(&repo, &readme).await?;
             let first_commit = super::commit(&repo, "Initial commit")?;
 
