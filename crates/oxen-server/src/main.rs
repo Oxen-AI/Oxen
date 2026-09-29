@@ -519,6 +519,17 @@ async fn server() -> Result<(), ServerError> {
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 
+            if let Some(dir) = sync_dir::namespace_called_repo(&sync_dir) {
+                return Err(OxenError::internal_error(format!(
+                    "{dir:?} holds a namespace called `repo`, a name this release keeps for its own \
+                     use. With the server stopped, rename it to a namespace name nothing in the sync \
+                     dir uses, change `namespace = \"repo\"` to that name in the `[identity]` \
+                     section of each moved repository's `.oxen/config.toml`, delete the \
+                     `name_table` directory beside it, and start the server again"
+                ))
+                .into());
+            }
+
             // Fail fast if the configured S3 bucket is unreachable, rather than letting the first
             // request 500. Local-only servers carry no S3 opts and skip the probe.
             if let Some(s3_opts) = server_config.storage.s3() {
