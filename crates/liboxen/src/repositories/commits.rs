@@ -845,9 +845,17 @@ mod tests {
             let c = add_commit(&repo, "c").await?;
 
             let history = repositories::commits::list(&repo)?;
-            assert_eq!(history.len(), 4);
-            assert_eq!(history.first().unwrap().message, c.message);
-            assert_eq!(history.last().unwrap().message, root.message);
+            let history_ids: Vec<&str> = history.iter().map(|x| x.id.as_str()).collect();
+            assert_eq!(
+                history_ids,
+                [
+                    c.id.as_str(),
+                    b.id.as_str(),
+                    a.id.as_str(),
+                    root.id.as_str()
+                ],
+                "list yields the whole history, newest first"
+            );
 
             // Repair paths must be handed the commit being pushed rather than an end of these
             // lists: two push paths reverse them before use and one does not. Pinned so a swap
