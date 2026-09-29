@@ -125,9 +125,11 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
+      # Building the tests with the binaries resolves dev-dependency features once, so the test step
+      # reuses this build instead of compiling the dependencies a second time.
       - name: Build oxen rust project (Linux/macOS)
         if: matrix.platform != 'windows'
-        run: cargo build --workspace
+        run: cargo build --workspace --bins --tests
 
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'

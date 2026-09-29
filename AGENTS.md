@@ -48,7 +48,9 @@ BAD: `cargo check --package liboxen`
 ### Building
 ```bash
 cargo build --workspace                           # Debug build
+cargo build --workspace --bins --tests            # Debug build that a later `cargo test` reuses
 ```
+A `cargo build` that a `cargo test` follows, in a script or a CI job, builds `--bins --tests` with the same packages and features the test command selects, as `bin/test-rust` and the Rust Tests jobs do. Dev-dependencies add features to crates such as `hyper` and `getrandom`, so a plain `cargo build` resolves a different feature set, and the `cargo test` after it compiles a second copy of every dependency above them, DuckDB, RocksDB, polars and the AWS SDK included.
 
 ### Testing
 Use the `bin/test-rust` script to run the tests — it is the standard, supported path. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs the suite with `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is documented in a comment at the top of the script. Running `cargo test` directly is supported only if you first reproduce that setup by hand (a running `oxen-server` on the default host/port, user config, a raised file-handle limit, and the env vars the script exports — see the "Manual Test Setup" section of `crates/liboxen/README.md`); without that setup the tests fail, so prefer `bin/test-rust`.
