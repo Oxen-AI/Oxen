@@ -1,8 +1,10 @@
-//! The layout of an oxen-server's sync dir: which entries at its top are namespaces, and which
-//! directories inside a namespace are repositories.
+//! The layout of an oxen-server's sync dir: which entries at its top are namespaces, which
+//! directories inside a namespace are repositories, and where a repository placed by UUID lives.
 
 use std::io;
 use std::path::{Path, PathBuf};
+
+use uuid::Uuid;
 
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::error::OxenError;
@@ -34,6 +36,17 @@ pub(crate) fn is_server_owned(name: &str) -> bool {
     SERVER_OWNED_DIRS
         .iter()
         .any(|owned| owned.eq_ignore_ascii_case(name))
+}
+
+/// The directory the repository `repo_uuid` is placed in under `sync_dir`:
+/// `repo/{uuid[0:2]}/{uuid[2:4]}/{uuid}`.
+pub(crate) fn placed_repo_dir(sync_dir: &Path, repo_uuid: Uuid) -> PathBuf {
+    let uuid = repo_uuid.to_string();
+    sync_dir
+        .join(REPOS_DIR)
+        .join(&uuid[0..2])
+        .join(&uuid[2..4])
+        .join(uuid)
 }
 
 /// The directory where `sync_dir` holds a namespace called `repo` rather than the repos dir,

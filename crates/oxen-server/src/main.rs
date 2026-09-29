@@ -76,7 +76,7 @@ use std::time::Duration;
 
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
-use liboxen::repositories::name_table::seed;
+use liboxen::repositories::name_table::{NameTable, seed};
 use liboxen::sync_dir;
 
 use crate::config::Config;
@@ -799,6 +799,10 @@ async fn start(
         Ok(None) => {}
         Err(err) => tracing::error!(%err, "Failed to seed the name table"),
     }
+    // Held until the server stops, so a request's repository lookup finds the table's env open.
+    let _name_table = NameTable::open(sync_dir)
+        .inspect_err(|err| tracing::error!(%err, "Failed to open the name table"))
+        .ok();
 
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),
