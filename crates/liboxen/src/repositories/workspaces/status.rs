@@ -21,6 +21,16 @@ pub fn status_from_dir(
     core::v_latest::workspaces::status::status(workspace, directory)
 }
 
+/// [`status_from_dir`], off the async worker.
+pub async fn status_from_dir_async(
+    workspace: &Workspace,
+    directory: &Path,
+) -> Result<StagedData, OxenError> {
+    let workspace = workspace.clone();
+    let directory = directory.to_path_buf();
+    tokio::task::spawn_blocking(move || status_from_dir(&workspace, directory)).await?
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -48,8 +58,15 @@ mod tests {
             )
             .await?;
 
-            let staged =
-                repositories::workspaces::status::status_from_dir(&workspace, Path::new(""))?;
+            let (staged, yielded) = test::run_and_report_yield(
+                repositories::workspaces::status::status_from_dir_async(&workspace, Path::new("")),
+            )
+            .await;
+            assert!(
+                yielded,
+                "status_from_dir_async held the thread it was called on"
+            );
+            let staged = staged?;
             assert!(staged.staged_files.is_empty());
             assert!(staged.modified_files.is_empty());
             assert!(staged.removed_files.is_empty());
