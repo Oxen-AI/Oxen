@@ -204,20 +204,24 @@ fn is_namespace_dir(path: &Path) -> bool {
 
 /// The repositories in `namespace` under `sync_dir`, each under the namespace and name it is listed
 /// by: those in the namespace's directory under that directory's names, then those placed by UUID
-/// that the name table records under `namespace`, under the names they record.
+/// that the name table records under `namespace`, under the names they record. A namespace named
+/// in any case like a directory the server keeps for its own state has no directory to list.
 ///
 /// `namespace` must be a single ordinary path component.
 pub fn namespace_listing(
     sync_dir: &Path,
     namespace: &str,
 ) -> Result<Vec<RepositoryListView>, OxenError> {
-    let legacy = list_repos_in_namespace(&namespace_dir(sync_dir, namespace)?).map(|repo| {
-        RepositoryListView {
+    let namespace_path = namespace_dir(sync_dir, namespace)?;
+    let legacy = (!is_server_owned(namespace))
+        .then(|| list_repos_in_namespace(&namespace_path))
+        .into_iter()
+        .flatten()
+        .map(|repo| RepositoryListView {
             namespace: namespace.to_string(),
             name: repo.dirname(),
             min_version: None,
-        }
-    });
+        });
     let placed = list_placed_repos_in_namespace(sync_dir, namespace)?
         .into_iter()
         .filter_map(|repo| match repo.identity? {
@@ -1694,6 +1698,12 @@ mod tests {
                 names(&[(namespace, name)]),
                 "a repository in its namespace's directory is listed once, whatever the table holds"
             );
+            for owned in ["repo", "Repo"] {
+                assert!(
+                    in_namespace(owned)?.is_empty(),
+                    "the directory of repositories placed by UUID is no namespace's, as {owned}"
+                );
+            }
             util::fs::create_dir_all(sync_dir.join("Cow"))?;
             table.claim("cow", "calf", Uuid::new_v4())?;
             table.claim("OX", "Dogs", Uuid::new_v4())?;
