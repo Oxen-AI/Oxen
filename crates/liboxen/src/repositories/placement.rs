@@ -3,14 +3,25 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::thread::sleep;
+use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
 use crate::config::RepositoryConfig;
+use crate::core::db::data_frames::df_db::remove_df_db_from_cache_with_children;
+use crate::core::refs::ref_manager;
+use crate::core::staged;
+use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
+use crate::core::workspaces::workspace_name_index;
 use crate::error::OxenError;
+use crate::lmdb::env_registry::shared_env_is_live_under;
 use crate::repositories::name_table::NameTable;
 use crate::sync_dir::{namespace_dirs, prepare_placed_repo_dir, repo_dirs};
 use crate::util;
+
+/// How long a move waits for the LMDB envs open under a repository to close.
+pub(crate) const ENV_CLOSE_WAIT: Duration = Duration::from_secs(10);
 
 /// What a walk of the legacy layout did.
 #[derive(Debug)]
@@ -39,26 +50,33 @@ pub fn place_all_by_uuid(sync_dir: &Path) -> Result<Placed, OxenError> {
             }
         };
         for repo_dir in in_namespace {
-            match place_by_uuid(sync_dir, &repo_dir) {
+            match place_by_uuid(sync_dir, &repo_dir, ENV_CLOSE_WAIT) {
                 Ok(_) => placed.moved += 1,
                 Err(err) => placed.refused.push((repo_dir, err)),
             }
         }
-        remove_if_empty(&namespace_dir);
     }
     Ok(placed)
 }
 
 /// Move the repository at `repo_dir`, in the legacy layout under `sync_dir`, to the directory the
 /// UUID its config records places it in, returning that directory. The repository still resolves
-/// at the namespace and name it resolved at before. Run with nothing else using the repository.
+/// at the namespace and name it resolved at before, and a namespace directory it was the last
+/// repository in is removed. Run with no write in progress on the repository: the move waits up to
+/// `env_wait` for readers to close its LMDB envs, and drops the cached database handles under its
+/// old directory.
 ///
 /// # Errors
-/// [`OxenError::RepoUuidTaken`] when a repository is already placed by the UUID. An internal error
-/// when the config records no UUID, when the directory is named for a different UUID, when the
-/// config keeps version files at an absolute path inside the directory, or when nothing would
-/// resolve the repository's namespace and name to it once it has moved.
-fn place_by_uuid(sync_dir: &Path, repo_dir: &Path) -> Result<PathBuf, OxenError> {
+/// [`OxenError::RepoUuidTaken`] when a repository is already placed by the UUID.
+/// [`OxenError::LockTimeout`] when an LMDB env under the directory is still open after `env_wait`.
+/// An internal error when the config records no UUID, when the directory is named for a different
+/// UUID, when the config keeps version files at an absolute path inside the directory, or when
+/// nothing would resolve the repository's namespace and name to it once it has moved.
+pub(crate) fn place_by_uuid(
+    sync_dir: &Path,
+    repo_dir: &Path,
+    env_wait: Duration,
+) -> Result<PathBuf, OxenError> {
     let (Some(namespace), Some(name)) = (
         repo_dir
             .parent()
@@ -108,8 +126,33 @@ fn place_by_uuid(sync_dir: &Path, repo_dir: &Path) -> Result<PathBuf, OxenError>
     if placed_dir.symlink_metadata().is_ok() {
         return Err(OxenError::RepoUuidTaken(repo_uuid));
     }
+    forget_cached_handles(repo_dir)?;
+    let deadline = Instant::now() + env_wait;
+    while shared_env_is_live_under(repo_dir) {
+        if Instant::now() >= deadline {
+            return Err(OxenError::LockTimeout(
+                "The repository is in use and cannot move yet. Try again later.".into(),
+            ));
+        }
+        sleep(Duration::from_millis(2));
+    }
     util::fs::rename(repo_dir, &placed_dir)?;
+    // Again, so no handle opened while the move ran answers for the old directory.
+    forget_cached_handles(repo_dir)?;
+    if let Some(namespace_dir) = repo_dir.parent() {
+        remove_if_empty(namespace_dir);
+    }
     Ok(placed_dir)
+}
+
+/// Drop the cached database handles under `repo_dir`, so the next open finds the repository
+/// wherever it then is. A handle a caller still holds closes on its last drop.
+fn forget_cached_handles(repo_dir: &Path) -> Result<(), OxenError> {
+    staged::remove_from_cache_with_children(repo_dir)?;
+    ref_manager::remove_from_cache_with_children(repo_dir)?;
+    workspace_name_index::remove_from_cache_with_children(repo_dir);
+    remove_commit_count_db_from_cache_with_children(repo_dir);
+    remove_df_db_from_cache_with_children(repo_dir)
 }
 
 /// Remove `namespace_dir` when nothing is left in it.
@@ -122,13 +165,16 @@ fn remove_if_empty(namespace_dir: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
 
     use uuid::Uuid;
 
-    use super::place_all_by_uuid;
+    use super::{place_all_by_uuid, place_by_uuid};
+    use crate::command::migrate::{Direction, Migrate, PlaceRepositoryByUuidMigration};
     use crate::config::RepositoryConfig;
+    use crate::core::repo_locks::begin_write;
     use crate::error::OxenError;
-    use crate::model::RepoIdentity;
+    use crate::model::{MerkleHash, RepoIdentity};
     use crate::repositories;
     use crate::storage::{StorageConfig, StorageKind};
     use crate::sync_dir::placed_repo_dir;
@@ -141,12 +187,8 @@ mod tests {
         test::run_empty_dir_test_async(|sync_dir| async move {
             // Addressed by name, the way a self-hosted server addresses its repositories.
             let cats = RepoIdentity::minted("ox", "cats");
-            drop(test::create_legacy_repo_with_identity(
-                &sync_dir,
-                "ox",
-                "cats",
-                cats.clone(),
-            )?);
+            let stale_cats =
+                test::create_legacy_repo_with_identity(&sync_dir, "ox", "cats", cats.clone())?;
             // Addressed by UUID in both positions, the way a control plane addresses them.
             let hosted = RepoIdentity::hintless(Uuid::new_v4());
             let (owner, hosted_name) = (Uuid::new_v4().to_string(), hosted.repo_uuid.to_string());
@@ -256,6 +298,46 @@ mod tests {
                 (again.moved, again.refused.len()),
                 (0, placed.refused.len()),
                 "a second run moves nothing more and refuses the same repositories"
+            );
+            assert!(
+                matches!(begin_write(&stale_cats), Err(OxenError::LockTimeout(_))),
+                "a write that looked up the old directory is sent back to look again"
+            );
+
+            let working_copy =
+                test::create_legacy_repo(&sync_dir.join("elsewhere"), "ox", "birds")?;
+            assert!(
+                !PlaceRepositoryByUuidMigration.is_applicable(Direction::Up, &working_copy)?,
+                "a directory with no name table beside its namespace is not a server's"
+            );
+
+            let busy_identity = RepoIdentity::minted("ox", "busy");
+            let busy = test::create_legacy_repo_with_identity(
+                &sync_dir,
+                "ox",
+                "busy",
+                busy_identity.clone(),
+            )?;
+            busy.merkle_node_store()
+                .exists(&MerkleHash::new(0))
+                .expect("the repository's LMDB env opens");
+            assert!(
+                matches!(
+                    place_by_uuid(&sync_dir, &busy.path, Duration::ZERO),
+                    Err(OxenError::LockTimeout(_))
+                ),
+                "a repository whose LMDB env is open is not moved"
+            );
+            assert!(
+                busy.path.is_dir(),
+                "the refused move leaves it where it was"
+            );
+            assert!(PlaceRepositoryByUuidMigration.is_applicable(Direction::Up, &busy)?);
+            PlaceRepositoryByUuidMigration.up(busy)?;
+            assert_eq!(
+                repositories::resolve_repo_dir(&sync_dir, "ox", "busy")?,
+                Some(placed_repo_dir(&sync_dir, busy_identity.repo_uuid)),
+                "the migration moves it once the only open env was its own"
             );
 
             Ok(())

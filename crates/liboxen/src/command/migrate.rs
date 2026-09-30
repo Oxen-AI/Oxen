@@ -13,6 +13,9 @@ pub use m20260824_backfill_repo_identity::BackfillRepoIdentityMigration;
 
 pub mod m20260824_backfill_workspace_created_at;
 pub use m20260824_backfill_workspace_created_at::BackfillWorkspaceCreatedAtMigration;
+
+pub mod m20260930_place_repository_by_uuid;
+pub use m20260930_place_repository_by_uuid::PlaceRepositoryByUuidMigration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantNames};
 
@@ -91,11 +94,12 @@ pub trait Migrate: Send + Sync {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 4] = [
+pub const ALL_MIGRATIONS: [&dyn Migrate; 5] = [
     &AddWorkspaceNameIndexMigration,
     &MerkleNodesToLmdbMigration,
     &BackfillRepoIdentityMigration,
     &BackfillWorkspaceCreatedAtMigration,
+    &PlaceRepositoryByUuidMigration,
 ];
 
 /// Maps a registered migration's name to its implementation.

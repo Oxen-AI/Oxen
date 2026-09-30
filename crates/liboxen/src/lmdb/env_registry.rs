@@ -111,6 +111,15 @@ impl LmdbEnvRegistry {
         self.lookup(path).is_some()
     }
 
+    /// Whether an env at `dir` or anywhere under it is currently live. Non-blocking.
+    pub(in crate::lmdb) fn is_live_under(&self, dir: &Path) -> bool {
+        let dir = canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        self.slots
+            .read()
+            .iter()
+            .any(|(path, env)| path.starts_with(&dir) && env.strong_count() > 0)
+    }
+
     fn lookup(&self, path: &Path) -> Option<Arc<LmdbEnv>> {
         let slots = self.slots.read();
         if let Some(handle) = lookup_key(&slots, path) {
@@ -161,6 +170,12 @@ pub(in crate::lmdb) fn open_shared_env(
 /// check before deleting/renaming an env dir (see `LmdbEnvRegistry::is_live`).
 pub fn shared_env_is_live(dir: &Path) -> bool {
     SHARED_REGISTRY.is_live(dir)
+}
+
+/// Whether an env at `dir` or anywhere under it is currently live in the process-global registry,
+/// the precondition check before renaming a directory that may hold several envs.
+pub(crate) fn shared_env_is_live_under(dir: &Path) -> bool {
+    SHARED_REGISTRY.is_live_under(dir)
 }
 
 fn lookup_key(slots: &HashMap<PathBuf, Weak<LmdbEnv>>, key: &Path) -> Option<Arc<LmdbEnv>> {
