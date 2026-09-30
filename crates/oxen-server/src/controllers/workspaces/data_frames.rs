@@ -157,12 +157,10 @@ pub async fn get(
         .map_err(OxenError::from)??
     };
 
-    let Some(og_schema) = get_by_path_async(&repo, &workspace.commit, &file_path).await? else {
+    let Some(df_schema) = get_by_path_async(&repo, &workspace.commit, &file_path).await? else {
         log::warn!("Failed to get schema for data frame {file_path:?}");
         return Err(OxenHttpError::NotFound);
     };
-    let mut df_schema = og_schema.clone();
-    df_schema.update_metadata_from_schema(&og_schema);
 
     let resource = ResourceVersion {
         path: file_path.to_string_lossy().to_string(),
