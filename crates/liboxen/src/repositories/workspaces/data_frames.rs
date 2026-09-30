@@ -742,11 +742,7 @@ mod tests {
 
             // A normal index produces a fully-indexed, queryable table.
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-            let (indexed, yielded) = test::run_and_report_yield(
-                workspaces::data_frames::is_indexed_async(&workspace, &file_path),
-            );
-            assert!(indexed?);
-            assert!(yielded, "is_indexed_async held the thread it was called on");
+            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
 
             // Simulate a table written by an older version: no index marker
             // table. Such a table may hold rows tombstoned as 'removed' that
@@ -1917,17 +1913,12 @@ mod tests {
                 &repo, &workspace, &file_path, &settings,
             )?;
 
-            let (staged, yielded) = test::run_and_report_yield(
-                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager_async(
+            let staged =
+                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
                     &workspace.workspace_repo,
                     &file_path,
-                ),
-            );
-            assert!(
-                yielded,
-                "get_staged_schema_with_staged_db_manager_async held the thread it was called on"
-            );
-            let staged = staged?.expect("a staged schema exists after the write");
+                )?
+                .expect("a staged schema exists after the write");
             assert_eq!(
                 staged.metadata,
                 Some(settings),

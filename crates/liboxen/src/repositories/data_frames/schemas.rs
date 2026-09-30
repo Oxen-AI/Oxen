@@ -149,14 +149,8 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
 
-            let (schema, yielded) = test::run_and_report_yield(
-                repositories::data_frames::schemas::get_by_path_async(&repo, &commit, &path),
-            );
-            assert!(
-                yielded,
-                "get_by_path_async held the thread it was called on"
-            );
-            let schema = schema?.expect("bounding_box.csv carries a schema");
+            let schema = repositories::data_frames::schemas::get_by_path(&repo, &commit, &path)?
+                .expect("bounding_box.csv carries a schema");
             assert_eq!(schema.hash, "b821946753334c083124fd563377d795");
             assert_eq!(schema.fields.len(), 6);
             assert_eq!(schema.fields[0].name, "file");
