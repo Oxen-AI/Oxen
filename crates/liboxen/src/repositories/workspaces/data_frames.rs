@@ -1006,7 +1006,11 @@ mod tests {
 
             // Stage a deletion — the row is deleted from the staged table
             // immediately, not tombstoned.
-            workspaces::data_frames::rows::delete(&repo, &workspace, &file_path, &id_to_delete)?;
+            let (deleted, yielded) = test::run_and_report_yield(
+                workspaces::data_frames::rows::delete_async(&workspace, &file_path, &id_to_delete),
+            );
+            deleted?;
+            assert!(yielded, "delete_async held the thread it was called on");
             let count = workspaces::data_frames::count(&workspace, &file_path)?;
             assert_eq!(count, 5);
 
@@ -1147,8 +1151,11 @@ mod tests {
                 "width": 100,
                 "height": 100
             });
-            let new_row =
-                workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            let (new_row, yielded) = test::run_and_report_yield(
+                workspaces::data_frames::rows::add_async(&workspace, &file_path, &json_data),
+            );
+            let new_row = new_row?;
+            assert!(yielded, "add_async held the thread it was called on");
 
             // 1 row added
             let count = workspaces::data_frames::count(&workspace, &file_path)?;
@@ -1161,21 +1168,29 @@ mod tests {
                 "height": 101
             });
 
-            workspaces::data_frames::rows::update(
-                &repo,
-                &workspace,
-                &file_path,
-                id_to_modify,
-                &json_data,
-            )?;
+            let (updated, yielded) =
+                test::run_and_report_yield(workspaces::data_frames::rows::update_async(
+                    &workspace,
+                    &file_path,
+                    id_to_modify,
+                    &json_data,
+                ));
+            updated?;
+            assert!(yielded, "update_async held the thread it was called on");
             // The data frame stays staged after the update
             let status = workspaces::status::status(&workspace)?;
             log::debug!("found mod entries: {status:?}");
             assert_eq!(status.staged_files.len(), 1);
 
             // The update was applied in place to the same row
-            let row =
-                workspaces::data_frames::rows::get_by_id(&workspace, &file_path, id_to_modify)?;
+            let (row, yielded) =
+                test::run_and_report_yield(workspaces::data_frames::rows::get_by_id_async(
+                    &workspace,
+                    &file_path,
+                    id_to_modify,
+                ));
+            let row = row?;
+            assert!(yielded, "get_by_id_async held the thread it was called on");
             assert_eq!(row.height(), 1);
             let height = row.column("height")?.get(0)?;
             assert_eq!(height.to_string(), "101");
@@ -1422,9 +1437,14 @@ mod tests {
                 {"row_id": real_id, "value": {"label": "should-not-apply"}},
                 {"row_id": "no-such-row-id", "value": {"label": "phantom"}}
             ]);
-            let result =
-                workspaces::data_frames::rows::batch_update(&repo, &workspace, &file_path, &data);
+            let (result, yielded) = test::run_and_report_yield(
+                workspaces::data_frames::rows::batch_update_async(&workspace, &file_path, &data),
+            );
             assert!(result.is_err(), "batch with a missing row id must fail");
+            assert!(
+                yielded,
+                "batch_update_async held the thread it was called on"
+            );
 
             // The valid row's update must NOT have been applied.
             let row = workspaces::data_frames::rows::get_by_id(&workspace, &file_path, &real_id)?;
