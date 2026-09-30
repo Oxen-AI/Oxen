@@ -163,10 +163,11 @@ if [ "$INSTALL_DEPS" = true ]; then
     "$SCRIPT_DIR/install-prereqs"
 fi
 
-# Build
-echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
+# Build the binaries and the tests in one invocation, so dev-dependency features resolve once and
+# the `cargo test` below reuses this build instead of compiling the dependencies a second time.
+echo "==> Building oxen (cargo build --workspace --bins --tests $FEATURE_ARGS)..."
 # shellcheck disable=SC2086
-cargo build $FEATURE_ARGS
+cargo build --workspace --bins --tests $FEATURE_ARGS
 
 # Verify ulimit
 CURRENT_ULIMIT=$(ulimit -n)

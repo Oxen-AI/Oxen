@@ -73,8 +73,10 @@ jobs:
           mkdir -p data/test/runs
           mkdir -p /tmp/oxen_sync/
 
+      # Building the tests with the binaries resolves dev-dependency features once, so the test step
+      # reuses this build instead of compiling the dependencies a second time.
       - name: Build oxen rust project
-        run: cargo build --workspace
+        run: cargo build --workspace --bins --tests
 
       # Nightly and non-blocking, so run the whole suite on NFS rather than a guessed subset —
       # NFS-only failures can surface anywhere, not just in the transfer/storage paths.
