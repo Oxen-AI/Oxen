@@ -3,18 +3,18 @@ use std::path::PathBuf;
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo_async;
 use crate::params::{app_data, path_param};
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web::Bytes};
 use liboxen::core::repo_locks;
+use liboxen::error::OxenError;
 use liboxen::model::Schema;
 use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::model::data_frame::update_result::UpdateResult;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
 use liboxen::repositories::workspaces::data_frames::is_indexed_async;
-use liboxen::repositories::workspaces::data_frames::rows::{
-    add_async, batch_update_async, delete_async, get_by_id_async, get_row_id, update_async,
-};
+use liboxen::repositories::workspaces::data_frames::rows;
 use liboxen::view::json_data_frame_view::{
     BatchUpdateResponse, JsonDataFrameRowResponse, VecBatchUpdateResponse,
 };
@@ -61,8 +61,13 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let row_df = add_async(&workspace, &file_path, data).await?;
-    let row_id: Option<String> = get_row_id(&row_df)?;
+    let row_df = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::add(&repo, &workspace, &file_path, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
+    let row_id: Option<String> = rows::get_row_id(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -103,9 +108,13 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let row_df = get_by_id_async(&workspace, &file_path, &row_id).await?;
+    let row_df = {
+        tasks::spawn_blocking(move || rows::get_by_id(&workspace, &file_path, &row_id))
+            .await
+            .map_err(OxenError::from)??
+    };
 
-    let row_id = get_row_id(&row_df)?;
+    let row_id = rows::get_row_id(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -171,9 +180,14 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let modified_row = update_async(&workspace, &file_path, &row_id, data).await?;
+    let modified_row = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::update(&repo, &workspace, &file_path, &row_id, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
 
-    let row_id = get_row_id(&modified_row)?;
+    let row_id = rows::get_row_id(&modified_row)?;
 
     log::debug!("Modified row in controller is {modified_row:?}");
     let schema = Schema::from_polars(modified_row.schema());
@@ -215,7 +229,11 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let df = delete_async(&workspace, &file_path, &row_id).await?;
+    let df = {
+        tasks::spawn_blocking(move || rows::delete(&repo, &workspace, &file_path, &row_id))
+            .await
+            .map_err(OxenError::from)??
+    };
     let schema = Schema::from_polars(df.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -268,7 +286,12 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let modified_rows = batch_update_async(&workspace, &file_path, data).await?;
+    let modified_rows = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::batch_update(&repo, &workspace, &file_path, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
 
     let mut responses = Vec::new();
 
