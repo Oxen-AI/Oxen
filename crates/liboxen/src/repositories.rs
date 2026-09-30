@@ -16,6 +16,7 @@ use crate::error::OxenError;
 use crate::model::Commit;
 use crate::model::LocalRepository;
 use crate::model::RepoIdentity;
+use crate::model::file::FileNew;
 use crate::model::merkle_tree;
 use crate::storage::{S3Opts, StorageKind};
 use crate::sync_dir::{is_server_owned, placed_repo_dir, repo_dirs};
@@ -25,6 +26,7 @@ use crate::view::repository::RepositoryListView;
 use bytes::Bytes;
 use regex::Regex;
 use std::ffi::OsStr;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use tokio::task::spawn_blocking;
@@ -537,7 +539,9 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
     VALID_NAMESPACE_NAME_RE.is_match(name)
 }
 
-/// Create a repository under `root_dir`, recording `identity` as who it is.
+/// Create a repository under `root_dir`, recording `identity` as who it is. A create that fails
+/// gives back the name it claimed and removes the directory it made, with the version files stored
+/// for it.
 ///
 /// # Errors
 /// [`OxenError::InvalidNamespaceName`] when the namespace is not a valid namespace name, or names a
@@ -612,19 +616,74 @@ where
 }
 
 /// Create the repository at `repo_dir`, recording `identity` as who it is, leaving the server's
-/// name table alone.
+/// name table alone. A create that fails after making `repo_dir` removes it, and the version files
+/// stored for it.
 ///
-/// `repo_dir` must not exist, and `new_repo`'s namespace and name are the caller's to validate.
+/// `new_repo`'s namespace and name are the caller's to validate.
+///
+/// # Errors
+/// [`OxenError::RepoAlreadyExists`] when `repo_dir` already exists.
 async fn create_unclaimed(
     repo_dir: &Path,
     mut new_repo: RepoNew,
     identity: Option<RepoIdentity>,
     server_s3_opts: Option<&S3Opts>,
 ) -> Result<LocalRepository, OxenError> {
-    // Create the repo dir
     log::debug!("repositories::create repo dir: {repo_dir:?}");
-    util::fs::create_dir_all(repo_dir)?;
+    if let Some(parent) = repo_dir.parent() {
+        util::fs::create_dir_all(parent)?;
+    }
+    if let Err(err) = std::fs::create_dir(repo_dir) {
+        return Err(if err.kind() == io::ErrorKind::AlreadyExists {
+            OxenError::RepoAlreadyExists(Box::new(new_repo))
+        } else {
+            OxenError::file_error(repo_dir, err)
+        });
+    }
 
+    let files = new_repo.files.take().unwrap_or_default();
+    let local_repo = match save_new_repo(repo_dir, &new_repo, identity, server_s3_opts) {
+        Ok(local_repo) => local_repo,
+        Err(err) => {
+            remove_failed_create_dir(repo_dir).await;
+            return Err(err);
+        }
+    };
+    if let Err(err) = set_up_new_repo(&local_repo, files).await {
+        if let Err(cause) = local_repo.version_store().destroy().await {
+            tracing::error!(
+                ?repo_dir,
+                repo_uuid = ?local_repo.repo_uuid(),
+                ?cause,
+                "Could not remove the version files of a failed create"
+            );
+        }
+        drop(local_repo);
+        remove_failed_create_dir(repo_dir).await;
+        return Err(err);
+    }
+    Ok(local_repo)
+}
+
+/// Remove the directory a failed create made, logging a removal that fails.
+async fn remove_failed_create_dir(repo_dir: &Path) {
+    if let Err(cause) = delete_dir(repo_dir).await {
+        tracing::error!(
+            ?repo_dir,
+            ?cause,
+            "Could not remove the directory of a failed create"
+        );
+    }
+}
+
+/// Write the config of the new repository at `repo_dir`, which must exist, recording `identity` as
+/// who it is.
+fn save_new_repo(
+    repo_dir: &Path,
+    new_repo: &RepoNew,
+    identity: Option<RepoIdentity>,
+    server_s3_opts: Option<&S3Opts>,
+) -> Result<LocalRepository, OxenError> {
     // Create oxen hidden dir
     let hidden_dir = util::fs::oxen_hidden_dir(repo_dir);
     log::debug!("repositories::create hidden dir: {hidden_dir:?}");
@@ -648,6 +707,16 @@ async fn create_unclaimed(
     };
     let local_repo = LocalRepository::new_with_server_opts(repo_dir, config, server_s3_opts)?;
     local_repo.save()?;
+    Ok(local_repo)
+}
+
+/// Initialize the version store and `HEAD` of the new repository `local_repo`, then add and commit
+/// `files`. An empty list commits nothing.
+async fn set_up_new_repo(
+    local_repo: &LocalRepository,
+    files: Vec<FileNew>,
+) -> Result<(), OxenError> {
+    let repo_dir = &local_repo.path;
 
     // Initialize version store
     let version_store = local_repo.version_store();
@@ -658,13 +727,11 @@ async fn create_unclaimed(
     util::fs::create_dir_all(history_dir)?;
 
     // Create HEAD file and point it to DEFAULT_BRANCH_NAME
-    with_ref_manager(&local_repo, |manager| {
+    with_ref_manager(local_repo, |manager| {
         manager.set_head(constants::DEFAULT_BRANCH_NAME)?;
         Ok(())
     })?;
 
-    // If the user supplied files, add and commit them. An empty list means none were supplied.
-    let files = new_repo.files.take().unwrap_or_default();
     if let Some(user) = files.first().map(|file| file.user.clone()) {
         log::debug!("repositories::create files: {:?}", files.len());
         let payloads: Vec<(PathBuf, Bytes)> = files
@@ -683,15 +750,14 @@ async fn create_unclaimed(
         .await??;
 
         for path in &paths {
-            add(&local_repo, path).await?;
+            add(local_repo, path).await?;
         }
 
         let commit =
-            core::v_latest::commits::commit_with_user(&local_repo, "Initial commit", &user)?;
-        branches::create(&local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
+            core::v_latest::commits::commit_with_user(local_repo, "Initial commit", &user)?;
+        branches::create(local_repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
     }
-
-    Ok(local_repo)
+    Ok(())
 }
 
 /// Give back the name the repository at `repo_dir` records, so another repository may take it.
@@ -1257,17 +1323,42 @@ mod tests {
             let name: &str = "test-repo-name";
 
             let user = UserConfig::get()?.to_user();
-            let files: Vec<FileNew> = vec![FileNew {
-                path: PathBuf::from("README"),
+            let file = |path: &str| FileNew {
+                path: PathBuf::from(path),
                 contents: FileContents::Text(String::from("Hello world!")),
-                user,
-            }];
-            let repo_new = RepoNew::from_files(namespace, name, files, None);
-            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
-
+                user: user.clone(),
+            };
             let repo_path = Path::new(&sync_dir)
                 .join(Path::new(namespace))
                 .join(Path::new(name));
+
+            // The second file's path runs through the first, so writing it fails after the
+            // repository's directory, version store, and HEAD are made.
+            let repo_new = RepoNew::from_files(
+                namespace,
+                name,
+                vec![file("README"), file("README/inner")],
+                None,
+            );
+            let result =
+                repositories::create(&sync_dir, repo_new, server_identity(namespace, name), None)
+                    .await;
+            assert!(
+                matches!(&result, Err(OxenError::FileCreate(path, _)) if *path == repo_path.join("README")),
+                "the create fails writing its files, inside the directory it made: {result:?}"
+            );
+            assert!(
+                !repo_path.exists(),
+                "a failed create removes the directory it made"
+            );
+            assert_eq!(
+                NameTable::new(&sync_dir).get(namespace, name)?,
+                None,
+                "a failed create gives its name back"
+            );
+
+            let repo_new = RepoNew::from_files(namespace, name, vec![file("README")], None);
+            let _repo = repositories::create(&sync_dir, repo_new, None, None).await?;
             assert!(repo_path.exists());
 
             // Test that we can successful load a repository from that dir
