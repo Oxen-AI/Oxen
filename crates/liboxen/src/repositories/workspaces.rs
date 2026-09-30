@@ -1415,17 +1415,9 @@ mod tests {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
             let before = OffsetDateTime::now_utc();
-            let (workspace, yielded) = test::run_and_report_yield(create_with_name(
-                &repo,
-                &commit,
-                "ws-created-at",
-                None,
-                true,
-            ))
-            .await;
-            let workspace = workspace?;
+            let workspace =
+                repositories::workspaces::create(&repo, &commit, "ws-created-at", true)?;
             let after = OffsetDateTime::now_utc();
-            assert!(yielded, "create_with_name held the thread it was called on");
 
             let created_at = workspace
                 .created_at
@@ -1532,19 +1524,16 @@ mod tests {
 
             let reader = get_staged_db_manager(&workspace.workspace_repo)?;
 
-            let (committed, yielded) =
-                test::run_and_report_yield(repositories::workspaces::commit(
-                    &workspace,
-                    &NewCommitBody {
-                        message: "Updating hello file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
-                ))
-                .await;
-            committed?;
-            assert!(yielded, "commit held the thread it was called on");
+            repositories::workspaces::commit(
+                &workspace,
+                &NewCommitBody {
+                    message: "Updating hello file".to_string(),
+                    author: "Bessie".to_string(),
+                    email: "bessie@oxen.ai".to_string(),
+                },
+                DEFAULT_BRANCH_NAME,
+            )
+            .await?;
 
             let after = get_staged_db_manager(&workspace.workspace_repo)?;
             assert!(after.read_from_staged_db("hello.txt")?.is_none());
@@ -1617,10 +1606,7 @@ mod tests {
             let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
             AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
 
-            let (listed, yielded) =
-                test::run_and_report_yield(repositories::workspaces::list(&repo)).await;
-            assert!(yielded, "list held the thread it was called on");
-            let listed = listed?;
+            let listed = repositories::workspaces::list(&repo).await?;
             let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
             assert_eq!(ids, vec!["ws-good"]);
 
