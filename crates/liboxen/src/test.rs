@@ -1466,10 +1466,9 @@ pub fn assert_no_live_lmdb_envs(dir: &Path) {
         WalkDir::new(dir)
             .into_iter()
             .flatten()
+            .filter(|entry| entry.file_type().is_dir())
             .map(|entry| entry.path().to_path_buf())
-            .filter(|path| {
-                path.ends_with(constants::NODES_LMDB_DIR) && lmdb::shared_env_is_live(path)
-            })
+            .filter(|path| lmdb::shared_env_is_live(path))
             .collect()
     };
 
@@ -1482,7 +1481,8 @@ pub fn assert_no_live_lmdb_envs(dir: &Path) {
     assert!(
         live.is_empty(),
         "LMDB envs under {dir:?} still open after {TIMEOUT:?}: {live:?}. \
-         Drop every LocalRepository under it, including any a background thread holds."
+         Drop every handle on them (a LocalRepository, a NameTable), including any a background \
+         thread holds."
     );
 }
 

@@ -912,6 +912,7 @@ mod tests {
             "deleting a repository placed by UUID frees the name it records"
         );
 
+        drop(table);
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
@@ -1249,6 +1250,7 @@ mod tests {
             "a refused rename leaves the config and the table as they were"
         );
 
+        drop(table);
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
