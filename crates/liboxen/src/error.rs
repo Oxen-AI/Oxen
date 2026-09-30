@@ -356,10 +356,6 @@ pub enum OxenError {
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
 
-    /// A caller supplied a Merkle node backend that isn't recognized.
-    #[error("Unsupported Merkle node backend: {0}. Expected 'filesystem' or 'lmdb'.")]
-    UnsupportedMerkleNodeBackend(String),
-
     /// An S3-backed repo's version files were reached without S3 opts (the `s3_bucket` is unset
     /// in the server's TOML, or the repo was opened without the server's opts). On the
     /// repo-create path a missing bucket normally surfaces as a 400 from
