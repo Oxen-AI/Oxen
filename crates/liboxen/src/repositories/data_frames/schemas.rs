@@ -151,8 +151,7 @@ mod tests {
 
             let (schema, yielded) = test::run_and_report_yield(
                 repositories::data_frames::schemas::get_by_path_async(&repo, &commit, &path),
-            )
-            .await;
+            );
             assert!(
                 yielded,
                 "get_by_path_async held the thread it was called on"

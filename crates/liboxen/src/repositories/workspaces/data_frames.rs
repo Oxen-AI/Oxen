@@ -744,8 +744,7 @@ mod tests {
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             let (indexed, yielded) = test::run_and_report_yield(
                 workspaces::data_frames::is_indexed_async(&workspace, &file_path),
-            )
-            .await;
+            );
             assert!(indexed?);
             assert!(yielded, "is_indexed_async held the thread it was called on");
 
@@ -1923,8 +1922,7 @@ mod tests {
                     &workspace.workspace_repo,
                     &file_path,
                 ),
-            )
-            .await;
+            );
             assert!(
                 yielded,
                 "get_staged_schema_with_staged_db_manager_async held the thread it was called on"
