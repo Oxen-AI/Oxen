@@ -39,12 +39,13 @@ A repository already on LMDB is left unchanged, so the loop is safe to rerun.
 
 **Versions:** 0.58.0 to TBD. **Applies to:** server.
 
-`oxen-server` refuses to create a repository under a name another repository already holds, and it learns the names that exist from the `[identity]` section of each repository's config. A repository created before `oxen-server` recorded identity has no such section, so that refusal does not cover its name until the section is written, and the server walks every config and logs a warning on each start until every repository has one.
+`oxen-server` refuses to create a repository under a name another repository already holds, and it learns the names that exist from the `[identity]` section of each repository's config. A repository created before `oxen-server` recorded identity has no such section, so that refusal does not cover its name until the section is written, and the server walks every config and logs a warning on each start until every repository has one. Until then, moving another repository into its namespace under the same name is not refused either, and afterwards requests for that name reach the moved repository rather than this one.
 
-Stop the server, then run the optional `backfill_repo_identity` migration over every repository in the sync directory, using the `oxen` CLI from the same release:
+Stop the server, then run the optional `backfill_repo_identity` migration over every repository in the sync directory, using the `oxen` CLI from the same release. Repositories under `$SYNC_DIR/repo/` always record their identity, so the loop skips them:
 
 ```bash
 for repo in "$SYNC_DIR"/*/*/; do
+  case "$repo" in "$SYNC_DIR"/repo/*) continue ;; esac
   oxen migrate up backfill_repo_identity --run-optional "$repo"
 done
 ```

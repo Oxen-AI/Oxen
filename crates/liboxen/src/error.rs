@@ -70,6 +70,10 @@ pub enum OxenError {
     #[error("Repository '{0}' already exists")]
     RepoAlreadyExists(Box<RepoNew>),
 
+    /// Error during repository creation: a repository is already placed by the UUID.
+    #[error("Repository UUID {0} is already in use")]
+    RepoUuidTaken(Uuid),
+
     /// Error when creating a repository: repo names are restricted.
     #[error("Invalid repository name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
@@ -990,6 +994,7 @@ impl OxenError {
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::RemotePointsAtDifferentRepo { .. } => true,
+            OxenError::RepoUuidTaken(_) => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
