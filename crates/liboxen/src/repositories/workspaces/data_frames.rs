@@ -29,6 +29,9 @@ pub mod schemas;
 pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
     log::debug!("checking dataset is indexed for {path:?}");
     let db_path = duckdb_path(workspace, path);
+    if !db_path.exists() {
+        return Ok(false);
+    }
     log::debug!("getting conn at path {db_path:?}");
 
     with_df_db_manager(&db_path, |manager| {
@@ -732,6 +735,10 @@ mod tests {
             assert!(!workspaces::data_frames::is_indexed(
                 &workspace, &file_path
             )?);
+            assert!(
+                !db_path.exists(),
+                "checking a never-indexed frame creates no database for it"
+            );
 
             // A normal index produces a fully-indexed, queryable table.
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
