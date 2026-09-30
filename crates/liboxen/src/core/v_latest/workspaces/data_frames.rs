@@ -9,6 +9,7 @@ use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::{with_db_closed, with_df_db_manager};
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
+use crate::core::staged::staged_db_manager::StagedDBManager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
@@ -16,6 +17,7 @@ use crate::repositories::workspaces::{
 };
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -519,11 +521,11 @@ pub async fn rename(
     let path = path.as_ref().to_path_buf();
     let new_path = new_path.as_ref().to_path_buf();
 
-    let (staged_entry, existing_version, is_modified) = {
+    let progress = {
         let workspace = workspace.clone();
         let path = path.clone();
         let new_path = new_path.clone();
-        spawn_blocking(move || -> Result<_, OxenError> {
+        spawn_blocking(move || -> Result<ControlFlow<PathBuf, _>, OxenError> {
             // Handle duckdb file operations first
             let og_db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &path);
             let og_db_path_parent = db_parent(&og_db_path)?;
@@ -544,10 +546,16 @@ pub async fn rename(
                 Ok(())
             })?;
 
-            let staged_entry =
-                get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(&path)?;
-            if staged_entry.is_some() {
-                return Ok((staged_entry, None, false));
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            if let Some(staged_entry) = staged_db_manager.read_from_staged_db(&path)? {
+                return move_staged_entry(
+                    &workspace,
+                    &staged_db_manager,
+                    staged_entry,
+                    &path,
+                    &new_path,
+                )
+                .map(ControlFlow::Break);
             }
 
             // The version to export to the new path, with the mtime its merkle record carries
@@ -571,77 +579,86 @@ pub async fn rename(
             )?
             .is_some();
 
-            Ok((None, existing_version, is_modified))
+            Ok(ControlFlow::Continue((existing_version, is_modified)))
         })
         .await??
     };
+    let (existing_version, is_modified) = match progress {
+        ControlFlow::Break(relative_path) => return Ok(relative_path),
+        ControlFlow::Continue(rest) => rest,
+    };
 
-    if staged_entry.is_none() {
-        let workspace_file_path = workspace.workspace_repo.path.join(&new_path);
+    let workspace_file_path = workspace.workspace_repo.path.join(&new_path);
 
-        if let Some((hash, mtime)) = &existing_version {
-            workspace
-                .base_repo
-                .version_store()
-                .copy_version_to_path(hash, &workspace_file_path, *mtime)
-                .await?;
-        }
+    if let Some((hash, mtime)) = &existing_version {
+        workspace
+            .base_repo
+            .version_store()
+            .copy_version_to_path(hash, &workspace_file_path, *mtime)
+            .await?;
+    }
 
-        log::debug!(
-            "rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}"
-        );
+    log::debug!("rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}");
 
-        if !is_modified {
-            add(workspace, &workspace_file_path).await?;
-        }
+    if !is_modified {
+        add(workspace, &workspace_file_path).await?;
     }
 
     let workspace = workspace.clone();
     spawn_blocking(move || {
-        let workspace_repo = &workspace.workspace_repo;
-        let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+        if is_modified {
+            track_modified_data_frame(&workspace, &new_path)?;
+        }
+        // Read the staged entry again after adding
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        let staged_entry = staged_db_manager.read_from_staged_db(&new_path)?;
+        log::debug!("rename: staged_entry after add: {staged_entry:?}");
 
-        let staged_entry = match staged_entry {
-            Some(staged_entry) => Some(staged_entry),
-            None => {
-                if is_modified {
-                    track_modified_data_frame(&workspace, &new_path)?;
-                }
-                // Read the staged entry again after adding
-                let staged_entry = staged_db_manager.read_from_staged_db(&new_path)?;
-                log::debug!("rename: staged_entry after add: {staged_entry:?}");
-                staged_entry
-            }
-        };
-
-        let mut new_staged_entry = staged_entry.ok_or_else(|| {
+        let staged_entry = staged_entry.ok_or_else(|| {
             OxenError::basic_str(format!("rename: staged entry not found: {path:?}"))
         })?;
-
-        // Update the file name in the staged entry
-        if let EMerkleTreeNode::File(file) = &mut new_staged_entry.node.node {
-            file.set_name(&new_path.to_string_lossy());
-        }
-
-        // Set status to Added since we're moving to a new location
-        new_staged_entry.status = StagedEntryStatus::Added;
-
-        // Get the file node from the staged entry
-        let file_node = new_staged_entry.node.file()?;
-
-        // Add the file node at the new path using staged_db_manager
-        staged_db_manager.upsert_file_node(&new_path, new_staged_entry.status, &file_node)?;
-
-        // Delete the old path entry
-        staged_db_manager.delete_entry(&path)?;
-
-        // Add parent directories for the new path
-        let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
-        staged_db_manager.add_parent_directories(&new_path, &seen_dirs)?;
-
-        util::fs::path_relative_to_dir(&new_path, &workspace_repo.path)
+        move_staged_entry(
+            &workspace,
+            &staged_db_manager,
+            staged_entry,
+            &path,
+            &new_path,
+        )
     })
     .await?
+}
+
+/// Stages `staged_entry` as added at `new_path` in place of `path`, returning `new_path` relative
+/// to the workspace.
+fn move_staged_entry(
+    workspace: &Workspace,
+    staged_db_manager: &StagedDBManager,
+    mut staged_entry: StagedMerkleTreeNode,
+    path: &Path,
+    new_path: &Path,
+) -> Result<PathBuf, OxenError> {
+    // Update the file name in the staged entry
+    if let EMerkleTreeNode::File(file) = &mut staged_entry.node.node {
+        file.set_name(&new_path.to_string_lossy());
+    }
+
+    // Set status to Added since we're moving to a new location
+    staged_entry.status = StagedEntryStatus::Added;
+
+    // Get the file node from the staged entry
+    let file_node = staged_entry.node.file()?;
+
+    // Add the file node at the new path using staged_db_manager
+    staged_db_manager.upsert_file_node(new_path, staged_entry.status, &file_node)?;
+
+    // Delete the old path entry
+    staged_db_manager.delete_entry(path)?;
+
+    // Add parent directories for the new path
+    let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+    staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
+
+    util::fs::path_relative_to_dir(new_path, &workspace.workspace_repo.path)
 }
 
 /// The directory holding a data frame's DuckDB database.
