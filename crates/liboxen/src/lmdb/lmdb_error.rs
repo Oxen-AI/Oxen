@@ -30,9 +30,9 @@ pub enum LmdbLayerError {
         source: std::io::Error,
     },
 
-    /// `EnvOpenOptions::open` failed. Notably wraps heed `EnvAlreadyOpened`; the env registry
-    /// exists to avoid triggering it, but eviction-while-borrowed can still surface it (see
-    /// `env_registry.rs`), where the registry retries by re-sharing the live handle.
+    /// `EnvOpenOptions::open` failed. Notably wraps heed `EnvAlreadyOpened`, which the env
+    /// registry absorbs by re-sharing the live handle when opens of one path overlap or an open
+    /// races a close (see `env_registry.rs`).
     #[error("Could not open LMDB environment at {path}: {source}")]
     Open {
         path: PathBuf,
@@ -84,8 +84,8 @@ impl LmdbLayerError {
     }
 
     /// True if this is heed's `EnvAlreadyOpened` underneath. The env registry uses this to
-    /// detect an open that raced a concurrent close and re-share the live handle instead of
-    /// surfacing the error.
+    /// detect an open that raced a concurrent open or close of the same path and re-share the live
+    /// handle instead of surfacing the error.
     pub fn is_env_already_opened(&self) -> bool {
         matches!(
             self,

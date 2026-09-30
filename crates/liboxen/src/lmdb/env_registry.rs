@@ -23,14 +23,14 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use bytesize::ByteSize;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 
 use super::lmdb_db::{LmdbDb, open_db};
 use super::lmdb_env::{LmdbEnv, open_lmdb_env};
 use super::lmdb_error::LmdbLayerError;
 use crate::util::fs::canonicalize;
 
-/// How long `get_or_open` waits out a concurrent close before surfacing `EnvAlreadyOpened`.
+/// How long `get_or_open` waits out a concurrent open or close before surfacing `EnvAlreadyOpened`.
 const REOPEN_RETRIES: u32 = 100;
 const REOPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
@@ -70,8 +70,6 @@ impl SharedEnv {
 #[derive(Default)]
 pub(in crate::lmdb) struct LmdbEnvRegistry {
     slots: RwLock<HashMap<PathBuf, Weak<SharedEnv>>>,
-    /// Serializes opens so two first-opens of the same path cannot race.
-    open_lock: Mutex<()>,
 }
 
 impl LmdbEnvRegistry {
@@ -85,22 +83,17 @@ impl LmdbEnvRegistry {
     /// Open-on-miss order (avoids canonicalizing a brand-new path that does not exist yet): the
     /// registry does NOT canonicalize the requested path up front. On a miss it calls
     /// `open_lmdb_env(path, ..)` (which creates the dir and opens), then keys the cache on the
-    /// opened env's `path()`. Opens are serialized so two first-opens of the same path cannot
-    /// race.
+    /// opened env's `path()`.
     ///
-    /// If `open_lmdb_env` reports the env already open — an open racing the final drop of a
-    /// previous handle, where heed has not finished closing the env yet — the registry re-resolves
-    /// the live handle if one is observable, otherwise waits out the close briefly and retries
-    /// rather than surfacing the error.
+    /// If `open_lmdb_env` reports the env already open (a concurrent first-open of the same path
+    /// that heed let through first, or an open racing the final drop of a previous handle, where
+    /// heed has not finished closing the env yet), the registry re-resolves the live handle if one
+    /// is observable, otherwise waits briefly and retries rather than surfacing the error.
     pub(in crate::lmdb) fn get_or_open(
         &self,
         path: &Path,
         map_size: ByteSize,
     ) -> Result<Arc<SharedEnv>, LmdbLayerError> {
-        if let Some(handle) = self.lookup(path) {
-            return Ok(handle);
-        }
-        let _open_guard = self.open_lock.lock();
         if let Some(handle) = self.lookup(path) {
             return Ok(handle);
         }
@@ -116,9 +109,9 @@ impl LmdbEnvRegistry {
                     if let Some(handle) = self.lookup(path) {
                         return Ok(handle);
                     }
-                    // A live env exists but is not (or no longer) in the map — the last external
-                    // `Arc` is mid-drop and heed has not finished closing it. Wait it out
-                    // briefly, then surface the error.
+                    // A live env exists but is not (yet, or no longer) in the map: its opener has
+                    // not registered it, or its last external `Arc` is mid-drop and heed has not
+                    // finished closing it. Wait briefly, then surface the error.
                     attempts += 1;
                     if attempts >= REOPEN_RETRIES {
                         return Err(err);
@@ -200,6 +193,9 @@ fn lookup_key(slots: &HashMap<PathBuf, Weak<SharedEnv>>, key: &Path) -> Option<A
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
     use super::*;
 
     const TEST_MAP_SIZE: ByteSize = ByteSize::mib(16);
@@ -212,15 +208,32 @@ mod tests {
     /// would hit LMDB's one-env-per-process restriction.
     #[test]
     fn get_or_open_dedups_overlapping_opens() {
+        const OPENERS: usize = 8;
         let registry = test_registry();
         let dir = tempfile::tempdir().expect("create temp dir");
-        let a = registry
-            .get_or_open(dir.path(), TEST_MAP_SIZE)
-            .expect("first open");
-        let b = registry
-            .get_or_open(dir.path(), TEST_MAP_SIZE)
-            .expect("second open");
-        assert!(Arc::ptr_eq(&a, &b));
+        let start = Barrier::new(OPENERS);
+        let handles: Vec<_> = thread::scope(|scope| {
+            let openers: Vec<_> = (0..OPENERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        registry
+                            .get_or_open(dir.path(), TEST_MAP_SIZE)
+                            .expect("concurrent first open")
+                    })
+                })
+                .collect();
+            openers
+                .into_iter()
+                .map(|opener| opener.join().expect("opener thread"))
+                .collect()
+        });
+        for handle in &handles {
+            assert!(
+                Arc::ptr_eq(&handles[0], handle),
+                "every concurrent first open shares one env"
+            );
+        }
     }
 
     /// The env closes exactly when the last external `Arc` drops (the registry holds only a
