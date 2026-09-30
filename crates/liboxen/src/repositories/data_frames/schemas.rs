@@ -4,20 +4,43 @@
 //!
 
 use crate::error::OxenError;
-use crate::model::LocalRepository;
+use crate::model::{Commit, LocalRepository, Schema};
 use crate::repositories;
 
 use std::path::Path;
+use tokio::task::spawn_blocking;
 
 pub use crate::core::v_latest::data_frames::schemas::list;
 
 pub use crate::core::v_latest::data_frames::schemas::get_by_path;
+
+/// [`get_by_path`], off the async worker.
+pub async fn get_by_path_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+    path: &Path,
+) -> Result<Option<Schema>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    let path = path.to_path_buf();
+    spawn_blocking(move || get_by_path(&repo, &commit, path)).await?
+}
 
 /// Get a staged schema
 pub use crate::core::v_latest::data_frames::schemas::get_staged;
 
 /// Get staged schema for workspace
 pub use crate::core::v_latest::data_frames::schemas::get_staged_schema_with_staged_db_manager;
+
+/// [`get_staged_schema_with_staged_db_manager`], off the async worker.
+pub async fn get_staged_schema_with_staged_db_manager_async(
+    repo: &LocalRepository,
+    path: &Path,
+) -> Result<Option<Schema>, OxenError> {
+    let repo = repo.clone();
+    let path = path.to_path_buf();
+    spawn_blocking(move || get_staged_schema_with_staged_db_manager(&repo, path)).await?
+}
 
 /// List all the staged schemas
 pub use crate::core::v_latest::data_frames::schemas::list_staged;
@@ -126,8 +149,15 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
 
-            let schema =
-                repositories::data_frames::schemas::get_by_path(&repo, &commit, &path)?.unwrap();
+            let (schema, yielded) = test::run_and_report_yield(
+                repositories::data_frames::schemas::get_by_path_async(&repo, &commit, &path),
+            )
+            .await;
+            assert!(
+                yielded,
+                "get_by_path_async held the thread it was called on"
+            );
+            let schema = schema?.expect("bounding_box.csv carries a schema");
             assert_eq!(schema.hash, "b821946753334c083124fd563377d795");
             assert_eq!(schema.fields.len(), 6);
             assert_eq!(schema.fields[0].name, "file");

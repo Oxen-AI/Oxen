@@ -19,6 +19,7 @@ use crate::{repositories, util};
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
 use std::path::{Path, PathBuf};
+use tokio::task::spawn_blocking;
 
 pub mod columns;
 pub mod embeddings;
@@ -39,6 +40,13 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameE
             Ok(fully_indexed)
         })
     })
+}
+
+/// [`is_indexed`], off the async worker.
+pub async fn is_indexed_async(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
+    let workspace = workspace.clone();
+    let path = path.to_path_buf();
+    Ok(spawn_blocking(move || is_indexed(&workspace, &path)).await??)
 }
 
 /// Whether a staged DuckDB table exists on disk for this data frame,
@@ -101,7 +109,11 @@ pub async fn restore(
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
     // Unstage and then restage the df
-    unindex(workspace, &path)?;
+    {
+        let workspace = workspace.clone();
+        let path = path.as_ref().to_path_buf();
+        spawn_blocking(move || unindex(&workspace, path)).await??;
+    }
 
     // TODO: we could do this more granularly without a full reset
     index(repo, workspace, path.as_ref()).await?;
@@ -716,11 +728,19 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
 
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+
             // A normal index produces a fully-indexed, queryable table.
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
-            assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
-
-            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            let (indexed, yielded) = test::run_and_report_yield(
+                workspaces::data_frames::is_indexed_async(&workspace, &file_path),
+            )
+            .await;
+            assert!(indexed?);
+            assert!(yielded, "is_indexed_async held the thread it was called on");
 
             // Simulate a table written by an older version: no index marker
             // table. Such a table may hold rows tombstoned as 'removed' that
@@ -1891,12 +1911,18 @@ mod tests {
                 &repo, &workspace, &file_path, &settings,
             )?;
 
-            let staged =
-                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager(
+            let (staged, yielded) = test::run_and_report_yield(
+                repositories::data_frames::schemas::get_staged_schema_with_staged_db_manager_async(
                     &workspace.workspace_repo,
                     &file_path,
-                )?
-                .expect("a staged schema exists after the write");
+                ),
+            )
+            .await;
+            assert!(
+                yielded,
+                "get_staged_schema_with_staged_db_manager_async held the thread it was called on"
+            );
+            let staged = staged?.expect("a staged schema exists after the write");
             assert_eq!(
                 staged.metadata,
                 Some(settings),
