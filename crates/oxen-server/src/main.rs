@@ -77,6 +77,7 @@ use std::time::Duration;
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::repositories::name_table::{NameTable, seed};
+use liboxen::repositories::placement;
 use liboxen::sync_dir;
 
 use crate::config::Config;
@@ -356,6 +357,11 @@ enum ServerCommand {
     #[command(name = "seed-name-table")]
     SeedNameTable,
 
+    /// Move every repository still at `{namespace}/{name}` to the directory its UUID places it in,
+    /// reporting each one left where it is. Run with the server stopped
+    #[command(name = "place-repositories-by-uuid")]
+    PlaceRepositoriesByUuid,
+
     /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
     #[command(name = "scan-node-format")]
     ScanNodeFormat {
@@ -522,16 +528,7 @@ async fn server() -> Result<(), ServerError> {
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 
-            if let Some(dir) = sync_dir::namespace_called_repo(&sync_dir) {
-                return Err(OxenError::internal_error(format!(
-                    "{dir:?} holds a namespace called `repo`, a name this release keeps for its own \
-                     use. With the server stopped, rename it to a namespace name nothing in the sync \
-                     dir uses, change `namespace = \"repo\"` to that name in the `[identity]` \
-                     section of each moved repository's `.oxen/config.toml`, delete the \
-                     `name_table` directory beside it, and start the server again"
-                ))
-                .into());
-            }
+            refuse_a_namespace_called_repo(&sync_dir)?;
 
             // Fail fast if the configured S3 bucket is unreachable, rather than letting the first
             // request 500. Local-only servers carry no S3 opts and skip the probe.
@@ -553,10 +550,46 @@ async fn server() -> Result<(), ServerError> {
 
         ServerCommand::SeedNameTable => seed_name_table(&sync_dir),
 
+        ServerCommand::PlaceRepositoriesByUuid => place_repositories_by_uuid(&sync_dir),
+
         ServerCommand::ScanNodeFormat { namespace, limit } => {
             scan_node_format(&sync_dir, namespace.as_deref(), limit)
         }
     }
+}
+
+/// Refuse a sync dir holding a namespace called `repo`, which would share its directory with the
+/// repositories placed by UUID.
+fn refuse_a_namespace_called_repo(sync_dir: &Path) -> Result<(), ServerError> {
+    match sync_dir::namespace_called_repo(sync_dir) {
+        Some(dir) => Err(OxenError::internal_error(format!(
+            "{dir:?} holds a namespace called `repo`, a name this release keeps for its own use. \
+             With the server stopped, rename it to a namespace name nothing in the sync dir uses, \
+             change `namespace = \"repo\"` to that name in the `[identity]` section of each \
+             moved repository's `.oxen/config.toml`, delete the `name_table` directory beside it, \
+             and start the server again"
+        ))
+        .into()),
+        None => Ok(()),
+    }
+}
+
+/// Move every repository in the legacy layout under `sync_dir` to the directory its UUID places it
+/// in, reporting each one left where it is and why.
+fn place_repositories_by_uuid(sync_dir: &Path) -> Result<(), ServerError> {
+    refuse_a_namespace_called_repo(sync_dir)?;
+    let placed = placement::place_all_by_uuid(sync_dir)?;
+    // KEEP as println! -- do not log!
+    for (dir, reason) in &placed.refused {
+        println!("left {}: {reason}", dir.display());
+    }
+    println!(
+        "moved={} refused={} every_repository_moved={}",
+        placed.moved,
+        placed.refused.len(),
+        placed.refused.is_empty()
+    );
+    Ok(())
 }
 
 /// Record the name every repository under `sync_dir` holds in the server's name table, reporting

@@ -12,6 +12,8 @@ use crate::core::df::duckdb_setup;
 use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use crate::error::OxenError;
 use crate::lmdb;
+#[cfg(test)]
+use crate::model::RepoIdentity;
 use crate::model::Schema;
 use crate::model::User;
 use crate::model::data_frame::schema::Field;
@@ -20,6 +22,8 @@ use crate::model::file::FileNew;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::RmOpts;
 use crate::repositories;
+#[cfg(test)]
+use crate::repositories::name_table::NameTable;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
@@ -147,6 +151,27 @@ pub fn create_legacy_repo(
     name: &str,
 ) -> Result<LocalRepository, OxenError> {
     repositories::init(sync_dir.join(namespace).join(name))
+}
+
+/// Create a repository at `{namespace}/{name}` under `sync_dir` recording `identity`, with the name
+/// it holds claimed in the name table, the state a repository created before placement by UUID is
+/// in.
+#[cfg(test)]
+pub(crate) fn create_legacy_repo_with_identity(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+    identity: RepoIdentity,
+) -> Result<LocalRepository, OxenError> {
+    let repo_dir = create_legacy_repo(sync_dir, namespace, name)?.path;
+    let config_path = util::fs::config_filepath(&repo_dir);
+    let mut config = RepositoryConfig::from_file(&config_path)?;
+    if let Some((namespace, name, repo_uuid)) = identity.held_name() {
+        NameTable::new(sync_dir).claim(&namespace, &name, repo_uuid)?;
+    }
+    config.identity = Some(identity);
+    config.save(&config_path)?;
+    LocalRepository::from_dir(&repo_dir)
 }
 
 fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {

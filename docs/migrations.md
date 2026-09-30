@@ -12,6 +12,7 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 | 0.59.0 to TBD | Server | [Stop starting the server with `-a`](#stop-starting-the-server-with--a) |
 | 0.60.0 to TBD | Server, S3 backend | [Copy an S3-backed repository's objects to its UUID prefix](#copy-an-s3-backed-repositorys-objects-to-its-uuid-prefix) |
 | 0.60.0 to TBD | Server | [Move a namespace called `repo`](#move-a-namespace-called-repo) |
+| 0.61.0 to TBD | Server | [Move repositories to the directory their UUID places them in](#move-repositories-to-the-directory-their-uuid-places-them-in) |
 
 ## Move a repository's Merkle nodes to LMDB
 
@@ -113,6 +114,18 @@ rm -rf "$SYNC_DIR/name_table"
 ```
 
 A workspace reads its repository's config, so it needs no change. If `NEW_NAMESPACE` already exists, `mv` puts `repo` inside it rather than renaming it, so pick a name that does not.
+
+## Move repositories to the directory their UUID places them in
+
+**Versions:** 0.61.0 to TBD. **Applies to:** server.
+
+`oxen-server` creates each repository at `$SYNC_DIR/repo/{uuid[0:2]}/{uuid[2:4]}/{repo_uuid}` and still serves the ones created earlier from `$SYNC_DIR/{namespace}/{name}`. A later release stops looking there, so move them while the server is stopped:
+
+```bash
+oxen-server place-repositories-by-uuid
+```
+
+It moves each repository whose config records its `repo_uuid`, removes a namespace directory once its last repository has moved out, and prints a line for every repository it leaves where it is, saying why and what to do about it. The usual reasons are a repository with no `[identity]` section, which the [identity backfill](#record-identity-for-repositories-that-predate-it) gives one, and a name missing from the name table, which `oxen-server seed-name-table` records. Fix those and run it again until it prints `every_repository_moved=true`. A repository that has moved is left alone, so running it again is safe.
 
 ## Maintaining this page
 
