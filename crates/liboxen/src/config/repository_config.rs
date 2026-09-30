@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::constants::DEFAULT_VNODE_SIZE;
-use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, Remote, RepoIdentity};
 use crate::storage::StorageConfig;
@@ -49,11 +49,9 @@ pub struct RepositoryConfig {
     /// Currently used only for remote mode
     pub workspace_name: Option<String>,
     pub workspaces: Option<Vec<String>>,
-    /// Which engine backs this repo's Merkle node store. The authoritative record of the repo's
-    /// backend: written at `init` and updated by the file ↔ LMDB migration. `None` for repos whose
-    /// config predates the field, which fall back to on-disk evidence — an FS node tree means
-    /// filesystem, an existing LMDB env means LMDB, and neither means filesystem (see
-    /// `create_merkle_node_store`).
+    /// Which engine backs this repo's Merkle node store. Always LMDB for a repo this build writes.
+    /// A repo recording `filesystem`, or recording nothing and holding a filesystem node tree, is
+    /// refused on load (see `create_merkle_node_store`).
     pub merkle_node_backend: Option<MerkleNodeBackend>,
     /// Who this repository is, independent of where it sits. `None` for repos created before the
     /// server recorded identity, which carry none until the backfill migration writes it.
@@ -63,10 +61,9 @@ pub struct RepositoryConfig {
 
 impl Default for RepositoryConfig {
     /// Default matches what `oxen init` writes to a fresh repo's `config.toml`: the current
-    /// repo-format version, the default vnode size, the default merkle node backend, and `None` for
+    /// repo-format version, the default vnode size, the LMDB merkle node backend, and `None` for
     /// every other per-repo override. A config *loaded* from disk that predates the
-    /// `merkle_node_backend` field deserializes it as `None` (not via this default), so the backend
-    /// is resolved from on-disk data — see `create_merkle_node_store`.
+    /// `merkle_node_backend` field deserializes it as `None` (not via this default).
     fn default() -> Self {
         RepositoryConfig {
             remote_name: None,
@@ -80,7 +77,7 @@ impl Default for RepositoryConfig {
             remote_mode: None,
             workspace_name: None,
             workspaces: None,
-            merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
+            merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
             identity: None,
         }
     }

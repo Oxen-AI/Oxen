@@ -715,6 +715,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::BadRequest().json(error_json)
                     }
+                    OxenError::MerkleNodesOnFilesystem(_) => {
+                        log::warn!("Repository still on the filesystem merkle node backend");
+                        let error_json = json!({
+                            "error": {
+                                "type": "merkle_nodes_on_filesystem",
+                                "title": "Retired Repository Storage Format",
+                                "detail": "This repository stores its Merkle nodes on the filesystem backend, which this server can no longer read. Migrate it to LMDB with Oxen 0.60.0.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
                     // Distinct from UnsupportedRepoVersion above: that one trusts the repo's
                     // declared min_version, which can disagree with the bytes actually on disk.
                     // This arm is reached when a node itself turns out to predate the format.
