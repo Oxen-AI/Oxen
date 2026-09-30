@@ -1,9 +1,10 @@
-//! Path-keyed registry of shared DuckDB connections: at most one live connection per file.
+//! Path-keyed registry of shared DuckDB connections: at most one live connection per file, until
+//! the file is forgotten.
 //!
-//! Opening a DuckDB file this process already has open yields a second, independent database
-//! rather than joining the first, and whichever instance folds its state into the file last
-//! discards the other's writes. Every caller for a path therefore shares one connection, behind a
-//! mutex that is also the lock on that data frame.
+//! Opening a DuckDB file this process already has open fails on Windows, and on Linux and macOS
+//! yields a second, independent database, where whichever instance folds its state into the file
+//! last discards the other's writes. Every caller for a path therefore shares one connection,
+//! behind a mutex that is also the lock on that data frame.
 //!
 //! A slot holds `None` while its connection is closed, which is how a caller holds a path against
 //! a reopen while doing filesystem work on its files, and how a connection closed for one query

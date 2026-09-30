@@ -2,12 +2,14 @@
 //!
 //! # One instance per database file
 //!
-//! Opening a DuckDB file this process already has open yields a second, independent database
-//! rather than joining the first: DuckDB's single-writer protection is a file lock, and a file lock
-//! only excludes other processes. Two instances diverge, and whichever folds its state into the
-//! file last is the one that survives, so the other's writes are gone while both callers were told
-//! they succeeded. That is true of any write, a lone `INSERT` included, so making a write atomic in
-//! SQL does not remove the need for the rule below.
+//! Opening a DuckDB file this process already has open never joins the first instance. On Windows
+//! the open fails, with "The process cannot access the file because it is being used by another
+//! process". On Linux and macOS it yields a second, independent database, since DuckDB's
+//! single-writer protection is a file lock and a file lock only excludes other processes. The two
+//! instances diverge, and whichever folds its state into the file last is the one that survives, so
+//! the other's writes are gone while both callers were told they succeeded. That is true of any
+//! write, a lone `INSERT` included, so making a write atomic in SQL does not remove the need for
+//! the rule below.
 //!
 //! The connection registry is what enforces it. Every access to a database file goes through
 //! [`with_df_db_manager`], whose slot is this process's one connection to that file behind a
@@ -15,7 +17,9 @@
 //! holds the slot weakly and keeps a bounded set of recently opened connections open beside it, so
 //! retention can drop a connection a caller is using without closing it. Filesystem work on a
 //! database's files goes through [`with_db_closed`], which closes the connection and holds the
-//! slot so nobody reopens the file underneath the work.
+//! slot so nobody reopens the file underneath the work. The one path that gives up the single
+//! connection is [`remove_df_db_from_cache_with_children`], for a tree being deleted: a caller
+//! arriving after it opens a fresh connection beside any a caller still holds.
 //!
 //! The mutex on the connection is therefore also the lock on the data frame. An operation that must
 //! be atomic against other operations on the same data frame (a check followed by a rebuild, a read
@@ -254,13 +258,11 @@ where
 {
     with_df_db_manager(db_path, |manager| {
         let mut slot = manager.df_db.lock();
-        // Checkpoint and close the read-write connection so the file has no open
-        // handle — some platforms won't open a second handle to it — then open the
-        // hardened read-only connection as the sole handle and query it while still
-        // holding the lock so a concurrent write can't open the file underneath us.
-        // Checkpointing first also spares the read-only connection a WAL replay,
-        // which can crash on sequence / default-column entries. The slot is left
-        // empty for the next caller to reopen.
+        // Checkpoint and close the read-write connection so the hardened read-only connection
+        // opened next is the file's only instance, and query it while still holding the lock so a
+        // concurrent write can't open the file underneath us. Checkpointing first also spares the
+        // read-only connection a WAL replay, which can crash on sequence / default-column entries.
+        // The slot is left empty for the next caller to reopen.
         if let Some(rw_conn) = slot.take() {
             rw_conn.execute_batch("CHECKPOINT")?;
         }
@@ -271,12 +273,11 @@ where
 
 /// Get a connection to a duckdb database.
 ///
-/// If the database has a stale or corrupt WAL file (e.g. from a prior crash or
-/// unclean LRU eviction), this function will attempt to recover by removing the
-/// WAL and retrying. If the retry still fails, the error is returned without
-/// touching the database file — open() can fail for reasons unrelated to the
-/// WAL (permissions, lock held by another process, etc.) and the caller is in
-/// a better position to decide whether re-indexing is appropriate.
+/// If the database has a stale or corrupt WAL file (e.g. from a prior crash), this function will
+/// attempt to recover by removing the WAL and retrying. If the retry still fails, the error is
+/// returned without touching the database file. open() can fail for reasons unrelated to the WAL
+/// (permissions, lock held by another process, etc.) and the caller is in a better position to
+/// decide whether re-indexing is appropriate.
 pub fn get_connection(path: &Path) -> Result<duckdb::Connection, DataFrameError> {
     log::debug!("get_connection: Opening new DuckDB connection for path: {path:?}");
 
@@ -327,8 +328,8 @@ pub fn get_connection(path: &Path) -> Result<duckdb::Connection, DataFrameError>
     Err(initial_err.into())
 }
 
-/// Flush any leftover WAL from a prior session so it cannot cause replay
-/// issues later (e.g. after a crash or LRU eviction).
+/// Flush any leftover WAL from a prior session so it cannot cause replay issues later (e.g. after a
+/// crash, or an exit without [`flush_all_df_db_connections`]).
 fn open_success(
     conn: duckdb::Connection,
     path: &Path,

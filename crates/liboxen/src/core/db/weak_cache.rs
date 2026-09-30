@@ -1,4 +1,5 @@
-//! Path-keyed registry of shared database handles: at most one live handle per path per process.
+//! Path-keyed registry of shared database handles: at most one live handle per path per process,
+//! until the path is forgotten.
 //!
 //! A handle lives as long as some caller holds the `Arc` that [`WeakDbCache::get_or_open`]
 //! returned or the keep-warm cache holds it, and closes when the last of those drops. The slot map
@@ -10,7 +11,8 @@
 //!
 //! [`WeakDbCache::forget`] and [`WeakDbCache::forget_prefix`] drop the warm handle along with the
 //! slot, so a caller that forgets a path before moving or deleting its directory leaves nothing
-//! holding the old files open.
+//! holding the old files open. A handle a caller still holds stays open past the forget, and the
+//! next opener for that path gets a second handle beside it.
 //!
 //! Opening runs under a per-path lock rather than the map lock, so an open for one path does not
 //! block callers of any other path. Two concurrent first-opens of the same path rendezvous on that
@@ -263,6 +265,15 @@ mod tests {
             opens.load(Ordering::SeqCst),
             4,
             "a failed open left the path unopenable"
+        );
+
+        let drained = cache.drain_warm();
+        let during_drain = cache.get_or_open(fresh, || counting_open(&opens)).unwrap();
+        assert!(
+            drained
+                .iter()
+                .any(|(p, handle)| p == fresh && Arc::ptr_eq(handle, &during_drain)),
+            "a lookup opened a second handle beside the one a drain still held"
         );
     }
 
