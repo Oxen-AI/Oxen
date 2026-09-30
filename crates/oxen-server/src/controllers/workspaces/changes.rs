@@ -235,8 +235,14 @@ pub async fn unstage_many(
         let staged_db = get_staged_db_manager(&pass_workspace.workspace_repo)?;
         let mut leftovers = vec![];
         for path in paths_to_remove {
-            if staged_db.read_from_staged_db(&path)?.is_none() {
-                continue;
+            match staged_db.read_from_staged_db(&path) {
+                Ok(Some(_)) => {}
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::error!(path = ?path, error = ?e, "Failed to read a staged entry");
+                    leftovers.push(Leftover::Failed(path));
+                    continue;
+                }
             }
             // This may not be in the commit if it's added, so have to parse tabular-ness from
             // the path.
@@ -279,7 +285,7 @@ pub async fn unstage_many(
 
 /// A staged path the blocking pass of `unstage_many` left unfinished, in request order.
 enum Leftover {
-    /// A file whose unstage failed.
+    /// A file whose staged entry could not be read, or whose unstage failed.
     Failed(PathBuf),
     /// A data frame, restored on the async side.
     DataFrame(PathBuf),
