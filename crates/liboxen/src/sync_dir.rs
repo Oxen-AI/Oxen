@@ -50,12 +50,10 @@ pub(crate) fn placed_repo_dir(sync_dir: &Path, repo_uuid: Uuid) -> PathBuf {
         .join(uuid)
 }
 
-/// Create the directory the repository `repo_uuid` is placed in under `sync_dir`, returning it,
-/// and making the repos dir and its marker first where they are missing.
-///
-/// # Errors
-/// [`OxenError::RepoUuidTaken`] when a repository is already placed by `repo_uuid`.
-pub(crate) fn create_placed_repo_dir(
+/// The directory the repository `repo_uuid` is placed in under `sync_dir`, with the repos dir, its
+/// marker, and the directory's parent made where they are missing. The directory itself is not
+/// made.
+pub(crate) fn prepare_placed_repo_dir(
     sync_dir: &Path,
     repo_uuid: Uuid,
 ) -> Result<PathBuf, OxenError> {
@@ -67,6 +65,19 @@ pub(crate) fn create_placed_repo_dir(
     if let Some(parent) = dir.parent() {
         create_dir_all(parent)?;
     }
+    Ok(dir)
+}
+
+/// Create the directory the repository `repo_uuid` is placed in under `sync_dir`, returning it,
+/// and making the repos dir and its marker first where they are missing.
+///
+/// # Errors
+/// [`OxenError::RepoUuidTaken`] when a repository is already placed by `repo_uuid`.
+pub(crate) fn create_placed_repo_dir(
+    sync_dir: &Path,
+    repo_uuid: Uuid,
+) -> Result<PathBuf, OxenError> {
+    let dir = prepare_placed_repo_dir(sync_dir, repo_uuid)?;
     match std::fs::create_dir(&dir) {
         Ok(()) => Ok(dir),
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {

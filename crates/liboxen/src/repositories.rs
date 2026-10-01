@@ -48,6 +48,7 @@ pub mod load;
 pub mod merge;
 pub mod metadata;
 pub mod name_table;
+pub mod placement;
 pub mod prune;
 pub mod pull;
 pub mod push;
@@ -1152,25 +1153,6 @@ mod tests {
         .await
     }
 
-    /// Create `namespace/name` in the legacy layout recording `identity`, the state a repository
-    /// created before placement by UUID is in.
-    fn legacy_repo(
-        sync_dir: &Path,
-        namespace: &str,
-        name: &str,
-        identity: RepoIdentity,
-    ) -> Result<LocalRepository, OxenError> {
-        let repo_dir = test::create_legacy_repo(sync_dir, namespace, name)?.path;
-        let config_path = util::fs::config_filepath(&repo_dir);
-        let mut config = RepositoryConfig::from_file(&config_path)?;
-        if let Some((namespace, name, repo_uuid)) = identity.held_name() {
-            NameTable::new(sync_dir).claim(&namespace, &name, repo_uuid)?;
-        }
-        config.identity = Some(identity);
-        config.save(&config_path)?;
-        LocalRepository::from_dir(&repo_dir)
-    }
-
     /// Create `ox/cats` with `identity`, then move it to `bessie`.
     async fn transferred(
         sync_dir: &Path,
@@ -1242,7 +1224,8 @@ mod tests {
     async fn test_transfer_namespace_leaves_the_hint_alone_when_the_move_cannot_start()
     -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = legacy_repo(&sync_dir, "ox", "cats", RepoIdentity::minted("ox", "cats"))?;
+            let identity = RepoIdentity::minted("ox", "cats");
+            let repo = test::create_legacy_repo_with_identity(&sync_dir, "ox", "cats", identity)?;
             let repo_uuid = repo.repo_uuid().expect("a server identity carries a UUID");
             let repo_path = repo.path.clone();
             drop(repo);
