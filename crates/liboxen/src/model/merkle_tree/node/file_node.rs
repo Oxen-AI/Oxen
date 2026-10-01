@@ -40,6 +40,7 @@ pub trait TFileNode {
     fn set_last_commit_id(&mut self, last_commit_id: &MerkleHash);
     fn last_modified_seconds(&self) -> i64;
     fn last_modified_nanoseconds(&self) -> u32;
+    fn set_last_modified(&mut self, seconds: i64, nanoseconds: u32);
     fn data_type(&self) -> &EntryDataType;
     fn metadata(&self) -> Option<GenericMetadata>;
     fn get_mut_metadata(&mut self) -> &mut Option<GenericMetadata>;
@@ -168,6 +169,10 @@ impl FileNode {
 
     pub fn last_modified_nanoseconds(&self) -> u32 {
         self.node().last_modified_nanoseconds()
+    }
+
+    pub fn set_last_modified(&mut self, seconds: i64, nanoseconds: u32) {
+        self.mut_node().set_last_modified(seconds, nanoseconds);
     }
 
     pub fn data_type(&self) -> &EntryDataType {

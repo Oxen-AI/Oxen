@@ -30,7 +30,7 @@ use filetime::FileTime;
 use indicatif::ProgressBar;
 
 // Serializes commits of the same workspace so two concurrent commits can't
-// tear each other's data-frame export mid-read or wipe the shared staged db.
+// tear each other's data-frame export mid-read or both commit the same staged entries.
 // Keyed by the workspace repo path; in-process, and entries are dropped once
 // no commit holds or waits on the lock.
 static COMMIT_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
@@ -106,14 +106,15 @@ async fn commit_inner(
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
 
     log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
-    let commit = {
+    let (commit, staged_snapshot) = {
         let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
 
         // Read all the staged entries
-        let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &commit_progress_bar,
-        )?;
+        let (dir_entries, staged_snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+            .read_staged_entries_for_commit(&commit_progress_bar)?;
+
+        #[cfg(test)]
+        tests::pause_after_staged_read(&workspace.workspace_repo.path).await;
 
         let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
         if !conflicts.is_empty() {
@@ -122,18 +123,20 @@ async fn commit_inner(
 
         let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
 
-        repositories::commits::commit_writer::commit_dir_entries(
+        let commit = repositories::commits::commit_writer::commit_dir_entries(
             &workspace.base_repo,
             dir_entries,
             new_commit,
             branch_name,
-        )?
+        )?;
+        (commit, staged_snapshot)
     };
 
-    // Clear through the shared handle rather than dropping it and removing the directory: the next
-    // reader's open would collide with RocksDB's per-directory LOCK until the last holder finishes.
-    log::debug!("Clearing staged db: {staged_db_path:?}");
-    get_staged_db_manager(&workspace.workspace_repo)?.clear()?;
+    // Unstage through the shared handle rather than dropping it and removing the directory: the
+    // next reader's open would collide with RocksDB's per-directory LOCK until the last holder
+    // finishes. Anything staged or restaged since the read stays for the next commit.
+    log::debug!("Unstaging committed entries: {staged_db_path:?}");
+    get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&staged_snapshot)?;
 
     // DEBUG
     // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
@@ -537,6 +540,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn test_commit_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
@@ -600,9 +604,9 @@ mod tests {
                 message: "concurrent commit two".to_string(),
             };
 
-            // Without the per-workspace lock these interleave: one commit
-            // wipes the staged db (or rewrites the data-frame exports) while
-            // the other is mid-commit. With the lock they serialize: the
+            // Without the per-workspace lock these interleave: both commit
+            // the same staged entries (or rewrite each other's data-frame
+            // exports). With the lock they serialize: the
             // first to acquire commits everything staged, the second finds a
             // clean staged db and reports "No changes to commit".
             let (result_one, result_two) = tokio::join!(
@@ -630,8 +634,112 @@ mod tests {
                 );
             }
 
+            // A file staged, or a staged file uploaded again, after a commit has read the staged
+            // entries is not part of that commit and stays staged for the next one.
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            let stage = |name: &'static str, content: &'static str| {
+                let workspace = &workspace;
+                async move {
+                    let path = workspace.workspace_repo.path.join(name);
+                    util::fs::write_to_path(&path, content)?;
+                    repositories::workspaces::files::add(workspace, &path).await
+                }
+            };
+            let reuploaded = Path::new("uploads/reuploaded.txt");
+            let staged_mid_commit = Path::new("uploads/staged_mid_commit.txt");
+            stage("uploads/reuploaded.txt", "first upload").await?;
+
+            let (reached, resume) = pause_commit_after_staged_read(&workspace.workspace_repo.path);
+            let stage_mid_commit = async {
+                reached
+                    .await
+                    .expect("the commit should reach the pause after reading staged entries");
+                stage("uploads/staged_mid_commit.txt", "staged mid-commit").await?;
+                stage("uploads/reuploaded.txt", "second upload").await?;
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let (paused_commit, staged) =
+                tokio::join!(commit(&workspace, &body_one, "main"), stage_mid_commit);
+            let paused_commit = paused_commit?;
+            staged?;
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &paused_commit, staged_mid_commit)?
+                    .is_none(),
+                "a file staged after the commit's read should not be in it, or this test no \
+                 longer stages inside the window between the commit's read and its unstaging"
+            );
+            let first_upload =
+                repositories::tree::get_file_by_path(&repo, &paused_commit, reuploaded)?
+                    .expect("the paused commit should carry the upload it read");
+
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            let next_commit = commit(&workspace, &body_two, "main").await?;
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &next_commit, staged_mid_commit)?
+                    .is_some(),
+                "the next commit should carry the file staged mid-commit"
+            );
+            let second_upload =
+                repositories::tree::get_file_by_path(&repo, &next_commit, reuploaded)?
+                    .expect("the next commit should carry the reuploaded file");
+            assert_eq!(
+                second_upload.hash().to_u128(),
+                util::hasher::u128_hash_file_contents(
+                    &workspace.workspace_repo.path.join(reuploaded)
+                )?,
+                "the next commit should carry the second upload"
+            );
+            assert_ne!(
+                first_upload.hash(),
+                second_upload.hash(),
+                "the paused commit should carry the first upload"
+            );
+
             Ok(())
         })
         .await
+    }
+
+    type PauseHandles = (oneshot::Sender<()>, oneshot::Receiver<()>);
+
+    // Pauses installed by `pause_commit_after_staged_read`, keyed by workspace repo path so a
+    // pause only ever stops the commit of the workspace that installed it.
+    static PAUSES: LazyLock<StdMutex<HashMap<PathBuf, PauseHandles>>> =
+        LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+    /// Called by `commit_inner` once it has read the staged entries. If a pause is installed for
+    /// this workspace, signals that the read happened and waits to be resumed. One-shot.
+    pub(super) async fn pause_after_staged_read(workspace_path: &Path) {
+        let pause = PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .remove(workspace_path);
+        if let Some((reached, resume)) = pause {
+            reached
+                .send(())
+                .expect("the test waiting on the pause should still be listening");
+            resume
+                .await
+                .expect("the test should resume the paused commit");
+        }
+    }
+
+    /// Makes the next commit of the workspace at `workspace_path` pause after reading its staged
+    /// entries. Returns a receiver that fires once it pauses and a sender that resumes it.
+    fn pause_commit_after_staged_read(
+        workspace_path: &Path,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .insert(workspace_path.to_path_buf(), (reached_tx, resume_rx));
+        (reached_rx, resume_tx)
     }
 }

@@ -177,7 +177,7 @@ utoipa-swagger-ui = { version = "10", features = ["actix-web"] }
 uuid = { version = "1.26.0", features = ["serde", "v4"] }
 video-rs = { version = "0.12", features = ["ndarray"] }
 walkdir = "2.5.0"
-xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [profile.dev]

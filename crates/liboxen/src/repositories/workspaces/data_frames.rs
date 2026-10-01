@@ -488,6 +488,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::SystemTime;
 
+    use indicatif::ProgressBar;
     use serde_json::json;
 
     use super::*;
@@ -655,6 +656,21 @@ mod tests {
             // The staged table has the original 6 rows plus the appended one
             let count = workspaces::data_frames::count(&workspace, &file_path)?;
             assert_eq!(count, 7);
+
+            // A row added while a commit runs leaves the data frame staged once that commit
+            // removes the entries it read.
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            let (_, snapshot) =
+                staged_db_manager.read_staged_entries_for_commit(&ProgressBar::hidden())?;
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            staged_db_manager.remove_unchanged(&snapshot)?;
+            drop(staged_db_manager);
+            let status = workspaces::status::status(&workspace)?;
+            assert_eq!(
+                status.staged_files.len(),
+                1,
+                "a row edit after the snapshot keeps the data frame staged"
+            );
 
             Ok(())
         })
@@ -2455,11 +2471,19 @@ mod tests {
                 new_name: Some("my col 2".to_string()),
                 new_data_type: None,
             };
+            let (_, snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_staged_entries_for_commit(&ProgressBar::hidden())?;
             let df =
                 workspaces::data_frames::columns::update(&repo, &workspace, &file_path, &rename)
                     .await?;
             assert!(df.column("my col 2").is_ok());
             assert!(df.column("my col").is_err());
+            get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&snapshot)?;
+            assert_eq!(
+                workspaces::status::status(&workspace)?.staged_files.len(),
+                1,
+                "a column rename while a commit runs leaves the data frame staged"
+            );
 
             // The renamed column must be usable through the row paths too:
             // append a row with a value in it, then edit that value.
