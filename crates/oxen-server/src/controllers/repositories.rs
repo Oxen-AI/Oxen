@@ -462,9 +462,6 @@ async fn create_repo_response(
             name: data.repo_name.clone(),
         }),
     };
-    if identity.is_none() {
-        log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
-    }
 
     match repositories::create(&app_data.path, data, identity, app_data.config.storage.s3()).await {
         Ok(repo) => {
@@ -507,6 +504,12 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             log::debug!("Repo already exists: {path:?}");
             HttpResponse::Conflict().json(StatusMessage::error("Repo already exists."))
         }
+        OxenError::RepoUuidTaken(repo_uuid) => {
+            tracing::warn!(%repo_uuid, "Refused a create whose repository UUID is already in use");
+            HttpResponse::Conflict().json(StatusMessage::error(format!(
+                "Repository UUID {repo_uuid} is already in use."
+            )))
+        }
         OxenError::InvalidRepoName(name) => {
             log::debug!("Invalid repo name: {name}");
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
@@ -518,12 +521,6 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
                 "Invalid namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}"
             )))
-        }
-        OxenError::S3RepoWithoutIdentity(path) => {
-            log::warn!("Refused an S3 repository with no repo_uuid: {path:?}");
-            HttpResponse::BadRequest().json(StatusMessage::error(
-                "An S3-backed repository needs a repo_uuid.",
-            ))
         }
         err => {
             log::error!("Err repositories::create: {err:?}");
@@ -1046,7 +1043,13 @@ mod tests {
             .expect("create should succeed");
         assert_eq!(resp.status(), http::StatusCode::OK);
 
-        let repo_dir = sync_dir.join(&namespace).join(repo_uuid.to_string());
+        let repo_dir =
+            repositories::resolve_repo_dir(&sync_dir, &namespace, &repo_uuid.to_string())?
+                .expect("the created repository resolves");
+        assert!(
+            repo_dir.starts_with(sync_dir.join("repo")),
+            "a repository with a UUID is placed by it, at {repo_dir:?}"
+        );
         let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?
             .identity
             .expect("create records identity");
@@ -1076,6 +1079,25 @@ mod tests {
             "a refused create leaves the name with the repository that holds it"
         );
 
+        // Names of its own under the first create's UUID.
+        let mut same_uuid = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
+        same_uuid.repo_uuid = Some(repo_uuid);
+        same_uuid.namespace_name = Some("bessie".to_string());
+        same_uuid.repo_name = Some("dogs".to_string());
+        let resp = super::create_repo_response(&app_data, same_uuid)
+            .await
+            .expect("the handler reports the conflict rather than failing");
+        assert_eq!(
+            resp.status(),
+            http::StatusCode::CONFLICT,
+            "a UUID another repository is placed by is refused"
+        );
+        assert_eq!(
+            NameTable::new(&sync_dir).get("bessie", "dogs")?,
+            None,
+            "a create refused for its UUID gives its name back"
+        );
+
         // The first create over again, UUID and names alike, which is what a control plane sends
         // when it repeats one whose outcome it did not see.
         let mut repeated = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
@@ -1096,10 +1118,10 @@ mod tests {
         Ok(())
     }
 
-    /// A control plane that states no UUID gets no identity, even where the name position holds
+    /// A control plane that sends no UUID gets no repository, even where the name position holds
     /// one: a repository named like a UUID must not be able to choose its own storage identity.
     #[actix_web::test]
-    async fn test_create_records_no_identity_without_a_stated_repo_uuid() -> Result<(), OxenError> {
+    async fn test_create_refuses_a_create_without_a_repo_uuid() -> Result<(), OxenError> {
         let sync_dir = test::get_sync_dir()?;
         let app_data = OxenAppData {
             path: sync_dir.clone(),
@@ -1117,14 +1139,11 @@ mod tests {
 
         let resp = super::create_repo_response(&app_data, data)
             .await
-            .expect("create should succeed");
-        assert_eq!(resp.status(), http::StatusCode::OK);
-
-        let repo_dir = sync_dir.join(&namespace).join(in_name_position.to_string());
-        let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?;
+            .expect("the create is answered");
+        assert_eq!(resp.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            config.identity.is_none(),
-            "the name position must not become the repository's identity"
+            std::fs::read_dir(&sync_dir)?.next().is_none(),
+            "the name position must not become the repository's identity, so nothing is created"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;

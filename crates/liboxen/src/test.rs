@@ -143,6 +143,16 @@ pub fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError>
     create_prefixed_dir(base_dir, "repo")
 }
 
+/// Create a repository at `{namespace}/{name}` under `sync_dir` recording no identity, where every
+/// repository created before placement by UUID sits.
+pub fn create_legacy_repo(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+) -> Result<LocalRepository, OxenError> {
+    repositories::init(sync_dir.join(namespace).join(name))
+}
+
 fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     create_prefixed_dir(base_dir, "dir")
 }
