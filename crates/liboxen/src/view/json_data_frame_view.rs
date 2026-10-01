@@ -6,6 +6,7 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use tokio::task;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
@@ -158,13 +159,16 @@ impl JsonDataFrameView {
         let mut slice_schema = Schema::from_polars(sliced_df.schema());
         slice_schema.update_metadata_from_schema(&og_schema);
 
+        let data =
+            task::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
+
         Ok(JsonDataFrameView {
             schema: slice_schema,
             size: DataFrameSize {
                 height: full_height,
                 width: full_width,
             },
-            data: JsonDataFrameView::json_from_df(&mut sliced_df),
+            data,
             pagination: Pagination {
                 page_number: page,
                 page_size,
@@ -209,13 +213,16 @@ impl JsonDataFrameView {
 
         let total_pages = (og_height as f64 / page_size as f64).ceil() as usize;
 
+        let data =
+            task::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
+
         Ok(JsonDataFrameView {
             schema: slice_schema,
             size: DataFrameSize {
                 height: view_height,
                 width: full_width,
             },
-            data: JsonDataFrameView::json_from_df(&mut sliced_df),
+            data,
             pagination: Pagination {
                 page_number,
                 page_size,
