@@ -64,7 +64,8 @@ pub async fn commit(
     let lock_key = workspace.workspace_repo.path.clone();
     let lock = commit_lock_for(&lock_key);
     let result = {
-        let guard = Arc::clone(&lock).lock_owned().await;
+        // Each blocking task holds a clone, so the lock outlives a caller that stops waiting.
+        let guard = Arc::new(Arc::clone(&lock).lock_owned().await);
         commit_inner(workspace, new_commit, branch_name.as_ref(), guard).await
     };
     drop(lock);
@@ -89,13 +90,18 @@ async fn commit_inner(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: &str,
-    commit_guard: OwnedMutexGuard<()>,
+    commit_guard: Arc<OwnedMutexGuard<()>>,
 ) -> Result<Commit, OxenError> {
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
     log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
     let (dir_entries, staged_snapshot) = {
-        let (workspace, branch_name) = (workspace.clone(), branch_name.to_string());
+        let (workspace, branch_name, commit_guard) = (
+            workspace.clone(),
+            branch_name.to_string(),
+            Arc::clone(&commit_guard),
+        );
         tokio::task::spawn_blocking(move || {
+            let _commit_guard = commit_guard;
             let repo = &workspace.base_repo;
             let branch = match repositories::branches::get_by_name(repo, &branch_name) {
                 Ok(branch) => branch,
@@ -125,7 +131,7 @@ async fn commit_inner(
     #[cfg(test)]
     tests::pause_after_staged_read(&workspace.workspace_repo.path).await;
 
-    let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
+    let dir_entries = export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
 
     let (workspace, new_commit, branch_name) = (
         workspace.clone(),
@@ -315,6 +321,7 @@ fn list_conflicts(
 async fn export_tabular_data_frames(
     workspace: &Workspace,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+    commit_guard: &Arc<OwnedMutexGuard<()>>,
 ) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
     // Export all the workspace data frames and add them to the commit
     let mut new_dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -385,9 +392,14 @@ async fn export_tabular_data_frames(
                         );
 
                         let exported_path = {
-                            let (workspace, dir_path, file_node) =
-                                (workspace.clone(), dir_path.clone(), file_node.clone());
+                            let (workspace, dir_path, file_node, commit_guard) = (
+                                workspace.clone(),
+                                dir_path.clone(),
+                                file_node.clone(),
+                                Arc::clone(commit_guard),
+                            );
                             tokio::task::spawn_blocking(move || {
+                                let _commit_guard = commit_guard;
                                 workspaces::data_frames::extract_file_node_to_working_dir(
                                     &workspace, &dir_path, &file_node,
                                 )
