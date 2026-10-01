@@ -1,4 +1,5 @@
 use bytes::BytesMut;
+use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
@@ -1044,6 +1045,10 @@ fn p_modify_file(
         return Err(OxenError::basic_str("file not found in head commit"));
     };
     file_node.set_name(path.to_str().unwrap());
+    // Stamping each edit's time changes the staged node, so a commit that read it before this edit
+    // leaves the path staged for the next commit.
+    let edited_at = FileTime::now();
+    file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
     log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;

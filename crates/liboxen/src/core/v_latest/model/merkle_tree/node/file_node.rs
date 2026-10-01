@@ -110,6 +110,11 @@ impl TFileNode for FileNodeData {
         self.last_modified_nanoseconds
     }
 
+    fn set_last_modified(&mut self, seconds: i64, nanoseconds: u32) {
+        self.last_modified_seconds = seconds;
+        self.last_modified_nanoseconds = nanoseconds;
+    }
+
     fn data_type(&self) -> &EntryDataType {
         &self.data_type
     }

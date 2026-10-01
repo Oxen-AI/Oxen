@@ -10,12 +10,11 @@ use std::thread::sleep;
 use indicatif::ProgressBar;
 use parking_lot::{Mutex, RwLock};
 use rmp_serde::Serializer;
-use rocksdb::{DB, IteratorMode};
+use rocksdb::{DB, IteratorMode, WriteBatch};
 use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
 use crate::core::db;
-use crate::core::db::key_val::kv_db;
 use crate::core::db::weak_cache::WeakDbCache;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -39,7 +38,7 @@ static STAGED_DBS: LazyLock<WeakDbCache<RwLock<DB>>> =
 
 /// Closes this repository's staged DB so its directory can be removed, blocking briefly while
 /// other callers drop their handles. Callers that only want the entries gone want
-/// [`StagedDBManager::clear`], which keeps the shared handle open.
+/// [`StagedDBManager::remove_unchanged`], which keeps the shared handle open.
 ///
 /// Errors when a handle is still open once the wait runs out, keeping the registry entry so later
 /// callers go on sharing that handle. Leave the directory in place until a later close succeeds.
@@ -67,6 +66,9 @@ pub fn remove_from_cache_with_children(repository_path: impl AsRef<Path>) -> Res
     STAGED_DBS.forget_prefix(repository_path.as_ref());
     Ok(())
 }
+
+/// The staged entries one read saw, as each key and a hash of the value stored under it.
+pub(crate) struct StagedSnapshot(HashMap<String, u128>);
 
 #[derive(Clone)]
 pub struct StagedDBManager {
@@ -302,10 +304,30 @@ impl StagedDBManager {
         self.delete_entry_with_lock(path, None)
     }
 
-    /// Delete every staged entry, leaving the staged db open and shared with other callers.
-    /// A concurrent reader sees either the full set of entries or none of them.
-    pub(crate) fn clear(&self) -> Result<(), OxenError> {
-        kv_db::clear(&self.staged_db.write())
+    /// Delete each entry in `snapshot` whose staged value is still the one the snapshot read,
+    /// keeping any entry staged or restaged since then along with the directory entries above it.
+    /// A concurrent reader sees either all of the deletions or none of them.
+    pub(crate) fn remove_unchanged(&self, snapshot: &StagedSnapshot) -> Result<(), OxenError> {
+        let db = self.staged_db.write();
+        let mut unchanged = Vec::new();
+        let mut kept_ancestors = HashSet::new();
+        for item in db.iterator(IteratorMode::Start) {
+            let (key, value) = item?;
+            let key = str::from_utf8(&key).map_err(|e| OxenError::basic_str(e.to_string()))?;
+            if snapshot.0.get(key) == Some(&util::hasher::hash_buffer_128bit(&value)) {
+                unchanged.push(key.to_string());
+            } else {
+                kept_ancestors.extend(Path::new(key).ancestors().skip(1).map(Path::to_path_buf));
+            }
+        }
+        let mut batch = WriteBatch::default();
+        for key in unchanged {
+            if !kept_ancestors.contains(Path::new(&key)) {
+                batch.delete(key);
+            }
+        }
+        db.write(batch)?;
+        Ok(())
     }
 
     /// Write a directory node to the staged db
@@ -397,9 +419,33 @@ impl StagedDBManager {
         start_path: impl AsRef<Path>,
         read_progress: &ProgressBar,
     ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
+        self.read_entries_below_path(start_path.as_ref(), read_progress, |_, _| {})
+    }
+
+    /// Read every staged entry, with a [`StagedSnapshot`] taken in the same read. Passing it to
+    /// [`Self::remove_unchanged`] once the entries are committed removes exactly what was read,
+    /// including undecodable entries that could never be committed.
+    pub(crate) fn read_staged_entries_for_commit(
+        &self,
+        read_progress: &ProgressBar,
+    ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, StagedSnapshot), OxenError> {
+        let mut snapshot = HashMap::new();
+        let (dir_entries, _) =
+            self.read_entries_below_path(Path::new(""), read_progress, |key, value| {
+                snapshot.insert(key.to_string(), util::hasher::hash_buffer_128bit(value));
+            })?;
+        Ok((dir_entries, StagedSnapshot(snapshot)))
+    }
+
+    /// Read all entries below a path, calling `on_read` with each one's key and stored value.
+    fn read_entries_below_path(
+        &self,
+        start_path: &Path,
+        read_progress: &ProgressBar,
+        mut on_read: impl FnMut(&str, &[u8]),
+    ) -> Result<(HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, usize), OxenError> {
         let db = self.staged_db.read();
-        let start_path =
-            util::fs::path_relative_to_dir(start_path.as_ref(), &self.repository.path)?;
+        let start_path = util::fs::path_relative_to_dir(start_path, &self.repository.path)?;
         let mut total_entries = 0;
         let iter = db.iterator(IteratorMode::Start);
         let mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -414,6 +460,7 @@ impl StagedDBManager {
                     if !path.starts_with(&start_path) {
                         continue;
                     }
+                    on_read(key, &value);
 
                     // Older versions may have a corrupted StagedMerkleTreeNode that was staged
                     // Ignore these when reading the staged db
