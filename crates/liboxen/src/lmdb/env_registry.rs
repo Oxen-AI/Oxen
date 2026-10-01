@@ -22,6 +22,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use bytesize::ByteSize;
+use heed::env_closing_event;
 use parking_lot::{Mutex, RwLock};
 
 use super::lmdb_env::{LmdbEnv, open_lmdb_env};
@@ -111,6 +112,16 @@ impl LmdbEnvRegistry {
         self.lookup(path).is_some()
     }
 
+    /// Whether an env at `dir` or anywhere under it is currently live or still closing. Waits out
+    /// a close heed has in progress.
+    pub(in crate::lmdb) fn is_live_under(&self, dir: &Path) -> bool {
+        let dir = canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        self.slots
+            .read()
+            .iter()
+            .any(|(path, env)| path.starts_with(&dir) && is_open(path, env))
+    }
+
     fn lookup(&self, path: &Path) -> Option<Arc<LmdbEnv>> {
         let slots = self.slots.read();
         if let Some(handle) = lookup_key(&slots, path) {
@@ -134,9 +145,10 @@ impl LmdbEnvRegistry {
         let key = canonicalize(reported).unwrap_or_else(|_| reported.to_path_buf());
         let mut slots = self.slots.write();
         slots.insert(key, Arc::downgrade(handle));
-        // Prune dead weak entries so the map does not accumulate tombstones. The entry just
-        // inserted is live (we hold `handle`), so it survives the sweep.
-        slots.retain(|_, weak| weak.strong_count() > 0);
+        // Prune closed entries so the map does not accumulate tombstones. An entry heed is still
+        // closing stays, so `is_live_under` sees it. The entry just inserted is live (we hold
+        // `handle`), so it survives the sweep.
+        slots.retain(|path, weak| is_open(path, weak));
     }
 }
 
@@ -163,8 +175,20 @@ pub fn shared_env_is_live(dir: &Path) -> bool {
     SHARED_REGISTRY.is_live(dir)
 }
 
+/// Whether an env at `dir` or anywhere under it is currently live in the process-global registry,
+/// the precondition check before renaming a directory that may hold several envs.
+pub(crate) fn shared_env_is_live_under(dir: &Path) -> bool {
+    SHARED_REGISTRY.is_live_under(dir)
+}
+
 fn lookup_key(slots: &HashMap<PathBuf, Weak<LmdbEnv>>, key: &Path) -> Option<Arc<LmdbEnv>> {
     slots.get(key)?.upgrade()
+}
+
+/// Whether the env at `path` is held by an `Arc`, or heed has not finished closing it since the
+/// last one dropped.
+fn is_open(path: &Path, env: &Weak<LmdbEnv>) -> bool {
+    env.strong_count() > 0 || env_closing_event(path).is_some()
 }
 
 #[cfg(test)]
@@ -236,7 +260,8 @@ mod tests {
     }
 
     /// `is_live` reflects whether an external `Arc` is still outstanding, and resolves both the
-    /// exact and canonical spelling of the path.
+    /// exact and canonical spelling of the path. `is_live_under` also counts an env heed has not
+    /// closed yet.
     #[test]
     fn is_live_tracks_external_holders() {
         let registry = test_registry();
@@ -251,8 +276,25 @@ mod tests {
             registry.is_live(&alias),
             "liveness resolves a non-canonical spelling too"
         );
+        assert!(
+            registry.is_live_under(dir.path()),
+            "an open env is live under its parent"
+        );
+
+        // A clone of heed's handle keeps the env open after the last `Arc` drops, as a close still
+        // in progress does.
+        let unclosed = LmdbEnv::clone(&handle);
         drop(handle);
         assert!(!registry.is_live(&store), "closed env is not live");
+        assert!(
+            registry.is_live_under(dir.path()),
+            "an env heed has not closed is still live under its parent"
+        );
+        drop(unclosed);
+        assert!(
+            !registry.is_live_under(dir.path()),
+            "an env heed has closed is not live under its parent"
+        );
     }
 
     /// `open_shared_env` rendezvouses on one env per path through the process-global registry, and
