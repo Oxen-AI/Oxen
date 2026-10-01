@@ -522,6 +522,7 @@ mod tests {
             "the names are recorded for the repository where it moved to"
         );
 
+        drop(table);
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
