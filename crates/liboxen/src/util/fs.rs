@@ -1678,6 +1678,20 @@ pub fn is_oxen_hidden_dir_name(name: &OsStr) -> bool {
     name.eq_ignore_ascii_case(OXEN_HIDDEN_DIR) || is_short_name
 }
 
+/// The on-disk location under `root` of a path taken from a commit's tree. `path` may be relative
+/// to `root` or already joined onto it.
+///
+/// # Errors
+/// [`OxenError::InvalidTreePath`] when the path is outside `root` or [`normalize_relative_path`]
+/// refuses what it names under `root`.
+pub(crate) fn working_tree_path(root: &Path, path: &Path) -> Result<PathBuf, OxenError> {
+    let joined = root.join(path);
+    match joined.strip_prefix(root) {
+        Ok(relative) if normalize_relative_path(relative).is_ok() => Ok(joined),
+        _ => Err(OxenError::InvalidTreePath(path.into())),
+    }
+}
+
 /// [`normalize_relative_path`], refusing a path that normalizes to empty as well.
 ///
 /// # Errors
@@ -1768,6 +1782,29 @@ mod tests {
     use crate::util;
 
     use std::path::Path;
+
+    #[test]
+    fn test_working_tree_path_stays_in_the_working_tree() {
+        let root = &std::env::temp_dir().join("repo");
+        assert_eq!(
+            util::fs::working_tree_path(root, Path::new("a/b.txt")).unwrap(),
+            root.join("a/b.txt")
+        );
+        assert_eq!(
+            util::fs::working_tree_path(root, &root.join("a/b.txt")).unwrap(),
+            root.join("a/b.txt"),
+            "a path already joined onto the root is accepted"
+        );
+        for refused in ["a/../../outside.txt", "/outside.txt", "a/.OXEN/HEAD"] {
+            assert!(
+                matches!(
+                    util::fs::working_tree_path(root, Path::new(refused)),
+                    Err(OxenError::InvalidTreePath(_))
+                ),
+                "{refused} is refused"
+            );
+        }
+    }
 
     #[test]
     fn test_normalize_relative_path() {

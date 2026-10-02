@@ -825,6 +825,10 @@ pub async fn download_entries_to_working_dir(
         return Ok(());
     }
 
+    for entry in entries {
+        util::fs::working_tree_path(dst, &entry.path)?;
+    }
+
     let missing_entries = get_missing_entries_for_download(entries, dst);
     log::debug!("Pulling {} missing entries", missing_entries.len());
 

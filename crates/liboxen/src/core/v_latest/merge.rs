@@ -823,7 +823,10 @@ async fn walk_base_dir<'a>(
                 // Only consider paths in HEAD that aren't also in the merge tree — those are
                 // the deletions to apply.
                 if !merge_files.contains(&file_path) {
-                    let full_path = repo.path.join(&file_path);
+                    let Ok(full_path) = util::fs::working_tree_path(&repo.path, &file_path) else {
+                        log::warn!("Leaving an invalid tree path untouched: {file_path:?}");
+                        continue;
+                    };
                     if full_path.exists() {
                         if is_resume
                             || restore::should_restore_file(repo, None, base_file_node, &file_path)
