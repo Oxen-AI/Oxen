@@ -191,6 +191,31 @@ mod tests {
                 zip.finish().unwrap();
             }
 
+            let oxen_entry_zip_path = temp_dir.path().join("oxen_entry.zip");
+            {
+                let zip_file = std::fs::File::create(&oxen_entry_zip_path)?;
+                let mut zip = zip::ZipWriter::new(&zip_file);
+
+                let options: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+                zip.start_file("image1.png", options).unwrap();
+                zip.write_all(b"fake png data 1")?;
+                zip.start_file(".OXEN/config.toml", options).unwrap();
+                zip.write_all(b"not a config")?;
+                zip.finish().unwrap();
+            }
+            let refused = api::client::import::upload_zip(
+                &remote_repo,
+                branch_name,
+                "",
+                &oxen_entry_zip_path,
+                "Test User",
+                "test@oxen.ai",
+                Some("Upload a ZIP with a .oxen entry"),
+            )
+            .await;
+            let err = refused.expect_err("an archive with an entry inside .oxen is refused");
+            assert!(err.to_string().contains(".oxen directory"), "{err}");
+
             // Upload the ZIP
             let result = api::client::import::upload_zip(
                 &remote_repo,

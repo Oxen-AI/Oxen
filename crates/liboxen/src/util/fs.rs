@@ -12,6 +12,7 @@ use jwalk::WalkDir;
 
 use simdutf8::compat::from_utf8;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
@@ -1629,7 +1630,8 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
 }
 
 /// Normalizes an untrusted path relative to a repository root: `.` components collapse, and a path
-/// that is absolute or has a `..` or drive component is refused. The result may be empty.
+/// that is absolute, has a `..` or drive component, or passes through a `.oxen` directory (see
+/// [`is_oxen_hidden_dir_name`]) is refused. The result may be empty.
 ///
 /// # Errors
 /// [`OxenError::PathOutsideWorkingTree`] when the path is refused.
@@ -1638,6 +1640,9 @@ pub fn normalize_relative_path(path: &Path) -> Result<PathBuf, OxenError> {
     for component in path.components() {
         let reason = match component {
             Component::CurDir => continue,
+            Component::Normal(segment) if is_oxen_hidden_dir_name(segment) => {
+                "it is inside a .oxen directory"
+            }
             Component::Normal(segment) => {
                 normalized.push(segment);
                 continue;
@@ -1651,6 +1656,26 @@ pub fn normalize_relative_path(path: &Path) -> Result<PathBuf, OxenError> {
         });
     }
     Ok(normalized)
+}
+
+/// Whether a path component names the `.oxen` directory on any filesystem Oxen runs on: compared
+/// without regard to ASCII case, ignoring the `:stream` suffix and trailing dots and spaces Windows
+/// discards, and counting the NTFS short name `OXEN~<n>`.
+pub fn is_oxen_hidden_dir_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let name = name
+        .split_once(':')
+        .map_or(name, |(before_stream, _)| before_stream)
+        .trim_end_matches(['.', ' ']);
+    let is_short_name = name
+        .get(..5)
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("oxen~"))
+        && name
+            .get(5..)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    name.eq_ignore_ascii_case(OXEN_HIDDEN_DIR) || is_short_name
 }
 
 /// [`normalize_relative_path`], refusing a path that normalizes to empty as well.
@@ -1754,7 +1779,20 @@ mod tests {
             util::fs::normalize_relative_path(Path::new("")).unwrap(),
             Path::new("")
         );
-        for refused in ["../../outside.txt", "a/../b", "/tmp/outside.txt"] {
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("data/.oxenignore")).unwrap(),
+            Path::new("data/.oxenignore")
+        );
+        for refused in [
+            "../../outside.txt",
+            "a/../b",
+            "/tmp/outside.txt",
+            ".oxen/config.toml",
+            "data/.OXEN/HEAD",
+            ".Oxen./config.toml",
+            ".oxen::$INDEX_ALLOCATION/config.toml",
+            "OXEN~1/config.toml",
+        ] {
             assert!(
                 matches!(
                     util::fs::normalize_relative_path(Path::new(refused)),

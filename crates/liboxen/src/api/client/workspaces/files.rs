@@ -1295,6 +1295,20 @@ mod tests {
             assert_eq!(workspace.id, workspace_id);
 
             let path = test::test_30k_parquet();
+            let refused = api::client::versions::parallel_large_file_upload(
+                &remote_repo,
+                &path,
+                Some(".OXEN"),
+                Some(workspace_id.clone()),
+                None,
+                None,
+            )
+            .await;
+            let Err(err) = refused else {
+                panic!("a chunked upload into .oxen is refused");
+            };
+            assert!(err.to_string().contains(".oxen directory"), "{err}");
+
             let result = api::client::workspaces::files::add(
                 &remote_repo,
                 &workspace_id,
