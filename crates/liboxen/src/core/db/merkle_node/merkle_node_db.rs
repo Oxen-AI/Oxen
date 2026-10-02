@@ -50,12 +50,10 @@ use std::cell::Cell;
 use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
 
-use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node_type::InvalidMerkleTreeNodeType;
@@ -69,16 +67,6 @@ use super::merkle_node_store::MerkleNodeStore;
 
 pub(crate) const NODE_FILE: &str = "node";
 pub(crate) const CHILDREN_FILE: &str = "children";
-
-/// An absolute path to the directory for the Merkle node's `node` and `children` files.
-pub(crate) fn node_db_path(repo_path: &Path, hash: &MerkleHash) -> PathBuf {
-    let dir_prefix = hash.to_hex_hash().node_db_prefix();
-    repo_path
-        .join(constants::OXEN_HIDDEN_DIR)
-        .join(constants::TREE_DIR)
-        .join(constants::NODES_DIR)
-        .join(dir_prefix)
-}
 
 /// Prefix every current node payload starts with: `rmp_serde` encodes the one-field wrapper
 /// struct as a 1-element array holding an externally-tagged enum, so the variant name lands in
@@ -210,12 +198,8 @@ pub enum MerkleDbError {
     },
     #[error("{0}")]
     TypeMismatch(#[from] InvalidMerkleTreeNodeType),
-    #[error("Failed to create directory: {0}")]
-    DirCreate(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
     #[error("Failed to open file: {0}")]
     Open(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
-    #[error("Filesystem operation failed during merkle transport: {0}")]
-    FsTransport(Box<OxenError>), // TODO: replace with FsError from upcoming refactoring PR
     #[error("Could not read entries from merkle tree tar archive: {0}")]
     CannotReadMerkle(std::io::Error),
     #[error(
@@ -250,16 +234,6 @@ pub enum MerkleDbError {
     /// (`node`, `children`) blobs, so the archive is truncated or malformed.
     #[error("Incomplete merkle node {hash} in tar archive: missing {missing} blob")]
     IncompleteNode { hash: MerkleHash, missing: String },
-}
-
-impl MerkleDbError {
-    pub(crate) fn dir_create(err: OxenError) -> Self {
-        Self::DirCreate(Box::new(err))
-    }
-
-    pub(crate) fn fs_transport(err: OxenError) -> Self {
-        Self::FsTransport(Box::new(err))
-    }
 }
 
 struct MerkleNodeLookup {

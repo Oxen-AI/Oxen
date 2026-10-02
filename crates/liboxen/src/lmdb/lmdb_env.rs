@@ -95,6 +95,7 @@ pub(in crate::lmdb) fn open_lmdb_env(
 }
 
 /// Whether an env has been created at `dir`, checked without opening (and so creating) one.
+#[cfg(test)]
 pub(crate) fn lmdb_env_exists(dir: &Path) -> bool {
     dir.join(LMDB_DATA_FILE).exists()
 }

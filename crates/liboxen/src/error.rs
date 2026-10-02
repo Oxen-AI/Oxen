@@ -320,6 +320,13 @@ pub enum OxenError {
     #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
     UnsupportedRepoVersion(StringError),
 
+    /// The repository at this path stores its Merkle nodes on the filesystem backend, which this
+    /// build no longer reads.
+    #[error(
+        "The repository at {0:?} stores its Merkle nodes on the filesystem backend, which this version of Oxen no longer reads."
+    )]
+    MerkleNodesOnFilesystem(PathBuf),
+
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
 
@@ -889,6 +896,9 @@ impl OxenError {
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
+            MerkleNodesOnFilesystem(_) => {
+                "Run `oxen migrate up merkle_nodes_to_lmdb <path>` with Oxen 0.61.0 to move the repository onto LMDB, then retry with this version."
+            }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
             }
@@ -992,6 +1002,7 @@ impl OxenError {
             OxenError::RemotePointsAtDifferentRepo { .. } => true,
             OxenError::RepoUuidTaken(_) => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            OxenError::MerkleNodesOnFilesystem(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
