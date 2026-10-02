@@ -1,4 +1,5 @@
-//! Path-keyed registry of shared database handles: at most one live handle per path per process.
+//! Path-keyed registry of shared database handles: at most one live handle per path per process,
+//! until the path is forgotten.
 //!
 //! A handle lives as long as some caller holds the `Arc` that [`WeakDbCache::get_or_open`]
 //! returned or the keep-warm cache holds it, and closes when the last of those drops. The slot map
@@ -10,7 +11,8 @@
 //!
 //! [`WeakDbCache::forget`] and [`WeakDbCache::forget_prefix`] drop the warm handle along with the
 //! slot, so a caller that forgets a path before moving or deleting its directory leaves nothing
-//! holding the old files open.
+//! holding the old files open. A handle a caller still holds stays open past the forget, and the
+//! next opener for that path gets a second handle beside it.
 //!
 //! Opening runs under a per-path lock rather than the map lock, so an open for one path does not
 //! block callers of any other path. Two concurrent first-opens of the same path rendezvous on that
@@ -150,6 +152,28 @@ impl<V> WeakDbCache<V> {
         drop(forgotten);
     }
 
+    /// Every handle keep-warm holds, with its path, taken out of keep-warm. A handle a caller
+    /// still holds stays live for that caller, and its registry entry with it.
+    pub(crate) fn drain_warm(&self) -> Vec<(PathBuf, Arc<V>)> {
+        let mut warm = self.warm.lock();
+        let mut drained = Vec::with_capacity(warm.len());
+        while let Some(entry) = warm.pop_lru() {
+            drained.push(entry);
+        }
+        drained
+    }
+
+    /// The live handle for `path`, or `None` when neither a caller nor keep-warm holds one.
+    #[cfg(test)]
+    pub(crate) fn live_handle(&self, path: &Path) -> Option<Arc<V>> {
+        let slot = {
+            let slots = self.slots.read();
+            slots.get(path).map(Arc::clone)
+        }?;
+        let handle = slot.handle.lock();
+        handle.upgrade()
+    }
+
     fn slot(&self, path: &Path) -> Arc<Slot<V>> {
         if let Some(slot) = self.slots.read().get(path) {
             return Arc::clone(slot);
@@ -241,6 +265,15 @@ mod tests {
             opens.load(Ordering::SeqCst),
             4,
             "a failed open left the path unopenable"
+        );
+
+        let drained = cache.drain_warm();
+        let during_drain = cache.get_or_open(fresh, || counting_open(&opens)).unwrap();
+        assert!(
+            drained
+                .iter()
+                .any(|(p, handle)| p == fresh && Arc::ptr_eq(handle, &during_drain)),
+            "a lookup opened a second handle beside the one a drain still held"
         );
     }
 
