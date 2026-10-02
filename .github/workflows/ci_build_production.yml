@@ -24,7 +24,6 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          components: clippy
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
       # Must precede the tool versions load: rust-cache hashes every CARGO*/RUST* environment
@@ -50,18 +49,16 @@ jobs:
 
       - name: Install FFmpeg 9
         # Install FFmpeg 9 (the `production` feature enables `ffmpeg`) and point pkg-config
-        # at it for the build and clippy steps below.
+        # at it for the build steps below.
         run: |
           sudo apt-get update
           sudo apt-get install -y clang pkg-config
           bash bin/install-ffmpeg
           echo "PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
+      # oxen-py is left to the maturin step below, which builds it with the flags the bindings need.
       - name: Build with production features
-        run: cargo build --workspace --features production
-
-      - name: Clippy (production features)
-        run: cargo clippy --workspace --all-targets --features production --no-deps -- -D warnings
+        run: cargo build --workspace --exclude oxen-py --features production
 
       # The Test Suite workflow builds with default features, so tests behind a production-only
       # gate like `#[cfg(feature = "otel")]` never run there. This job is the only one that

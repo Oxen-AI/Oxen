@@ -9,6 +9,7 @@ use crate::core::db::data_frames::df_db;
 use crate::core::db::data_frames::df_db::{with_db_closed, with_df_db_manager};
 use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
+use crate::core::staged::staged_db_manager::StagedDBManager;
 use crate::core::v_latest::workspaces::files::{add, track_modified_data_frame};
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
@@ -16,6 +17,7 @@ use crate::repositories::workspaces::{
 };
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -29,6 +31,7 @@ use crate::model::{
 use crate::repositories;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
+use tokio::task::spawn_blocking;
 
 pub mod columns;
 pub mod rows;
@@ -212,65 +215,80 @@ pub fn get_queryable_data_frame_workspace(
 }
 
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
-    // Is tabular just looks at the file extensions
-    let file_node =
-        repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
+    let (file_hash, extension, db_path, parent) = {
+        let workspace = workspace.clone();
+        let path = path.to_path_buf();
+        spawn_blocking(move || -> Result<_, OxenError> {
+            let path = path.as_path();
+            // Is tabular just looks at the file extensions
+            let file_node = repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                path,
+            )?
             .ok_or_else(|| OxenError::path_does_not_exist(path))?;
-    if *file_node.data_type() != EntryDataType::Tabular {
-        return Err(OxenError::basic_str(
-            "File format not supported, must be tabular.",
-        ));
-    }
+            if *file_node.data_type() != EntryDataType::Tabular {
+                return Err(OxenError::basic_str(
+                    "File format not supported, must be tabular.",
+                ));
+            }
 
-    log::debug!("core::v_latest::workspaces::data_frames::index({path:?})");
+            log::debug!("core::v_latest::workspaces::data_frames::index({path:?})");
 
-    let repo = &workspace.base_repo;
-    let commit = &workspace.commit;
+            let repo = &workspace.base_repo;
+            let commit = &workspace.commit;
 
-    log::debug!("core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}");
+            log::debug!(
+                "core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}"
+            );
 
-    let Ok(Some(commit_merkle_tree)) =
-        repositories::tree::get_node_by_path_with_children(repo, commit, path)
-    else {
-        return Err(OxenError::basic_str(format!(
-            "Merkle tree for commit {commit} not found"
-        )));
+            let Ok(Some(commit_merkle_tree)) =
+                repositories::tree::get_node_by_path_with_children(repo, commit, path)
+            else {
+                return Err(OxenError::basic_str(format!(
+                    "Merkle tree for commit {commit} not found"
+                )));
+            };
+
+            let file_hash = commit_merkle_tree.hash;
+
+            log::debug!(
+                "core::v_latest::workspaces::data_frames::index({path:?}) got file hash {file_hash:?}"
+            );
+
+            let db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, path);
+
+            let Some(parent) = db_path.parent().map(Path::to_path_buf) else {
+                return Err(OxenError::basic_str(format!(
+                    "Failed to get parent directory for {db_path:?}"
+                )));
+            };
+            util::fs::create_dir_all(&parent)?;
+
+            let extension = match &commit_merkle_tree.node {
+                EMerkleTreeNode::File(file_node) => file_node.extension().to_string(),
+                _ => {
+                    return Err(OxenError::basic_str("File node is not a file node"));
+                }
+            };
+
+            Ok((file_hash, extension, db_path, parent))
+        })
+        .await??
     };
 
-    let file_hash = commit_merkle_tree.hash;
-
-    log::debug!(
-        "core::v_latest::workspaces::data_frames::index({path:?}) got file hash {file_hash:?}"
-    );
-
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-
-    let Some(parent) = db_path.parent() else {
-        return Err(OxenError::basic_str(format!(
-            "Failed to get parent directory for {db_path:?}"
-        )));
-    };
-    util::fs::create_dir_all(parent)?;
-
-    let version_store = repo.version_store();
+    let version_store = workspace.base_repo.version_store();
     let hash_str = file_hash.to_string();
 
     // DuckDB's `read_*()` can only ingest a local filesystem path, so materialize the version file.
     // The guard `version_file` is held on the async side (its drop runs after the blocking index
     // below) so a materialized S3 temp outlives the read; the closure takes a plain path copy.
-    let version_file = version_store.materialize(&hash_str, parent).await?;
+    let version_file = version_store.materialize(&hash_str, &parent).await?;
     let version_path = version_file.to_pathbuf();
 
     log::debug!(
         "core::v_latest::index::workspaces::data_frames::index({path:?}) got version path: {version_path:?}"
     );
-
-    let extension = match &commit_merkle_tree.node {
-        EMerkleTreeNode::File(file_node) => file_node.extension().to_string(),
-        _ => {
-            return Err(OxenError::basic_str("File node is not a file node"));
-        }
-    };
 
     // DuckDB indexing is blocking file IO plus a full parse, so run it off the async runtime per
     // the sync-core / async-edge policy. The DuckDB connection lives entirely inside the closure
@@ -500,89 +518,138 @@ pub async fn rename(
     path: impl AsRef<Path>,
     new_path: impl AsRef<Path>,
 ) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-    let new_path = new_path.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
+    let path = path.as_ref().to_path_buf();
+    let new_path = new_path.as_ref().to_path_buf();
 
-    // Handle duckdb file operations first
-    let og_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
-    let og_db_path_parent = og_db_path.parent().unwrap();
-    let new_db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
-    let new_db_path_parent = new_db_path.parent().unwrap();
+    let progress = {
+        let workspace = workspace.clone();
+        let path = path.clone();
+        let new_path = new_path.clone();
+        spawn_blocking(move || -> Result<ControlFlow<PathBuf, _>, OxenError> {
+            // Handle duckdb file operations first
+            let og_db_path = repositories::workspaces::data_frames::duckdb_path(&workspace, &path);
+            let og_db_path_parent = db_parent(&og_db_path)?;
+            let new_db_path =
+                repositories::workspaces::data_frames::duckdb_path(&workspace, &new_path);
+            let new_db_path_parent = db_parent(&new_db_path)?;
 
-    // The source database is closed and held while its files are copied and removed, so nothing
-    // can write into a database that is about to be deleted. Closing checkpoints the WAL into the
-    // database file first, so the copy carries a whole database and no WAL file that would be
-    // replayed against the copy.
-    with_db_closed(&og_db_path, || -> Result<(), OxenError> {
-        if !new_db_path_parent.exists() {
-            util::fs::create_dir_all(new_db_path_parent)?;
-        }
-        util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
-        util::fs::remove_dir_all(og_db_path_parent)?;
-        Ok(())
-    })?;
+            // The source database is closed and held while its files are copied and removed, so
+            // nothing can write into a database that is about to be deleted. Closing checkpoints
+            // the WAL into the database file first, so the copy carries a whole database and no
+            // WAL file that would be replayed against the copy.
+            with_db_closed(&og_db_path, || -> Result<(), OxenError> {
+                if !new_db_path_parent.exists() {
+                    util::fs::create_dir_all(new_db_path_parent)?;
+                }
+                util::fs::copy_dir_all(og_db_path_parent, new_db_path_parent)?;
+                util::fs::remove_dir_all(og_db_path_parent)?;
+                Ok(())
+            })?;
 
-    // Use staged_db_manager
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
-    let mut staged_entry = staged_db_manager.read_from_staged_db(path)?;
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            if let Some(staged_entry) = staged_db_manager.read_from_staged_db(&path)? {
+                return move_staged_entry(
+                    &workspace,
+                    &staged_db_manager,
+                    staged_entry,
+                    &path,
+                    &new_path,
+                )
+                .map(ControlFlow::Break);
+            }
 
-    if staged_entry.is_none() {
-        let workspace_file_path = workspace.workspace_repo.path.join(new_path);
+            // The version to export to the new path, with the mtime its merkle record carries
+            let existing_version = repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                &path,
+            )?
+            .map(|file_node| {
+                let mtime = SystemTime::UNIX_EPOCH
+                    + Duration::from_secs(file_node.last_modified_seconds() as u64)
+                    + Duration::from_nanos(file_node.last_modified_nanoseconds() as u64);
+                (file_node.hash().to_string(), mtime)
+            });
 
-        // Export the file from the version path to the new path, setting mtime from merkle record
-        if let Some(existing_file_node) =
-            repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path)?
-        {
-            let version_store = workspace.base_repo.version_store();
-            let hash = existing_file_node.hash().to_string();
-            let mtime = SystemTime::UNIX_EPOCH
-                + Duration::from_secs(existing_file_node.last_modified_seconds() as u64)
-                + Duration::from_nanos(existing_file_node.last_modified_nanoseconds() as u64);
-            version_store
-                .copy_version_to_path(&hash, &workspace_file_path, mtime)
-                .await?;
-        }
+            // Check if the new path exists in the merkle tree, if it does, it is modified
+            let is_modified = repositories::tree::get_file_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                &new_path,
+            )?
+            .is_some();
 
-        // Check if the new path exists in the merkle tree, if it does, it is modified
-        let is_modified = repositories::tree::get_file_by_path(
-            &workspace.base_repo,
-            &workspace.commit,
-            new_path,
-        )?
-        .is_some();
-        log::debug!(
-            "rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}"
-        );
+            Ok(ControlFlow::Continue((existing_version, is_modified)))
+        })
+        .await??
+    };
+    let (existing_version, is_modified) = match progress {
+        ControlFlow::Break(relative_path) => return Ok(relative_path),
+        ControlFlow::Continue(rest) => rest,
+    };
 
-        if is_modified {
-            track_modified_data_frame(workspace, new_path)?;
-        } else {
-            add(workspace, &workspace_file_path).await?;
-        }
+    let workspace_file_path = workspace.workspace_repo.path.join(&new_path);
 
-        // Read the staged entry again after adding
-        staged_entry = get_staged_db_manager(workspace_repo)?.read_from_staged_db(new_path)?;
-        log::debug!("rename: staged_entry after add: {staged_entry:?}");
+    if let Some((hash, mtime)) = &existing_version {
+        workspace
+            .base_repo
+            .version_store()
+            .copy_version_to_path(hash, &workspace_file_path, *mtime)
+            .await?;
     }
 
-    let mut new_staged_entry = staged_entry
-        .ok_or_else(|| OxenError::basic_str(format!("rename: staged entry not found: {path:?}")))?;
+    log::debug!("rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}");
 
+    if !is_modified {
+        add(workspace, &workspace_file_path).await?;
+    }
+
+    let workspace = workspace.clone();
+    spawn_blocking(move || {
+        if is_modified {
+            track_modified_data_frame(&workspace, &new_path)?;
+        }
+        // Read the staged entry again after adding
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        let staged_entry = staged_db_manager.read_from_staged_db(&new_path)?;
+        log::debug!("rename: staged_entry after add: {staged_entry:?}");
+
+        let staged_entry = staged_entry.ok_or_else(|| {
+            OxenError::basic_str(format!("rename: staged entry not found: {path:?}"))
+        })?;
+        move_staged_entry(
+            &workspace,
+            &staged_db_manager,
+            staged_entry,
+            &path,
+            &new_path,
+        )
+    })
+    .await?
+}
+
+/// Stages `staged_entry` as added at `new_path` in place of `path`, returning `new_path` relative
+/// to the workspace.
+fn move_staged_entry(
+    workspace: &Workspace,
+    staged_db_manager: &StagedDBManager,
+    mut staged_entry: StagedMerkleTreeNode,
+    path: &Path,
+    new_path: &Path,
+) -> Result<PathBuf, OxenError> {
     // Update the file name in the staged entry
-    if let EMerkleTreeNode::File(file) = &mut new_staged_entry.node.node {
-        file.set_name(new_path.to_str().unwrap());
+    if let EMerkleTreeNode::File(file) = &mut staged_entry.node.node {
+        file.set_name(&new_path.to_string_lossy());
     }
 
     // Set status to Added since we're moving to a new location
-    new_staged_entry.status = StagedEntryStatus::Added;
+    staged_entry.status = StagedEntryStatus::Added;
 
     // Get the file node from the staged entry
-    let file_node = new_staged_entry.node.file()?;
+    let file_node = staged_entry.node.file()?;
 
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     // Add the file node at the new path using staged_db_manager
-    staged_db_manager.upsert_file_node(new_path, new_staged_entry.status, &file_node)?;
+    staged_db_manager.upsert_file_node(new_path, staged_entry.status, &file_node)?;
 
     // Delete the old path entry
     staged_db_manager.delete_entry(path)?;
@@ -591,8 +658,14 @@ pub async fn rename(
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     staged_db_manager.add_parent_directories(new_path, &seen_dirs)?;
 
-    let relative_path = util::fs::path_relative_to_dir(new_path, &workspace_repo.path)?;
-    Ok(relative_path)
+    util::fs::path_relative_to_dir(new_path, &workspace.workspace_repo.path)
+}
+
+/// The directory holding a data frame's DuckDB database.
+fn db_parent(db_path: &Path) -> Result<&Path, OxenError> {
+    db_path
+        .parent()
+        .ok_or_else(|| OxenError::basic_str(format!("{db_path:?} has no parent directory")))
 }
 
 pub fn extract_file_node_to_working_dir(

@@ -124,8 +124,10 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
     .await?;
 
     // Recorded outside the exclusive section: a migration writes the whole identity table, and a
-    // hint write begins a write the exclusive section would block.
-    let hinted = repo.clone();
+    // hint write begins a write the exclusive section would block. Looked up again, since a
+    // migration can move the repository's directory.
+    drop(repo);
+    let hinted = get_repo(app_data, &namespace, &repo_name)?;
     let sync_dir = app_data.path.clone();
     tasks::spawn_blocking(move || {
         repositories::record_name_hints(
@@ -159,6 +161,7 @@ mod tests {
     use liboxen::core::workspaces::workspace_name_index;
     use liboxen::error::OxenError;
     use liboxen::model::RepoIdentity;
+    use liboxen::repositories::name_table::NameTable;
     use std::time::Duration;
     use uuid::Uuid;
 
@@ -454,34 +457,41 @@ mod tests {
     }
 
     /// The hub addresses a repository by UUID, so the names in the body are the only way the
-    /// migration endpoint learns what it is called. Its backfill caller depends on that.
+    /// migration endpoint learns what it is called. Its backfill caller depends on that, and so
+    /// does a move to the directory the UUID places the repository in.
     #[actix_web::test]
     async fn test_run_records_the_names_stated_in_the_body() -> Result<(), OxenError> {
         let sync_dir = test::get_sync_dir()?;
-        let namespace = "Testing-Namespace";
-        let repo_name = "Testing-Repo";
+        let repo_uuid = Uuid::new_v4();
+        let namespace = Uuid::new_v4().to_string();
+        let repo_name = repo_uuid.to_string();
 
-        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
-        let workspaces_dir = liboxen::model::Workspace::workspaces_dir(&repo);
-        std::fs::create_dir_all(&workspaces_dir)?;
-
+        let repo = test::create_local_repo(&sync_dir, &namespace, &repo_name)?;
         let config_path = liboxen::util::fs::config_filepath(&repo.path);
         let mut config = RepositoryConfig::from_file(&config_path)?;
-        config.identity = Some(RepoIdentity::hintless(Uuid::new_v4()));
+        config.identity = Some(RepoIdentity::hintless(repo_uuid));
         config.save(&config_path)?;
+        let legacy_dir = repo.path.clone();
+        drop(repo);
+        let table = NameTable::new(&sync_dir);
+        assert_eq!(
+            table.get("bessie", "cats")?,
+            None,
+            "nothing records the names yet"
+        );
 
         let req = test::repo_request_with_param(
             &sync_dir,
             "/",
-            namespace,
-            repo_name,
+            namespace.clone(),
+            repo_name.clone(),
             "migration_name",
-            "add_workspace_name_index",
+            "place_repository_by_uuid",
         );
         let body = web::Bytes::from(
             serde_json::to_vec(&RunMigrationRequest {
                 direction: Direction::Up,
-                run_optional: false,
+                run_optional: true,
                 namespace_name: Some("bessie".to_string()),
                 repo_name: Some("cats".to_string()),
             })
@@ -491,13 +501,29 @@ mod tests {
         let resp = run(req, body).await.expect("run handler should succeed");
         assert_eq!(resp.status(), http::StatusCode::OK);
 
-        let identity = RepositoryConfig::from_file(&config_path)?
+        let moved = repositories::resolve_repo_dir(&sync_dir, &namespace, &repo_name)?
+            .expect("the moved repository resolves");
+        assert!(
+            moved.starts_with(sync_dir.join("repo")) && !legacy_dir.exists(),
+            "the migration moves the repository to where its UUID places it, at {moved:?}"
+        );
+        assert!(
+            !sync_dir.join(&namespace).exists(),
+            "the namespace directory its only repository moved out of is removed"
+        );
+        let identity = RepositoryConfig::from_file(liboxen::util::fs::config_filepath(&moved))?
             .identity
             .expect("identity is intact");
         assert_eq!(identity.namespace.as_deref(), Some("bessie"));
         assert_eq!(identity.name.as_deref(), Some("cats"));
+        assert_eq!(
+            table.get("bessie", "cats")?,
+            Some(repo_uuid),
+            "the names are recorded for the repository where it moved to"
+        );
 
-        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        drop(table);
+        test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
 

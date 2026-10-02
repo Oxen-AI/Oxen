@@ -157,6 +157,8 @@ name = "my-repo"
 - **`repo_uuid`** — the repository's immutable identity, written when the repo is created and never changed afterwards, including when the repo moves to another namespace. Do not edit it by hand.
 - **`namespace`** / **`name`** — the human-readable names, recorded so a repository directory can be identified without consulting anything else. They track renames and carry no authority: nothing is addressed by them.
 
+A repository the server creates lives at `$SYNC_DIR/repo/{uuid[0:2]}/{uuid[2:4]}/{repo_uuid}`, named for its `repo_uuid`, and stays there when it moves to another namespace.
+
 `oxen-server` refuses to create a repository under a name another repository already holds, matching without regard to case, so `my-namespace/My-Repo` and `my-namespace/my-repo` cannot both be created.
 
 The name in each `[identity]` section is indexed when the server starts, so that refusal covers every repository whose config records one. Stop the server and run `oxen-server seed-name-table` to index the names the table is missing after restoring or otherwise changing the sync directory behind the server's back. It only adds names, so a repository directory removed by hand keeps its name taken, and the command reports those names as `unclaimed`.

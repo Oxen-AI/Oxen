@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
-version = "0.60.0"
+version = "0.61.0"
 edition = "2024"
 license-file = "LICENSE"
 homepage = "https://oxen.ai"
@@ -60,7 +60,7 @@ dialoguer = "0.12"
 difference = "2.0.0"
 dirs = "7.0"
 dotenvy = "0.15.7"
-duckdb = { package = "duckdb", version = "=1.10505.0", default-features = false, features = ["serde_json"] }
+duckdb = { package = "duckdb", version = "=1.10506.0", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
 env_logger = "0.11.3"
 filetime = "0.2.22"
@@ -86,11 +86,11 @@ itertools = "0.15"
 jwalk = "0.9"
 lazy_static = "1.4.0"
 libc = "0.2"
-libduckdb-sys = { version = "=1.10505.0" }
+libduckdb-sys = { version = "=1.10506.0" }
 # liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
 # resolve liboxen from crates.io when published.
-liboxen = { path = "crates/liboxen", version = "=0.60.0" }
+liboxen = { path = "crates/liboxen", version = "=0.61.0" }
 lofty = "0.25"
 log = "0.4.33"
 lru = "0.18"
@@ -177,7 +177,7 @@ utoipa-swagger-ui = { version = "10", features = ["actix-web"] }
 uuid = { version = "1.26.0", features = ["serde", "v4"] }
 video-rs = { version = "0.12", features = ["ndarray"] }
 walkdir = "2.5.0"
-xxhash-rust = { version = "0.8.7", features = ["xxh3"] }
+xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [profile.dev]

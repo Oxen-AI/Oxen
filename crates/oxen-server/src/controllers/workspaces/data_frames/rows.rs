@@ -1,16 +1,20 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::get_repo_async;
 use crate::params::{app_data, path_param};
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web::Bytes};
 use liboxen::core::repo_locks;
+use liboxen::error::OxenError;
 use liboxen::model::Schema;
 use liboxen::model::data_frame::DataFrameSchemaSize;
 use liboxen::model::data_frame::update_result::UpdateResult;
 use liboxen::opts::DFOpts;
 use liboxen::repositories;
+use liboxen::repositories::workspaces::data_frames::is_indexed_async;
+use liboxen::repositories::workspaces::data_frames::rows;
 use liboxen::view::json_data_frame_view::{
     BatchUpdateResponse, JsonDataFrameRowResponse, VecBatchUpdateResponse,
 };
@@ -24,7 +28,7 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace.clone(), repo_name.clone())?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let file_path = PathBuf::from(path_param(&req, "path")?);
 
@@ -45,21 +49,25 @@ pub async fn create(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     log::debug!("create row with data {data:?}");
 
     // Get the workspace
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
     // Make sure the data frame is indexed
-    let is_editable = repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)?;
+    let is_editable = is_indexed_async(&workspace, &file_path).await?;
 
     if !is_editable {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let row_df =
-        repositories::workspaces::data_frames::rows::add(&repo, &workspace, &file_path, data)?;
-    let row_id: Option<String> = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
+    let row_df = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::add(&repo, &workspace, &file_path, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
+    let row_id: Option<String> = rows::get_row_id(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -88,24 +96,25 @@ pub async fn get(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
-    let file_path = path_param(&req, "path")?.to_string();
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let file_path = PathBuf::from(path_param(&req, "path")?);
     let row_id = path_param(&req, "row_id")?.to_string();
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    if !repositories::workspaces::data_frames::is_indexed(&workspace, Path::new(&file_path))? {
-        return Err(OxenHttpError::DatasetNotIndexed(
-            PathBuf::from(&file_path).into(),
-        ));
+    if !is_indexed_async(&workspace, &file_path).await? {
+        return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let row_df =
-        repositories::workspaces::data_frames::rows::get_by_id(&workspace, file_path, row_id)?;
+    let row_df = {
+        tasks::spawn_blocking(move || rows::get_by_id(&workspace, &file_path, &row_id))
+            .await
+            .map_err(OxenError::from)??
+    };
 
-    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&row_df)?;
+    let row_id = rows::get_row_id(&row_df)?;
 
     let opts = DFOpts::empty();
     let row_schema = Schema::from_polars(row_df.schema());
@@ -135,7 +144,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let row_id = path_param(&req, "row_id")?.to_string();
 
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
@@ -155,7 +164,7 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     };
 
     // Assumes the workspace is already created
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -167,15 +176,18 @@ pub async fn update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse, Oxen
     // the indexed gate (never indexed, or written by an older version) must
     // not be served or mutated — edits into a stale table would be silently
     // discarded by the re-index that recovery requires.
-    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+    if !is_indexed_async(&workspace, &file_path).await? {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let modified_row = repositories::workspaces::data_frames::rows::update(
-        &repo, &workspace, &file_path, &row_id, data,
-    )?;
+    let modified_row = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::update(&repo, &workspace, &file_path, &row_id, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
 
-    let row_id = repositories::workspaces::data_frames::rows::get_row_id(&modified_row)?;
+    let row_id = rows::get_row_id(&modified_row)?;
 
     log::debug!("Modified row in controller is {modified_row:?}");
     let schema = Schema::from_polars(modified_row.schema());
@@ -200,11 +212,11 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     let row_id = path_param(&req, "row_id")?.to_string();
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -213,13 +225,15 @@ pub async fn delete(req: HttpRequest, _bytes: Bytes) -> Result<HttpResponse, Oxe
     // the indexed gate (never indexed, or written by an older version) must
     // not be served or mutated — edits into a stale table would be silently
     // discarded by the re-index that recovery requires.
-    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+    if !is_indexed_async(&workspace, &file_path).await? {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let df = repositories::workspaces::data_frames::rows::delete(
-        &repo, &workspace, &file_path, &row_id,
-    )?;
+    let df = {
+        tasks::spawn_blocking(move || rows::delete(&repo, &workspace, &file_path, &row_id))
+            .await
+            .map_err(OxenError::from)??
+    };
     let schema = Schema::from_polars(df.schema());
     Ok(HttpResponse::Ok().json(JsonDataFrameRowResponse {
         data_frame: JsonDataFrameViews {
@@ -241,7 +255,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let file_path = PathBuf::from(path_param(&req, "path")?);
@@ -258,7 +272,7 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
         &json_value
     };
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -268,13 +282,16 @@ pub async fn batch_update(req: HttpRequest, bytes: Bytes) -> Result<HttpResponse
     // the indexed gate (never indexed, or written by an older version) must
     // not be served or mutated — edits into a stale table would be silently
     // discarded by the re-index that recovery requires.
-    if !repositories::workspaces::data_frames::is_indexed(&workspace, &file_path)? {
+    if !is_indexed_async(&workspace, &file_path).await? {
         return Err(OxenHttpError::DatasetNotIndexed(file_path.into()));
     }
 
-    let modified_rows = repositories::workspaces::data_frames::rows::batch_update(
-        &repo, &workspace, &file_path, data,
-    )?;
+    let modified_rows = {
+        let data = data.clone();
+        tasks::spawn_blocking(move || rows::batch_update(&repo, &workspace, &file_path, &data))
+            .await
+            .map_err(OxenError::from)??
+    };
 
     let mut responses = Vec::new();
 

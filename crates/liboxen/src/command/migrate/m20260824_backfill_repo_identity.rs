@@ -99,20 +99,7 @@ fn final_segment(path: &Path) -> Result<&str, OxenError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::requests::RepoNew;
-    use crate::repositories;
     use crate::test;
-
-    /// Create a repository at `namespace/name` carrying no identity, the state every repository
-    /// predating identity is in.
-    async fn without_identity(
-        sync_dir: &Path,
-        namespace: &str,
-        name: &str,
-    ) -> Result<LocalRepository, OxenError> {
-        let repo_new = RepoNew::from_namespace_name(namespace, name, None);
-        repositories::create(sync_dir, repo_new, None, None).await
-    }
 
     fn recorded(repo: &LocalRepository) -> Result<RepoIdentity, OxenError> {
         Ok(
@@ -128,12 +115,11 @@ mod tests {
     async fn test_a_uuid_named_repo_keeps_the_uuid_it_was_placed_under() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let repo_uuid = Uuid::new_v4();
-            let repo = without_identity(
+            let repo = test::create_legacy_repo(
                 &sync_dir,
                 &Uuid::new_v4().to_string(),
                 &repo_uuid.to_string(),
-            )
-            .await?;
+            )?;
 
             BackfillRepoIdentityMigration.up(repo.clone())?;
 
@@ -154,7 +140,7 @@ mod tests {
     -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
             let uuid_shaped = Uuid::new_v4().to_string();
-            let repo = without_identity(&sync_dir, "ox", &uuid_shaped).await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", &uuid_shaped)?;
 
             BackfillRepoIdentityMigration.up(repo.clone())?;
 
@@ -177,7 +163,7 @@ mod tests {
     #[tokio::test]
     async fn test_a_name_addressed_repo_records_both_names_and_mints() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = without_identity(&sync_dir, "ox", "cats").await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", "cats")?;
 
             BackfillRepoIdentityMigration.up(repo.clone())?;
 
@@ -196,7 +182,7 @@ mod tests {
     async fn test_a_recorded_identity_makes_the_migration_not_applicable() -> Result<(), OxenError>
     {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = without_identity(&sync_dir, "ox", "cats").await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", "cats")?;
             BackfillRepoIdentityMigration.up(repo.clone())?;
 
             let reloaded = LocalRepository::from_dir(&repo.path)?;
@@ -213,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn test_a_stale_snapshot_does_not_re_mint() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = without_identity(&sync_dir, "ox", "cats").await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", "cats")?;
 
             BackfillRepoIdentityMigration.up(repo.clone())?;
             let first = recorded(&repo)?;
@@ -231,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn test_the_migration_is_up_only() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = without_identity(&sync_dir, "ox", "cats").await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", "cats")?;
 
             assert!(!BackfillRepoIdentityMigration.is_applicable(Direction::Down, &repo)?);
             assert!(BackfillRepoIdentityMigration.down(repo).is_err());
@@ -246,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn test_a_repo_without_identity_is_never_blocked() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo = without_identity(&sync_dir, "ox", "cats").await?;
+            let repo = test::create_legacy_repo(&sync_dir, "ox", "cats")?;
 
             assert_eq!(repo.identity, None);
             assert!(!BackfillRepoIdentityMigration.is_needed(&repo)?);
