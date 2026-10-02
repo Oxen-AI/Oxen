@@ -1708,6 +1708,9 @@ pub struct AddedObjects {
     /// Nodes the store holds but could not read, mapped to the failure. Whatever each one contains
     /// is absent from `nodes` and `versions`.
     pub unreadable: HashMap<MerkleHash, String>,
+    /// Added entries whose name is not a single plain path component or names a `.oxen`
+    /// directory, so a working tree cannot hold them. Their contents are still walked.
+    pub invalid_paths: Vec<PathBuf>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1783,6 +1786,9 @@ pub async fn find_missing_added_objects(
                     format!("merkle node {hash} could not be read: {err}").into(),
                 ));
             }
+            if let Some(path) = added.invalid_paths.first() {
+                return Err(OxenError::InvalidTreePath(path.clone().into()));
+            }
 
             let store = walk_repo.merkle_node_store();
             let mut missing_nodes = Vec::new();
@@ -1857,6 +1863,14 @@ fn collect_added_from_dir(
         {
             // Identical entry (same content-addressed hash) — already present from the base.
             continue;
+        }
+
+        let name_path = Path::new(&name);
+        let is_plain_name = util::fs::normalize_relative_path(name_path).is_ok_and(|normalized| {
+            normalized.as_os_str() == name_path.as_os_str() && normalized.components().count() == 1
+        });
+        if !is_plain_name {
+            added.invalid_paths.push(head_dir_path.join(&name));
         }
 
         match entry.kind {
@@ -2099,6 +2113,17 @@ mod tests {
             assert!(
                 added.nodes.is_empty() && added.versions.is_empty(),
                 "identical base/head must add nothing, got: {added:?}"
+            );
+
+            let nested_oxen = repo.path.join("data").join(".OXEN");
+            util::fs::create_dir_all(&nested_oxen)?;
+            test::write_txt_file_to_path(nested_oxen.join("config.toml"), "not a config")?;
+            repositories::add(&repo, &repo.path).await?;
+            let head = repositories::commit(&repo, "add data/.OXEN/config.toml")?;
+            let result = find_missing_added_objects(&repo, Some(&commit), &head).await;
+            assert!(
+                matches!(result, Err(OxenError::InvalidTreePath(_))),
+                "the gate accepted a path a working tree cannot hold: {result:?}"
             );
 
             Ok(())

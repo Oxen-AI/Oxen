@@ -123,8 +123,9 @@ pub fn update(
 }
 
 /// Reject the ref advance unless the server can fully serve `head`: every merkle node and version
-/// blob it adds relative to `base` is present (else `ReachableObjectsMissing`), and its
-/// directory-hash index — needed to resolve the tree by path — exists (else `DirHashIndexMissing`).
+/// blob it adds relative to `base` is present (else `ReachableObjectsMissing`), every path it adds
+/// is one a working tree can hold (else `InvalidTreePath`), and its directory-hash index — needed
+/// to resolve the tree by path — exists (else `DirHashIndexMissing`).
 ///
 /// Server ref-advance paths that move onto a client-supplied commit call this first, so a ref can
 /// never point at a commit the server can't serve. Local/CLI branch ops skip it — a local clone is
