@@ -897,7 +897,7 @@ impl OxenError {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
             MerkleNodesOnFilesystem(_) => {
-                "Run `oxen migrate up merkle_nodes_to_lmdb <path>` with Oxen 0.60.0 to move the repository onto LMDB, then retry with this version."
+                "Run `oxen migrate up merkle_nodes_to_lmdb <path>` with Oxen 0.61.0 to move the repository onto LMDB, then retry with this version."
             }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."

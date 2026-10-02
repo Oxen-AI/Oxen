@@ -6,7 +6,7 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 
 | Versions | Applies to | Step |
 | --- | --- | --- |
-| 0.51.4 to 0.60.0 | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
+| 0.51.4 to 0.61.0 | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
 | 0.58.0 to TBD | Server | [Record identity for repositories that predate it](#record-identity-for-repositories-that-predate-it) |
 | 0.58.0 to TBD | Server | [Re-seed the name table after changing the sync directory by hand](#re-seed-the-name-table-after-changing-the-sync-directory-by-hand) |
 | 0.59.0 to TBD | Server | [Stop starting the server with `-a`](#stop-starting-the-server-with--a) |
@@ -16,9 +16,9 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 
 ## Move a repository's Merkle nodes to LMDB
 
-**Versions:** 0.51.4 to 0.60.0. **Applies to:** CLI and server.
+**Versions:** 0.51.4 to 0.61.0. **Applies to:** CLI and server.
 
-The `merkle_nodes_to_lmdb` migration moves a repository's Merkle nodes from the filesystem backend onto LMDB and keeps the filesystem copy as a backup. Releases after 0.60.0 refuse to open a repository still on the filesystem backend and no longer carry the migration, so run it with an `oxen` CLI from this range before upgrading past 0.60.0. From 0.54.0 the CLI refuses to work in a local repository still on the filesystem backend, and prints the command to run from the repository's root:
+The `merkle_nodes_to_lmdb` migration moves a repository's Merkle nodes from the filesystem backend onto LMDB and keeps the filesystem copy as a backup. Releases after 0.61.0 refuse to open a repository still on the filesystem backend and no longer carry the migration, so run it with an `oxen` CLI from this range before upgrading past 0.61.0. From 0.54.0 the CLI refuses to work in a local repository still on the filesystem backend, and prints the command to run from the repository's root:
 
 ```bash
 oxen migrate up merkle_nodes_to_lmdb .

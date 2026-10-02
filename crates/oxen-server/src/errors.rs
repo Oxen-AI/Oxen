@@ -721,7 +721,7 @@ impl error::ResponseError for OxenHttpError {
                             "error": {
                                 "type": "merkle_nodes_on_filesystem",
                                 "title": "Retired Repository Storage Format",
-                                "detail": "This repository stores its Merkle nodes on the filesystem backend, which this server can no longer read. Migrate it to LMDB with Oxen 0.60.0.",
+                                "detail": "This repository stores its Merkle nodes on the filesystem backend, which this server can no longer read. Migrate it to LMDB with Oxen 0.61.0.",
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,
