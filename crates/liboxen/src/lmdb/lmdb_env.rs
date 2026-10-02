@@ -67,7 +67,7 @@ fn build_options(map_size: ByteSize) -> Result<EnvOpenOptions<WithoutTls>, LmdbL
 ///
 /// `open_shared_env`, which `LmdbStore` opens through, is the only way to open an env from outside
 /// this module: its registry deduplicates so overlapping opens of one path share a single env and
-/// do not hit `EnvAlreadyOpened`. This primitive is visible only within the `lmdb` module (it's
+/// never surface `EnvAlreadyOpened`. This primitive is visible only within the `lmdb` module (it's
 /// what the registry is built on), so out-of-module consumers cannot bypass that dedup.
 pub(in crate::lmdb) fn open_lmdb_env(
     dir: &Path,

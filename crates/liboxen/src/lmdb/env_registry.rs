@@ -1,6 +1,7 @@
-//! One process-wide, path-keyed cache of open `LmdbEnv` handles. It enforces ONE invariant: at
-//! most one live env per canonical path per process (heed forbids opening one env dir twice in a
-//! process, so overlapping callers must rendezvous on the same live `LmdbEnv`).
+//! One process-wide, path-keyed cache of open envs, each with the database its store opened on it.
+//! It enforces ONE invariant: at most one live env per canonical path per process (heed forbids
+//! opening one env dir twice in a process, so overlapping callers must rendezvous on the same live
+//! `LmdbEnv`).
 //!
 //! WEAK RETENTION. The registry stores only a `Weak` reference to each env: the env lives exactly
 //! as long as some external `Arc` holds it, and closes when the last one drops. The registry's job
@@ -17,31 +18,59 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Weak};
+use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use std::thread::sleep;
 use std::time::Duration;
 
 use bytesize::ByteSize;
 use heed::env_closing_event;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 
+use super::lmdb_db::{LmdbDb, open_db};
 use super::lmdb_env::{LmdbEnv, open_lmdb_env};
 use super::lmdb_error::LmdbLayerError;
 use crate::util::fs::canonicalize;
 
-/// How long `get_or_open` waits out a concurrent close before surfacing `EnvAlreadyOpened`.
+/// How long `get_or_open` waits out a concurrent open or close before surfacing `EnvAlreadyOpened`.
 const REOPEN_RETRIES: u32 = 100;
 const REOPEN_RETRY_INTERVAL: Duration = Duration::from_millis(2);
 
-/// Path-keyed registry of shared `LmdbEnv` handles. `parking_lot::RwLock` internally (cannot
+/// A live env and the database its store opened on it, shared by every handle on the env.
+pub(in crate::lmdb) struct SharedEnv {
+    pub(in crate::lmdb) env: LmdbEnv,
+    db: OnceLock<(&'static str, LmdbDb)>,
+}
+
+impl SharedEnv {
+    fn new(env: LmdbEnv) -> Self {
+        SharedEnv {
+            env,
+            db: OnceLock::new(),
+        }
+    }
+
+    /// The database `name` in this env, opened in its own write txn only the first time it is
+    /// asked for.
+    pub(in crate::lmdb) fn db(&self, name: &'static str) -> Result<LmdbDb, LmdbLayerError> {
+        match self.db.get() {
+            Some((opened, db)) if *opened == name => Ok(db.clone()),
+            Some(_) => open_db(&self.env, name),
+            None => {
+                let db = open_db(&self.env, name)?;
+                let _ = self.db.set((name, db.clone()));
+                Ok(db)
+            }
+        }
+    }
+}
+
+/// Path-keyed registry of shared envs. `parking_lot::RwLock` internally (cannot
 /// poison), so there is no lock-poisoned error path. Holds no map size — the per-store `map_size`
 /// is passed to `get_or_open`, so one registry (the process-global [`open_shared_env`]) serves
 /// every store rather than needing one registry per store type.
 #[derive(Default)]
 pub(in crate::lmdb) struct LmdbEnvRegistry {
-    slots: RwLock<HashMap<PathBuf, Weak<LmdbEnv>>>,
-    /// Serializes opens so two first-opens of the same path cannot race.
-    open_lock: Mutex<()>,
+    slots: RwLock<HashMap<PathBuf, Weak<SharedEnv>>>,
 }
 
 impl LmdbEnvRegistry {
@@ -55,22 +84,17 @@ impl LmdbEnvRegistry {
     /// Open-on-miss order (avoids canonicalizing a brand-new path that does not exist yet): the
     /// registry does NOT canonicalize the requested path up front. On a miss it calls
     /// `open_lmdb_env(path, ..)` (which creates the dir and opens), then keys the cache on the
-    /// opened env's `path()`. Opens are serialized so two first-opens of the same path cannot
-    /// race.
+    /// opened env's `path()`.
     ///
-    /// If `open_lmdb_env` reports the env already open — an open racing the final drop of a
-    /// previous handle, where heed has not finished closing the env yet — the registry re-resolves
-    /// the live handle if one is observable, otherwise waits out the close briefly and retries
-    /// rather than surfacing the error.
+    /// If `open_lmdb_env` reports the env already open (a concurrent first-open of the same path
+    /// that heed let through first, or an open racing the final drop of a previous handle, where
+    /// heed has not finished closing the env yet), the registry re-resolves the live handle if one
+    /// is observable, otherwise waits briefly and retries rather than surfacing the error.
     pub(in crate::lmdb) fn get_or_open(
         &self,
         path: &Path,
         map_size: ByteSize,
-    ) -> Result<Arc<LmdbEnv>, LmdbLayerError> {
-        if let Some(handle) = self.lookup(path) {
-            return Ok(handle);
-        }
-        let _open_guard = self.open_lock.lock();
+    ) -> Result<Arc<SharedEnv>, LmdbLayerError> {
         if let Some(handle) = self.lookup(path) {
             return Ok(handle);
         }
@@ -78,7 +102,7 @@ impl LmdbEnvRegistry {
         loop {
             match open_lmdb_env(path, map_size) {
                 Ok(env) => {
-                    let handle = Arc::new(env);
+                    let handle = Arc::new(SharedEnv::new(env));
                     self.insert(&handle);
                     return Ok(handle);
                 }
@@ -86,9 +110,9 @@ impl LmdbEnvRegistry {
                     if let Some(handle) = self.lookup(path) {
                         return Ok(handle);
                     }
-                    // A live env exists but is not (or no longer) in the map — the last external
-                    // `Arc` is mid-drop and heed has not finished closing it. Wait it out
-                    // briefly, then surface the error.
+                    // A live env exists but is not (yet, or no longer) in the map: its opener has
+                    // not registered it, or its last external `Arc` is mid-drop and heed has not
+                    // finished closing it. Wait briefly, then surface the error.
                     attempts += 1;
                     if attempts >= REOPEN_RETRIES {
                         return Err(err);
@@ -122,7 +146,7 @@ impl LmdbEnvRegistry {
             .any(|(path, env)| path.starts_with(&dir) && is_open(path, env))
     }
 
-    fn lookup(&self, path: &Path) -> Option<Arc<LmdbEnv>> {
+    fn lookup(&self, path: &Path) -> Option<Arc<SharedEnv>> {
         let slots = self.slots.read();
         if let Some(handle) = lookup_key(&slots, path) {
             return Some(handle);
@@ -137,11 +161,11 @@ impl LmdbEnvRegistry {
         }
     }
 
-    fn insert(&self, handle: &Arc<LmdbEnv>) {
+    fn insert(&self, handle: &Arc<SharedEnv>) {
         // Key on the env's reported path, normalized through the same `canonicalize` lookups use
         // so the two always agree (notably on Windows, where heed may report a `\\?\`-prefixed
         // path that `canonicalize` writes without the prefix).
-        let reported = handle.path();
+        let reported = handle.env.path();
         let key = canonicalize(reported).unwrap_or_else(|_| reported.to_path_buf());
         let mut slots = self.slots.write();
         slots.insert(key, Arc::downgrade(handle));
@@ -158,14 +182,14 @@ impl LmdbEnvRegistry {
 static SHARED_REGISTRY: LazyLock<LmdbEnvRegistry> = LazyLock::new(LmdbEnvRegistry::new);
 
 /// Open (or share) the LMDB env at `dir`, sized by `map_size`, through the process-global registry
-/// — so a store does not stand up its own registry. Hold the returned `Arc<LmdbEnv>` to keep the
+/// — so a store does not stand up its own registry. Hold the returned `Arc<SharedEnv>` to keep the
 /// env live (weak retention; see the module docs). `map_size` is consulted only on an actual open
 /// (a miss); on a shared hit it is ignored, and "one logical store per env" means every caller of
 /// a given `dir` passes the same `map_size`.
 pub(in crate::lmdb) fn open_shared_env(
     dir: &Path,
     map_size: ByteSize,
-) -> Result<Arc<LmdbEnv>, LmdbLayerError> {
+) -> Result<Arc<SharedEnv>, LmdbLayerError> {
     SHARED_REGISTRY.get_or_open(dir, map_size)
 }
 
@@ -181,18 +205,21 @@ pub(crate) fn shared_env_is_live_under(dir: &Path) -> bool {
     SHARED_REGISTRY.is_live_under(dir)
 }
 
-fn lookup_key(slots: &HashMap<PathBuf, Weak<LmdbEnv>>, key: &Path) -> Option<Arc<LmdbEnv>> {
+fn lookup_key(slots: &HashMap<PathBuf, Weak<SharedEnv>>, key: &Path) -> Option<Arc<SharedEnv>> {
     slots.get(key)?.upgrade()
 }
 
 /// Whether the env at `path` is held by an `Arc`, or heed has not finished closing it since the
 /// last one dropped.
-fn is_open(path: &Path, env: &Weak<LmdbEnv>) -> bool {
+fn is_open(path: &Path, env: &Weak<SharedEnv>) -> bool {
     env.strong_count() > 0 || env_closing_event(path).is_some()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Barrier;
+    use std::thread;
+
     use super::*;
 
     const TEST_MAP_SIZE: ByteSize = ByteSize::mib(16);
@@ -205,15 +232,32 @@ mod tests {
     /// would hit LMDB's one-env-per-process restriction.
     #[test]
     fn get_or_open_dedups_overlapping_opens() {
+        const OPENERS: usize = 8;
         let registry = test_registry();
         let dir = tempfile::tempdir().expect("create temp dir");
-        let a = registry
-            .get_or_open(dir.path(), TEST_MAP_SIZE)
-            .expect("first open");
-        let b = registry
-            .get_or_open(dir.path(), TEST_MAP_SIZE)
-            .expect("second open");
-        assert!(Arc::ptr_eq(&a, &b));
+        let start = Barrier::new(OPENERS);
+        let handles: Vec<_> = thread::scope(|scope| {
+            let openers: Vec<_> = (0..OPENERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        start.wait();
+                        registry
+                            .get_or_open(dir.path(), TEST_MAP_SIZE)
+                            .expect("concurrent first open")
+                    })
+                })
+                .collect();
+            openers
+                .into_iter()
+                .map(|opener| opener.join().expect("opener thread"))
+                .collect()
+        });
+        for handle in &handles {
+            assert!(
+                Arc::ptr_eq(&handles[0], handle),
+                "every concurrent first open shares one env"
+            );
+        }
     }
 
     /// The env closes exactly when the last external `Arc` drops (the registry holds only a
@@ -253,7 +297,7 @@ mod tests {
             .get_or_open(&store, TEST_MAP_SIZE)
             .expect("open via plain path");
         let via_canonical = registry
-            .get_or_open(via_alias.path(), TEST_MAP_SIZE)
+            .get_or_open(via_alias.env.path(), TEST_MAP_SIZE)
             .expect("open via canonical path");
         assert!(Arc::ptr_eq(&via_alias, &via_plain));
         assert!(Arc::ptr_eq(&via_alias, &via_canonical));
@@ -283,7 +327,7 @@ mod tests {
 
         // A clone of heed's handle keeps the env open after the last `Arc` drops, as a close still
         // in progress does.
-        let unclosed = LmdbEnv::clone(&handle);
+        let unclosed = LmdbEnv::clone(&handle.env);
         drop(handle);
         assert!(!registry.is_live(&store), "closed env is not live");
         assert!(

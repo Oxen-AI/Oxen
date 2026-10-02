@@ -15,8 +15,9 @@
 //!   * [`lmdb_db`] — [`LmdbDb`], a named sub-database with raw-bytes keys and opaque-bytes values
 //!     copied out as `bytes::Bytes`, plus `open_db` to open one database in its own write txn.
 //!   * [`env_registry`] — `LmdbEnvRegistry` (the ONE path-keyed, weak-retention env cache that
-//!     enforces "at most one live env per canonical path") plus `open_shared_env`, the
-//!     process-global entry point `LmdbStore` opens every env through.
+//!     enforces "at most one live env per canonical path", each env carrying the database its
+//!     store opened on it) plus `open_shared_env`, the process-global entry point `LmdbStore`
+//!     opens every env through.
 //!   * [`store`] — the `LmdbStore` default-method lifecycle trait: an implementor supplies its
 //!     env's location and map size, its database's name, and a handles slot, and inherits an env
 //!     opened on first use plus `read`/`write`/`snapshot_to`. Its domain ops stay inherent.
