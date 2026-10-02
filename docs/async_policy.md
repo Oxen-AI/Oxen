@@ -223,6 +223,7 @@ The server uses actix-web 4 with `#[actix_web::main]`, which expands to a curren
 - The blocking pool is still shared across all workers — `spawn_blocking` works the same way as it does anywhere else.
 - Handler futures do not have to be `Send` today (current-thread workers), but **write new code as if they did**. Any future move to a multi-threaded runtime (notably a migration to axum) will require it, and the sync-core / async-edge policy already eliminates the biggest hazard (`!Send` DB handles never crossing `.await` because they live inside `spawn_blocking`).
 - The escape hatch is a real code smell here: holding a blocking-pool worker on a network call can starve other requests' sync work. Use the **Sandwich** or **Channel hand-off** pattern instead.
+- **A request runs to completion even when its client goes away.** See [When the client goes away](#when-the-client-goes-away).
 - **Spawn through `crate::tasks`, not through tokio or actix directly.** Two per-request contexts are thread-locals bound only around each *poll of the request future*: the Sentry hub `sentry-actix` installs, and the tracing span the HTTP root span occupies. A closure handed straight to `tokio::task::spawn_blocking` runs somewhere neither binding reached, so a panic inside it reports with no route and no request — a bare stack trace that says something crashed but not what was being served — and any span it opens is exported detached from the request's trace. `tasks::spawn_blocking` wraps a blocking closure; `tasks::inherit_hub` wraps a future before it goes to `tokio::spawn` or `JoinSet::spawn`. Tasks nest safely: an inner `tasks::spawn_blocking` inherits through an outer `tasks::inherit_hub`.
 
   `tasks::spawn_blocking` also opens a span for the work, named `blocking task` and tagged with its call site, which is the right granularity for one coherent operation per request. Inside a loop, use `tasks::spawn_blocking_per_item`: it carries the same context but opens no span, because a bulk endpoint handling thousands of files in one request would otherwise emit a span per file.
@@ -237,6 +238,16 @@ Ask whether the response is still in flight when the task runs:
 - **The task outlives the response** — a background repo delete, a temp-file cleanup at stream EOF, a process-lifetime loop — → keep tokio's own spawn. There is no live request to name, and stamping the task with an already-answered one is more misleading than reporting it with none.
 
 When auditing for missed sites, note that **three call shapes reach the blocking pool and only two of them contain the string `spawn_blocking`**. `actix_web::web::block` is the third; grep for it separately.
+
+### When the client goes away
+
+`middleware::run_request_as_task`, the outermost middleware, runs each request as a task of its own. A client that resets its connection detaches the handler rather than dropping it, so the handler runs to completion and every guard it holds (a `repo_locks::begin_write`, a lock) lives until the work it awaits has finished. Without it, actix drops the handler at its next `.await` while work already handed to `spawn_blocking` keeps running, and the guard releases underneath that work.
+
+- **Handler code needs no special handling.** A guard bound in the handler covers everything the handler awaits. Do not count on a disconnect to stop expensive work either, since neither blocking work nor handler work stops on one.
+- **A response body runs outside the request's task.** The connection polls it after the handler returns, and drops it when the client goes away. A body that only streams finished data can stop there. A body that carries work (a write, an unpack) must run that work as a task of its own and poll its `JoinHandle`, with any `WriteInFlight` moved into the task: `actix_web::rt::spawn(tasks::inherit_hub(work))`. `helpers::stream_with_heartbeat` does this for every caller, so prefer it to a hand-rolled body.
+- **An exclusive operation in a handler goes through `middleware::with_repo_exclusive_for_client`,** never `repo_locks::with_repo_exclusive` directly. If the client leaves before the work starts, including while the operation waits for writes to drain or for another exclusive operation, it gives the repository back to writers at once and the work never runs. Once the work starts, it runs to completion.
+- **Stopping short because the client left is not a server error.** Return `OxenHttpError::ClientDisconnected`, which answers 499 with no body and logs at `info`.
+- **Code that spawns through `actix_web::rt::spawn` needs `#[actix_web::test]`,** and that includes anything calling `stream_with_heartbeat` or running under the middleware. The spawn is tokio's `spawn_local`, which panics under a plain `#[tokio::test]`, since that runtime has no `LocalSet`.
 
 ## Anti-patterns
 

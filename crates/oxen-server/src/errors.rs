@@ -1,4 +1,5 @@
 use actix_multipart::MultipartError;
+use actix_web::http::StatusCode;
 use actix_web::{HttpResponse, error};
 use derive_more::{Display, Error};
 use liboxen::constants;
@@ -50,6 +51,9 @@ pub enum OxenHttpError {
     WorkspaceBehind(Box<WorkspaceBranch>),
     BasicError(StringError),
     FailedToReadRequestPayload,
+    /// The client went away before its request finished, so the server stopped short of answering
+    /// it. Answered with HTTP 499, which the departed client never receives.
+    ClientDisconnected,
 
     // Translate OxenError to OxenHttpError
     InternalOxenError(OxenError),
@@ -124,6 +128,14 @@ impl error::ResponseError for OxenHttpError {
             OxenHttpError::FailedToReadRequestPayload => HttpResponse::BadRequest().json(
                 StatusMessageDescription::bad_request("Failed to read request payload"),
             ),
+            OxenHttpError::ClientDisconnected => {
+                // Neither side is at fault, so this reports below `warn!`.
+                log::info!("Client went away before its request finished");
+                // 499 Client Closed Request. http accepts any code from 100 to 999.
+                let client_closed_request =
+                    StatusCode::from_u16(499).unwrap_or(StatusCode::BAD_REQUEST);
+                HttpResponse::build(client_closed_request).finish()
+            }
             OxenHttpError::BadRequest(desc) => {
                 let error_json = json!({
                     "error": {

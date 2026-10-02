@@ -1,5 +1,6 @@
 use crate::errors::{OxenHttpError, WorkspaceBranch};
 use crate::helpers::get_repo;
+use crate::middleware::with_repo_exclusive_for_client;
 use crate::params::{NameParam, app_data, path_param};
 use crate::tasks;
 
@@ -278,7 +279,7 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     // Clearing all workspaces is a destructive write; hold the whole-repo exclusive lock so no
     // write lands mid-clear. The sweep is synchronous IO, so it runs off the actix worker thread.
     let clear_repo = repo.clone();
-    repo_locks::with_repo_exclusive(&repo, async move {
+    with_repo_exclusive_for_client(&req, &repo, async move {
         tasks::spawn_blocking(move || repositories::workspaces::clear(&clear_repo))
             .await
             .map_err(OxenError::from)?
