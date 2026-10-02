@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use crate::core;
-use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::storage::StorageConfig;
@@ -36,16 +35,7 @@ pub async fn init_with_storage_config(
     path: impl AsRef<Path>,
     storage_config: Option<StorageConfig>,
 ) -> Result<LocalRepository, OxenError> {
-    init_with_version_and_storage_config(path, storage_config, None).await
-}
-
-pub async fn init_with_version_and_storage_config(
-    path: impl AsRef<Path>,
-    storage_config: Option<StorageConfig>,
-    merkle_backend: Option<MerkleNodeBackend>,
-) -> Result<LocalRepository, OxenError> {
-    let path = path.as_ref();
-    core::v_latest::init_with_version_and_storage_config(path, storage_config, merkle_backend).await
+    core::v_latest::init_with_version_and_storage_config(path.as_ref(), storage_config).await
 }
 
 #[cfg(test)]

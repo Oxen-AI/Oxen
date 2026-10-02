@@ -148,7 +148,6 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 min_version: Some("0.36.0".to_string()),
                 is_empty: branch_count == 0,
                 storage_kind: repository.storage_config().kind,
-                merkle_node_backend: Some(repository.merkle_node_backend()),
                 repo_uuid: repository.repo_uuid(),
             },
             size,
@@ -484,7 +483,6 @@ async fn create_repo_response(
                     latest_commit,
                     min_version: Some("0.36.0".to_string()),
                     storage_kind: repo.storage_config().kind,
-                    merkle_node_backend: Some(repo.merkle_node_backend()),
                     repo_uuid: repo.repo_uuid(),
                 },
             }))
@@ -693,7 +691,6 @@ pub async fn transfer_namespace(
             min_version: Some("0.36.0".to_string()),
             is_empty: repositories::is_empty(&repo).await?,
             storage_kind: repo.storage_config().kind,
-            merkle_node_backend: Some(repo.merkle_node_backend()),
             repo_uuid: repo.repo_uuid(),
         },
     }))
@@ -764,7 +761,6 @@ pub async fn rename(
             min_version: Some("0.36.0".to_string()),
             is_empty,
             storage_kind: repo.storage_config().kind,
-            merkle_node_backend: Some(repo.merkle_node_backend()),
             repo_uuid: repo.repo_uuid(),
         },
     }))

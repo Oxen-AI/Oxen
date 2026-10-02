@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::constants::DEFAULT_HOST;
-use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::error::OxenError;
 use crate::model::commit::Commit;
 use crate::model::file::FileNew;
@@ -38,9 +37,6 @@ pub struct RepoNew {
     /// Which storage backend the server should use for this repo (e.g. "local", "s3").
     #[serde(default)]
     pub storage_kind: Option<StorageKind>,
-    /// Which engine backs the repo's Merkle node store. `None` uses the server's default.
-    #[serde(default)]
-    pub merkle_node_backend: Option<MerkleNodeBackend>,
     /// The immutable UUID to address the new repo's storage by. Supplied by an external control
     /// plane that owns repository identity; `None` leaves the choice to the server.
     #[serde(default)]
@@ -104,7 +100,6 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
@@ -135,7 +130,6 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
@@ -158,7 +152,6 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
@@ -180,7 +173,6 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind: None,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
@@ -203,7 +195,6 @@ impl RepoNew {
             description: None,
             files: Some(files),
             storage_kind,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
@@ -235,32 +226,9 @@ impl RepoNew {
             description: None,
             files: None,
             storage_kind: None,
-            merkle_node_backend: None,
             repo_uuid: None,
             namespace_name: None,
             repo_name: None,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn merkle_node_backend_round_trips_through_json() {
-        let mut repo = RepoNew::from_namespace_name("ns", "repo", None);
-        repo.merkle_node_backend = Some(MerkleNodeBackend::Lmdb);
-        let json = serde_json::to_string(&repo).expect("serialize");
-        let parsed: RepoNew = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(parsed.merkle_node_backend, Some(MerkleNodeBackend::Lmdb));
-    }
-
-    /// An older client omits the field entirely; the server reads it as "no preference".
-    #[test]
-    fn missing_merkle_node_backend_deserializes_to_none() {
-        let parsed: RepoNew =
-            serde_json::from_str(r#"{"namespace":"ns","name":"repo"}"#).expect("deserialize");
-        assert_eq!(parsed.merkle_node_backend, None);
     }
 }
