@@ -264,6 +264,7 @@ pub async fn from_directory(
     new_commit: &NewCommitBody,
     branch: &Branch,
 ) -> Result<Commit, OxenError> {
+    let output_path = util::fs::validate_and_normalize_path(output_path)?;
     let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path.as_ref())?;
     if !has_dir {
         return Err(OxenError::basic_str(format!(
@@ -335,7 +336,7 @@ pub async fn from_directory(
     })?;
 
     // Write the DataFrame as a parquet file
-    let output_path = workspace.dir().join(output_path);
+    let output_path = workspace.dir().join(&output_path);
 
     // Check if output_path has a ".parquet" extension, if not, add it
     let output_path = if output_path
