@@ -1628,49 +1628,42 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
     FileTime::from_system_time(node_modified_nanoseconds)
 }
 
-/// Validates and normalizes a user-provided path to ensure it is safe.
-/// Returns the normalized path if valid, or an OxenError describing the issue.
+/// Normalizes an untrusted path relative to a repository root: `.` components collapse, and a path
+/// that is absolute or has a `..` or drive component is refused. The result may be empty.
 ///
-/// Validation rules:
-/// - Must be a relative path (no absolute paths or root components)
-/// - Cannot contain parent directory references (..)
-/// - Cannot contain empty segments
-/// - Current directory references (.) are skipped
-pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
+/// # Errors
+/// [`OxenError::PathOutsideWorkingTree`] when the path is refused.
+pub fn normalize_relative_path(path: &Path) -> Result<PathBuf, OxenError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
-        match component {
+        let reason = match component {
+            Component::CurDir => continue,
             Component::Normal(segment) => {
-                let segment_str = segment.to_string_lossy();
-                // Reject empty segments (e.g., from "foo//bar")
-                if segment_str.is_empty() {
-                    return Err(OxenError::basic_str("path contains empty segments"));
-                }
                 normalized.push(segment);
+                continue;
             }
-            Component::ParentDir => {
-                return Err(OxenError::basic_str(
-                    "path cannot contain parent directory references (..)",
-                ));
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(OxenError::basic_str("path must be relative, not absolute"));
-            }
-            Component::CurDir => {
-                // Skip "." components (current directory)
-            }
-        }
+            Component::ParentDir => "it has a `..` component",
+            Component::RootDir | Component::Prefix(_) => "it is absolute",
+        };
+        return Err(OxenError::PathOutsideWorkingTree {
+            path: path.into(),
+            reason,
+        });
     }
+    Ok(normalized)
+}
 
-    // Ensure we have a valid path after normalization
+/// [`normalize_relative_path`], refusing a path that normalizes to empty as well.
+///
+/// # Errors
+/// [`OxenError::PathOutsideWorkingTree`] when [`normalize_relative_path`] refuses the path, and
+/// [`OxenError::EmptyPath`] when it normalizes to empty.
+pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+    let path = path.as_ref();
+    let normalized = normalize_relative_path(path)?;
     if normalized.as_os_str().is_empty() {
-        return Err(OxenError::basic_str(
-            "path resolves to empty after normalization",
-        ));
+        return Err(OxenError::EmptyPath);
     }
-
     Ok(normalized)
 }
 
@@ -1750,6 +1743,27 @@ mod tests {
     use crate::util;
 
     use std::path::Path;
+
+    #[test]
+    fn test_normalize_relative_path() {
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("./pages/./home")).unwrap(),
+            Path::new("pages/home")
+        );
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("")).unwrap(),
+            Path::new("")
+        );
+        for refused in ["../../outside.txt", "a/../b", "/tmp/outside.txt"] {
+            assert!(
+                matches!(
+                    util::fs::normalize_relative_path(Path::new(refused)),
+                    Err(OxenError::PathOutsideWorkingTree { .. })
+                ),
+                "{refused} is refused"
+            );
+        }
+    }
 
     #[test]
     fn file_path_relative_to_dir() -> Result<(), OxenError> {

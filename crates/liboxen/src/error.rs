@@ -269,6 +269,18 @@ pub enum OxenError {
     #[error("Not a single file: {0}")]
     NotAFile(PathBufError),
 
+    /// A path a request or an archive supplied names a location outside the repository's working
+    /// tree, so nothing is written there.
+    #[error("{path} is outside the working tree: {reason}")]
+    PathOutsideWorkingTree {
+        path: PathBufError,
+        reason: &'static str,
+    },
+
+    /// A path a request supplied normalizes to the repository root where a file path is expected.
+    #[error("Expected a file path, but the path is empty")]
+    EmptyPath,
+
     /// A move or rename targeted a path that already has a staged entry.
     #[error("Destination already staged: {0}")]
     DestinationAlreadyStaged(PathBufError),
@@ -995,6 +1007,7 @@ impl OxenError {
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
