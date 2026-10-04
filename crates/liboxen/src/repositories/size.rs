@@ -1,6 +1,9 @@
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::HashSet;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::LazyLock;
 use utoipa::ToSchema;
 
@@ -8,6 +11,8 @@ use crate::core::repo_locks;
 use crate::error::OxenError;
 use crate::util::fs::AtomicFile;
 use crate::{model::LocalRepository, util};
+#[cfg(test)]
+use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Serialize, Debug, Clone, PartialEq, ToSchema)]
@@ -26,13 +31,15 @@ pub struct RepoSizeFile {
     pub size: u64,
 }
 
-/// What only this process knows about a repository's size: how many passes are walking it, how many
-/// have completed, and whether a failure is left to report. None of it survives the process, so a
-/// read after a restart reports the last figure a walk completed.
+/// What only this process knows about a repository's size: whether a pass is walking it, whether a
+/// call is waiting on another walk, and whether a failure is left to report. None of it survives
+/// the process, so a read after a restart reports the last figure a walk completed.
 #[derive(Default)]
 struct PassState {
-    walking: usize,
-    completed: u64,
+    running: bool,
+    /// Set by a call made while `running`: the pass walks once more, with this handle, before it
+    /// ends.
+    rerun: Option<LocalRepository>,
     last_failed: bool,
 }
 
@@ -41,115 +48,103 @@ struct PassState {
 static PASSES: LazyLock<Mutex<HashMap<PathBuf, PassState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Counts a repository as walking until it drops, reporting a failure unless
-/// [`PassMarker::finish`] says otherwise, so a walk killed mid-pass both frees the repository and
-/// is reported as one that did not land. A failure goes unreported when another pass completed
-/// while this one ran.
-struct PassMarker {
-    repo_path: PathBuf,
-    failed: bool,
-    completed_at_start: u64,
-}
-
-impl PassMarker {
-    fn new(repo_path: PathBuf) -> Self {
-        let completed_at_start = {
-            let mut passes = PASSES.lock();
-            let state = passes.entry(repo_path.clone()).or_default();
-            state.walking += 1;
-            state.completed
-        };
-        Self {
-            repo_path,
-            failed: true,
-            completed_at_start,
-        }
-    }
-
-    /// Publish how the pass ended and release the repository.
-    fn finish(mut self, failed: bool) {
-        self.failed = failed;
-    }
-}
-
-impl Drop for PassMarker {
-    fn drop(&mut self) {
-        let mut passes = PASSES.lock();
-        let Some(state) = passes.get_mut(&self.repo_path) else {
-            return;
-        };
-        state.walking = state.walking.saturating_sub(1);
-        if self.failed {
-            // Equal only while no pass completed since this one started.
-            if state.completed == self.completed_at_start {
-                state.last_failed = true;
-            }
-        } else {
-            state.completed += 1;
-            state.last_failed = false;
-        }
-        if state.walking == 0 && !state.last_failed {
-            passes.remove(&self.repo_path);
-        }
-    }
-}
-
 /// Recalculate `repo`'s size on a background thread, leaving the figure already recorded readable
 /// while it runs. Call it wherever version files become referenced by the merkle tree.
 ///
-/// Only a completed pass records anything, so the figure on disk is always one a walk finished.
-/// Each call starts its own pass and the last to finish is the figure that sticks. Returns
-/// [`OxenError::LockTimeout`] without starting a pass while a maintenance operation holds `repo`,
-/// leaving the figure already recorded as it is.
+/// Only a completed walk records anything, so the figure on disk is always one a walk finished.
+/// A repository has at most one pass at a time. A call made while one runs starts nothing: the pass
+/// walks once more before it ends, covering every call made in the meantime, so the figure that
+/// sticks comes from a walk that began after the latest call, and a failure reported is that of the
+/// pass's last walk. Returns [`OxenError::LockTimeout`] without starting or requesting a walk while a
+/// maintenance operation holds `repo`, leaving the figure already recorded as it is.
 pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
-    // An exclusive maintenance operation drains this write before it runs, so the walk never
-    // reads a store that is being deleted or migrated.
+    // An exclusive maintenance operation drains this write before it runs, so no walk reads a store
+    // that is being deleted or migrated. A pass holds the write of the call that started it until
+    // its last walk ends; a call that only asks for another walk needs no write of its own.
     let write = repo_locks::begin_write(repo)?;
+    {
+        let mut passes = PASSES.lock();
+        let state = passes.entry(repo.path.clone()).or_default();
+        if state.running {
+            state.rerun.get_or_insert_with(|| repo.clone());
+            return Ok(());
+        }
+        state.running = true;
+    }
 
-    let marker = PassMarker::new(repo.path.clone());
-    let repo = repo.clone();
-
-    // Spawn background thread for size calculation
-    std::thread::spawn(move || {
-        // The write stays in flight past the walk and the handle the walk opens.
+    let mut next = Some(repo.clone());
+    let spawned = std::thread::Builder::new().spawn(move || {
         let _write = write;
+        while let Some(repo) = next.take() {
+            // A panicking walk counts as a failed one, so the pass still ends and runs any walk a
+            // call asked for.
+            let failed =
+                panic::catch_unwind(AssertUnwindSafe(|| walk_and_record(&repo))).unwrap_or(true);
+            let path = repo.path.clone();
+            // Released before the pass reads as over and before the write ends, so neither a read
+            // that sees the pass end nor a drained operation finds a handle from this walk.
+            drop(repo);
 
-        let failed = match repo.version_bytes() {
-            Ok(total) => {
-                let recorded =
-                    AtomicFile::new(repo_size_path(&repo)).write(total.to_string().as_bytes());
-                match recorded {
-                    Ok(()) => {
-                        remove_legacy_size_file(&repo);
-                        false
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            repo = ?repo.path,
-                            cause = ?e,
-                            "Could not record a repository's recalculated size"
-                        );
-                        true
-                    }
+            let mut passes = PASSES.lock();
+            let Some(state) = passes.get_mut(&path) else {
+                break;
+            };
+            next = state.rerun.take();
+            if next.is_none() {
+                state.running = false;
+                state.last_failed = failed;
+                if !failed {
+                    passes.remove(&path);
                 }
             }
-            Err(e) => {
-                tracing::error!(
-                    repo = ?repo.path,
-                    cause = ?e,
-                    "Could not calculate a repository's size"
-                );
-                true
-            }
-        };
-
-        // Released before the write ends, so a drained operation finds no handle from this walk.
-        drop(repo);
-
-        marker.finish(failed);
+        }
     });
 
+    if let Err(cause) = spawned {
+        let mut passes = PASSES.lock();
+        if let Some(state) = passes.get_mut(&repo.path) {
+            state.running = false;
+            state.rerun = None;
+            if !state.last_failed {
+                passes.remove(&repo.path);
+            }
+        }
+        return Err(cause.into());
+    }
     Ok(())
+}
+
+/// Walk `repo` and record its size, returning whether either step failed.
+fn walk_and_record(repo: &LocalRepository) -> bool {
+    match repo.version_bytes() {
+        Ok(total) => {
+            #[cfg(test)]
+            tests::after_walk(&repo.path);
+
+            match AtomicFile::new(repo_size_path(repo)).write(total.to_string().as_bytes()) {
+                Ok(()) => {
+                    remove_legacy_size_file(repo);
+                    false
+                }
+                Err(e) => {
+                    tracing::error!(
+                        repo = ?repo.path,
+                        cause = ?e,
+                        "Could not record a repository's recalculated size"
+                    );
+                    true
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                repo = ?repo.path,
+                cause = ?e,
+                "Could not calculate a repository's size"
+            );
+            true
+        }
+    }
 }
 
 /// The figure recorded for `repo` and the state of the calculation behind it, starting a
@@ -159,10 +154,10 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
 /// killed reports the figure that walk was replacing. A recalculation a maintenance operation
 /// refuses is `Error` as well.
 pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
-    let (walking, last_failed) = PASSES
+    let (running, last_failed) = PASSES
         .lock()
         .get(&repo.path)
-        .map_or((0, false), |state| (state.walking, state.last_failed));
+        .map_or((false, false), |state| (state.running, state.last_failed));
     // Absent when there is no record, and `Some(Err(..))` for a record holding something other
     // than a figure, which counts the same as nothing recorded.
     let recorded = util::fs::read_from_path(repo_size_path(repo))
@@ -173,7 +168,7 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
         .and_then(|parsed| parsed.as_ref().ok())
         .copied();
 
-    let status = if walking > 0 {
+    let status = if running {
         SizeStatus::Pending
     } else if last_failed {
         SizeStatus::Error
@@ -254,33 +249,130 @@ pub(crate) fn wait_for_recorded_size(repo: &LocalRepository) -> Result<u64, Oxen
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repositories;
+    use crate::test;
+    use std::sync::mpsc::{self, Receiver, Sender};
 
-    // Concurrent passes report a failure only when none of them completed, so a walk that fails
-    // alongside one that lands leaves the repository reported as sized.
-    #[test]
-    fn test_a_failed_pass_reports_a_failure_only_when_no_pass_completed() {
-        let landed = PathBuf::from("/test/size/a-pass-landed-alongside-a-failure");
-        let completed = PassMarker::new(landed.clone());
-        let failed = PassMarker::new(landed.clone());
-        completed.finish(false);
-        failed.finish(true);
-        assert!(
-            !PASSES.lock().contains_key(&landed),
-            "a pass completing alongside a failed one leaves no failure to report"
-        );
+    /// Walks that completed per repository, the holds `hold_next_walk` installed, and the
+    /// repositories whose next walk `panic_next_walk` made panic.
+    static WALKS: LazyLock<Mutex<HashMap<PathBuf, usize>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    type Hold = (Sender<()>, Receiver<()>);
+    static HOLDS: LazyLock<Mutex<HashMap<PathBuf, Hold>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static PANICS: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
-        let none_landed = PathBuf::from("/test/size/every-pass-failed");
-        let first = PassMarker::new(none_landed.clone());
-        let second = PassMarker::new(none_landed.clone());
-        first.finish(true);
-        second.finish(true);
-        assert!(
-            PASSES
-                .lock()
-                .get(&none_landed)
-                .is_some_and(|state| state.last_failed),
-            "a repository whose every pass failed has a failure left to report"
-        );
-        PASSES.lock().remove(&none_landed);
+    /// Called by a pass once its walk has summed the repository, before it records the figure.
+    /// Counts the walk and, if a hold is installed for the repository, signals and waits to be
+    /// released, then panics if `panic_next_walk` asked it to. Holds and panics are one-shot.
+    pub(super) fn after_walk(repo_path: &Path) {
+        *WALKS.lock().entry(repo_path.to_path_buf()).or_default() += 1;
+        let hold = HOLDS.lock().remove(repo_path);
+        if let Some((reached, release)) = hold {
+            reached
+                .send(())
+                .expect("the test waiting on the hold should still be listening");
+            release
+                .recv()
+                .expect("the test should release the held pass");
+        }
+        if PANICS.lock().remove(repo_path) {
+            panic!("panic_next_walk asked this walk to panic");
+        }
+    }
+
+    /// Makes the next walk over the repository at `repo_path` panic before it records anything.
+    fn panic_next_walk(repo_path: &Path) {
+        PANICS.lock().insert(repo_path.to_path_buf());
+    }
+
+    /// Makes the next pass over the repository at `repo_path` hold once it has walked. Returns a
+    /// receiver that fires once it holds and a sender that releases it.
+    fn hold_next_walk(repo_path: &Path) -> (Receiver<()>, Sender<()>) {
+        let (reached_tx, reached_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        HOLDS
+            .lock()
+            .insert(repo_path.to_path_buf(), (reached_tx, release_rx));
+        (reached_rx, release_tx)
+    }
+
+    // Calls made while a pass walks cost one more walk between them, and the figure that walk
+    // records includes what changed after the walking pass had summed the repository.
+    #[tokio::test]
+    async fn test_calls_during_a_pass_coalesce_into_one_follow_up() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (reached, release) = hold_next_walk(&repo.path);
+            update_size(&repo)?;
+            reached
+                .recv()
+                .expect("the pass should hold once it has walked");
+
+            let added = repo.path.join("added.txt");
+            util::fs::write_to_path(&added, "added while a pass was walking")?;
+            repositories::add(&repo, &added).await?;
+            repositories::commit(&repo, "Add a file while a pass walks")?;
+            let current = repo.version_bytes()?;
+
+            for _ in 0..3 {
+                update_size(&repo)?;
+            }
+            release
+                .send(())
+                .expect("the held pass should be waiting for its release");
+
+            assert_eq!(
+                wait_for_recorded_size(&repo)?,
+                current,
+                "the follow-up pass should record the size after the commit"
+            );
+            assert_eq!(
+                WALKS.lock().get(&repo.path).copied(),
+                Some(2),
+                "three calls during the held pass should run exactly one follow-up pass"
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    // A walk that panics still ends its pass: a walk a call asked for meanwhile runs, and a pass
+    // whose last walk panicked reports a failure.
+    #[tokio::test]
+    async fn test_a_panicking_walk_runs_the_queued_walk_and_reports_a_failure()
+    -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let (reached, release) = hold_next_walk(&repo.path);
+            panic_next_walk(&repo.path);
+            update_size(&repo)?;
+            reached
+                .recv()
+                .expect("the pass should hold once it has walked");
+            update_size(&repo)?;
+            release
+                .send(())
+                .expect("the held pass should be waiting for its release");
+
+            assert_eq!(
+                wait_for_recorded_size(&repo)?,
+                repo.version_bytes()?,
+                "the walk asked for during the panicking one should run and record the size"
+            );
+            assert_eq!(
+                WALKS.lock().get(&repo.path).copied(),
+                Some(2),
+                "the pass should walk once more after its walk panicked"
+            );
+
+            panic_next_walk(&repo.path);
+            update_size(&repo)?;
+            assert!(
+                wait_for_recorded_size(&repo).is_err(),
+                "a pass whose last walk panicked should report a failure"
+            );
+            PASSES.lock().remove(&repo.path);
+            Ok(())
+        })
+        .await
     }
 }
