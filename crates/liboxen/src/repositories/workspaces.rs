@@ -925,6 +925,10 @@ mod tests {
                 let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
                 util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
                 repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+                // Add a file the base commit does not have
+                let workspace_new_file = temp_workspace.dir().join("greetings").join("new.txt");
+                util::fs::write_to_path(&workspace_new_file, "Added on main")?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_new_file).await?;
                 // Commit the changes to the "main" branch
                 repositories::workspaces::commit(
                     &temp_workspace,
@@ -960,6 +964,31 @@ mod tests {
 
                 // We should get a merge conflict error
                 assert!(result.is_err());
+            } // temp_workspace goes out of scope here and gets cleaned up
+
+            {
+                // A workspace off the same original commit adds its own greetings/new.txt, which
+                // main gained after that commit
+                let temp_workspace = create_temporary(&repo, &commit).await?;
+                let workspace_new_file = temp_workspace.dir().join("greetings").join("new.txt");
+                util::fs::write_to_path(&workspace_new_file, "Added in a workspace behind main")?;
+                repositories::workspaces::files::add(&temp_workspace, workspace_new_file).await?;
+                let result = repositories::workspaces::commit(
+                    &temp_workspace,
+                    &NewCommitBody {
+                        message: "Adding new file".to_string(),
+                        author: "Bessie".to_string(),
+                        email: "bessie@oxen.ai".to_string(),
+                    },
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await;
+
+                assert!(
+                    matches!(result, Err(OxenError::WorkspaceBehind(_))),
+                    "a file main added after the workspace's base conflicts with the workspace's \
+                     own version of it, got {result:?}"
+                );
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())
