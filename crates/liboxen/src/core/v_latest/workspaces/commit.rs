@@ -90,6 +90,16 @@ async fn commit_inner(
     new_commit: &NewCommitBody,
     branch_name: &str,
 ) -> Result<Commit, OxenError> {
+    // The caller's copy may have been loaded before a commit of this workspace that finished while
+    // this one waited on the lock and moved the workspace's base commit. Reload it under the lock,
+    // so the conflict check and the data-frame export compare against the current base.
+    let Some(workspace) = &repositories::workspaces::get_by_dir(
+        &workspace.base_repo,
+        &workspace.workspace_repo.path,
+    )?
+    else {
+        return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
+    };
     let repo = &workspace.base_repo;
     let commit = &workspace.commit;
 
@@ -587,9 +597,12 @@ mod tests {
             .await?;
 
             // Stage two files in the same workspace.
-            for name in ["file1.txt", "file2.txt"] {
+            for (name, content) in [
+                ("file1.txt", "content of file1.txt"),
+                ("rows.csv", "id,text\n1,first\n"),
+            ] {
                 let path = workspace.workspace_repo.path.join(name);
-                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                util::fs::write_to_path(&path, content)?;
                 repositories::workspaces::files::add(&workspace, &path).await?;
             }
 
@@ -627,7 +640,7 @@ mod tests {
             let branch = repositories::branches::get_by_name(&repo, "main")?;
             let head = repositories::commits::get_by_id(&repo, &branch.commit_id)?
                 .expect("branch head commit should exist");
-            for name in ["file1.txt", "file2.txt"] {
+            for name in ["file1.txt", "rows.csv"] {
                 assert!(
                     repositories::tree::get_file_by_path(&repo, &head, Path::new(name))?.is_some(),
                     "{name} should be committed at the branch head"
@@ -635,7 +648,10 @@ mod tests {
             }
 
             // A file staged, or a staged file uploaded again, after a commit has read the staged
-            // entries is not part of that commit and stays staged for the next one.
+            // entries is not part of that commit and stays staged for the next one. That next
+            // commit is requested while the first is in flight, with the workspace as loaded
+            // before the first commit moved its base, and must not report the file the first
+            // commit changed and that was uploaded again since as a conflict.
             let workspace = repositories::workspaces::get(&repo, &workspace.id)?
                 .expect("named workspace should survive its commit");
             let stage = |name: &'static str, content: &'static str| {
@@ -646,26 +662,52 @@ mod tests {
                     repositories::workspaces::files::add(workspace, &path).await
                 }
             };
-            let reuploaded = Path::new("uploads/reuploaded.txt");
+            let reuploaded = Path::new("rows.csv");
             let staged_mid_commit = Path::new("uploads/staged_mid_commit.txt");
-            stage("uploads/reuploaded.txt", "first upload").await?;
+            stage("rows.csv", "id,text\n1,first\n2,second\n").await?;
 
-            let (reached, resume) = pause_commit_after_staged_read(&workspace.workspace_repo.path);
+            let workspace_path = &workspace.workspace_repo.path;
+            let (reached, resume) = pause_commit_after_staged_read(workspace_path);
+            let (start_next, next_started) = oneshot::channel();
             let stage_mid_commit = async {
                 reached
                     .await
                     .expect("the commit should reach the pause after reading staged entries");
                 stage("uploads/staged_mid_commit.txt", "staged mid-commit").await?;
-                stage("uploads/reuploaded.txt", "second upload").await?;
+                stage("rows.csv", "id,text\n1,first\n2,second\n3,third\n").await?;
+                start_next
+                    .send(())
+                    .expect("the next commit should be waiting to start");
+                // Resume only once the next commit waits on the lock the paused one holds: the
+                // registry's handle, the paused commit's, and the waiting commit's.
+                while COMMIT_LOCKS
+                    .lock()
+                    .expect("no test should panic while holding the commit lock registry")
+                    .get(workspace_path)
+                    .map_or(0, Arc::strong_count)
+                    < 3
+                {
+                    tokio::task::yield_now().await;
+                }
                 resume
                     .send(())
                     .expect("the paused commit should be waiting to resume");
                 Ok::<_, OxenError>(())
             };
-            let (paused_commit, staged) =
-                tokio::join!(commit(&workspace, &body_one, "main"), stage_mid_commit);
+            let next_commit = async {
+                next_started
+                    .await
+                    .expect("the next commit should be started once the files are staged");
+                commit(&workspace, &body_two, "main").await
+            };
+            let (paused_commit, staged, next_commit) = tokio::join!(
+                commit(&workspace, &body_one, "main"),
+                stage_mid_commit,
+                next_commit
+            );
             let paused_commit = paused_commit?;
             staged?;
+            let next_commit = next_commit?;
             assert!(
                 repositories::tree::get_file_by_path(&repo, &paused_commit, staged_mid_commit)?
                     .is_none(),
@@ -676,9 +718,6 @@ mod tests {
                 repositories::tree::get_file_by_path(&repo, &paused_commit, reuploaded)?
                     .expect("the paused commit should carry the upload it read");
 
-            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
-                .expect("named workspace should survive its commit");
-            let next_commit = commit(&workspace, &body_two, "main").await?;
             assert!(
                 repositories::tree::get_file_by_path(&repo, &next_commit, staged_mid_commit)?
                     .is_some(),
