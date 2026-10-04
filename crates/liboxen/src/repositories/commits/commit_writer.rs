@@ -446,6 +446,9 @@ pub fn commit_dir_entries(
     let vnode_entries = split_into_vnodes(repo, &dir_entries, &existing_nodes, new_commit)?;
 
     // Compute the commit hash
+    #[cfg(test)]
+    let timestamp = pinned_commit_timestamp(&repo.path).unwrap_or_else(OffsetDateTime::now_utc);
+    #[cfg(not(test))]
     let timestamp = OffsetDateTime::now_utc();
     let new_commit = NewCommit {
         parent_ids: parent_ids.iter().map(|id| id.to_string()).collect(),
@@ -1215,6 +1218,27 @@ fn create_commit_data(
             timestamp,
         })
     }
+}
+
+// Timestamps tests pin for the commits `commit_dir_entries` makes in a repository, keyed by
+// repository path so a pin only affects the test that set it.
+#[cfg(test)]
+static PINNED_COMMIT_TIMESTAMPS: std::sync::LazyLock<
+    parking_lot::Mutex<HashMap<PathBuf, OffsetDateTime>>,
+> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+/// Makes every commit `commit_dir_entries` makes in the repository at `repo_path` carry
+/// `timestamp`.
+#[cfg(test)]
+pub(crate) fn pin_commit_timestamp(repo_path: &Path, timestamp: OffsetDateTime) {
+    PINNED_COMMIT_TIMESTAMPS
+        .lock()
+        .insert(repo_path.to_path_buf(), timestamp);
+}
+
+#[cfg(test)]
+fn pinned_commit_timestamp(repo_path: &Path) -> Option<OffsetDateTime> {
+    PINNED_COMMIT_TIMESTAMPS.lock().get(repo_path).copied()
 }
 
 #[cfg(test)]

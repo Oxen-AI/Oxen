@@ -967,6 +967,62 @@ mod tests {
         .await
     }
 
+    // Two commits with the same parent, message, author, email, and timestamp but different
+    // contents are different commits, and each id must name its own tree.
+    #[tokio::test]
+    async fn test_commits_with_the_same_metadata_get_distinct_ids() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let mut staged = vec![];
+            for name in ["first.txt", "second.txt"] {
+                let workspace = create(&repo, &head, Uuid::new_v4().to_string(), true)?;
+                let path = workspace.workspace_repo.path.join(name);
+                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+                staged.push((workspace, name));
+            }
+            let body = NewCommitBody {
+                message: "Same message".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
+
+            // Both commits carry one timestamp, and each goes to its own new branch, which starts
+            // at `head`, so both share that parent: only their contents differ.
+            repositories::commits::commit_writer::pin_commit_timestamp(
+                &repo.path,
+                OffsetDateTime::now_utc(),
+            );
+            let mut commits = vec![];
+            for (workspace, name) in &staged {
+                let branch = format!("branch-{name}");
+                commits.push(repositories::workspaces::commit(workspace, &body, &branch).await?);
+            }
+            let (first, second) = (&commits[0], &commits[1]);
+            assert_eq!(
+                (&first.parent_ids, first.timestamp),
+                (&second.parent_ids, second.timestamp),
+                "both commits should share a parent and a timestamp, or this test no longer \
+                 builds two commits that differ only in their contents"
+            );
+
+            assert_ne!(
+                first.id, second.id,
+                "commits with different contents should get different ids"
+            );
+            for (commit, (_, name)) in commits.iter().zip(&staged) {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, commit, Path::new(name))?.is_some(),
+                    "the tree of commit {} should hold {name}",
+                    commit.id
+                );
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs()
     -> Result<(), OxenError> {
