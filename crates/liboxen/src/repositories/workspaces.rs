@@ -967,6 +967,79 @@ mod tests {
         .await
     }
 
+    // Staging a file writes its entry and its parent-directory markers to the staged db
+    // separately, so a commit can read the entry without the markers. Such a commit must keep the
+    // branch's existing files and either commit the file under its directory or leave it staged.
+    #[tokio::test]
+    async fn test_commit_of_a_file_staged_without_its_directory_markers() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let existing = [Path::new("hello.txt"), Path::new("existing/kept.txt")];
+            for path in existing {
+                let full_path = repo.path.join(path);
+                util::fs::write_to_path(&full_path, format!("content of {path:?}"))?;
+                repositories::add(&repo, &full_path).await?;
+            }
+            repositories::commit(&repo, "Add the files the branch keeps")?;
+
+            // A file at the root, one in a directory main has, and one in a new directory.
+            for new_file in [
+                Path::new("new_root.txt"),
+                Path::new("existing/added.txt"),
+                Path::new("new_dir/new.txt"),
+            ] {
+                let head = repositories::revisions::get(&repo, DEFAULT_BRANCH_NAME)?
+                    .expect("main should have a head commit");
+                let workspace = create(&repo, &head, uuid::Uuid::new_v4().to_string(), true)?;
+                let path = workspace.workspace_repo.path.join(new_file);
+                util::fs::write_to_path(&path, "staged without its directory markers")?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+                {
+                    let staged = core::staged::get_staged_db_manager(&workspace.workspace_repo)?;
+                    for dir in new_file.ancestors().skip(1) {
+                        assert!(
+                            staged.exists(dir)?,
+                            "staging {new_file:?} should have written a marker for {dir:?}"
+                        );
+                        staged.delete_entry(dir)?;
+                    }
+                }
+
+                let result = repositories::workspaces::commit(
+                    &workspace,
+                    &NewCommitBody {
+                        message: format!("Commit {new_file:?} staged without its markers"),
+                        author: "Bessie".to_string(),
+                        email: "bessie@oxen.ai".to_string(),
+                    },
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await;
+
+                let branch_head = repositories::revisions::get(&repo, DEFAULT_BRANCH_NAME)?
+                    .expect("main should have a head commit");
+                for path in existing {
+                    assert!(
+                        repositories::tree::get_file_by_path(&repo, &branch_head, path)?.is_some(),
+                        "{path:?} should still be on main after committing {new_file:?} staged \
+                         without its directory markers, which returned {result:?}"
+                    );
+                }
+                let committed =
+                    repositories::tree::get_file_by_path(&repo, &branch_head, new_file)?.is_some();
+                let left_staged =
+                    result.is_err() && repositories::workspaces::files::exists(&workspace, &path)?;
+                assert!(
+                    committed || left_staged,
+                    "{new_file:?} should be committed under its directory or left staged; the \
+                     commit returned {result:?}"
+                );
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs()
     -> Result<(), OxenError> {
