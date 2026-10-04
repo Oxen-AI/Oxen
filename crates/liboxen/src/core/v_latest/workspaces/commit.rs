@@ -132,14 +132,18 @@ async fn commit_inner(
             if !conflicts.is_empty() {
                 return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
             }
+
+            #[cfg(test)]
+            tests::pause_at(
+                tests::PausePoint::AfterStagedRead,
+                &workspace.workspace_repo.path,
+            );
+
             Ok((workspace, dir_entries, staged_snapshot))
         })
         .await??
     };
     let workspace = &workspace;
-
-    #[cfg(test)]
-    tests::pause_after_staged_read(&workspace.workspace_repo.path).await;
 
     let dir_entries = export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
 
@@ -168,6 +172,12 @@ async fn commit_inner(
         // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
         // log::debug!("0.19.0::workspaces::commit tree");
         // tree.print();
+
+        #[cfg(test)]
+        tests::pause_at(
+            tests::PausePoint::BeforeRefUpdate,
+            &workspace.workspace_repo.path,
+        );
 
         // Update the branch
         let commit_id = commit.id.to_owned();
@@ -712,18 +722,10 @@ mod tests {
             stage("file2.txt", "first upload").await?;
 
             let workspace_path = &workspace.workspace_repo.path;
-            let (reached, resume) = pause_commit_after_staged_read(workspace_path);
+            let (reached, resume) = pause_commit_at(PausePoint::AfterStagedRead, workspace_path);
             let (start_next, next_started) = oneshot::channel();
-            // A commit that returns before its pause removes the pause, which ends the wait on
-            // `reached`, so the test fails with that commit's own error instead of hanging.
-            let paused_commit = async {
-                let result = commit(&workspace, &body_one, "main").await;
-                PAUSES
-                    .lock()
-                    .expect("no test should panic while holding the pause registry")
-                    .remove(workspace_path);
-                result
-            };
+            let paused_commit =
+                commit_then_clear_pause(PausePoint::AfterStagedRead, &workspace, &body_one);
             let stage_mid_commit = async {
                 if reached.await.is_err() {
                     return Ok(());
@@ -876,33 +878,150 @@ mod tests {
         .await
     }
 
+    // Commits of different workspaces to the same branch each build on the head they read. Moving
+    // the branch to one of them must not discard another that landed after that read.
+    #[tokio::test]
+    async fn test_concurrent_commits_from_different_workspaces_both_land() -> Result<(), OxenError>
+    {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let mut workspaces = vec![];
+            for name in ["first.txt", "second.txt"] {
+                let workspace = repositories::workspaces::create(
+                    &repo,
+                    &head,
+                    uuid::Uuid::new_v4().to_string(),
+                    true,
+                )?;
+                let path = workspace.workspace_repo.path.join(name);
+                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+                workspaces.push(workspace);
+            }
+            let (first, second) = (&workspaces[0], &workspaces[1]);
+            // Distinct messages: a commit's id covers its parents, message, author, email, and
+            // timestamp second, so two otherwise identical bodies would collide on one id.
+            let [first_body, second_body] =
+                ["commit first.txt", "commit second.txt"].map(|message| NewCommitBody {
+                    author: "author".to_string(),
+                    email: "email".to_string(),
+                    message: message.to_string(),
+                });
+
+            let (first_reached, first_resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &first.workspace_repo.path);
+            let (second_reached, second_resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &second.workspace_repo.path);
+            let release_once_both_built = async {
+                let (first_built, second_built) = tokio::join!(first_reached, second_reached);
+                let both_built = first_built.is_ok() && second_built.is_ok();
+                if both_built {
+                    let branch = repositories::branches::get_by_name(&repo, "main")
+                        .expect("main should be readable while both commits are paused");
+                    assert_eq!(
+                        branch.commit_id, head.id,
+                        "both commits should be built while main is still at the head they read, \
+                         or this test no longer holds them inside the window before the branch \
+                         moves"
+                    );
+                }
+                // A commit that already returned is no longer listening.
+                let _ = first_resume.send(());
+                let _ = second_resume.send(());
+                both_built
+            };
+            let (first_commit, second_commit, both_built) = tokio::join!(
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, first, &first_body),
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, second, &second_body),
+                release_once_both_built,
+            );
+            let (first_commit, second_commit) = (first_commit?, second_commit?);
+            assert!(
+                both_built,
+                "both commits should pause before moving the branch, or this test no longer \
+                 holds them inside that window"
+            );
+
+            let branch = repositories::branches::get_by_name(&repo, "main")?;
+            let branch_head = repositories::commits::get_by_id(&repo, &branch.commit_id)?
+                .expect("branch head commit should exist");
+            for name in ["first.txt", "second.txt"] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &branch_head, Path::new(name))?
+                        .is_some(),
+                    "{name} was in a commit that returned Ok, so it should be on main; \
+                     main is at {branch_head}, first commit {first_commit}, second commit \
+                     {second_commit}"
+                );
+            }
+            assert!(
+                first_commit.parent_ids.contains(&second_commit.id)
+                    || second_commit.parent_ids.contains(&first_commit.id),
+                "one commit should be built on the other once both have landed; first commit \
+                 {first_commit} has parents {:?}, second commit {second_commit} has parents {:?}",
+                first_commit.parent_ids,
+                second_commit.parent_ids
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Where in `commit_inner` a test can pause a commit.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub(super) enum PausePoint {
+        /// Once the staged entries have been read.
+        AfterStagedRead,
+        /// Once the commit has been built on the branch head, before the branch moves to it.
+        BeforeRefUpdate,
+    }
+
     type PauseHandles = (oneshot::Sender<()>, oneshot::Receiver<()>);
 
-    // Pauses installed by `pause_commit_after_staged_read`, keyed by workspace repo path so a
-    // pause only ever stops the commit of the workspace that installed it.
-    static PAUSES: LazyLock<StdMutex<HashMap<PathBuf, PauseHandles>>> =
+    // Pauses installed by `pause_commit_at`, keyed by point and workspace repo path so a pause
+    // only ever stops the commit of the workspace that installed it, at the point it named.
+    static PAUSES: LazyLock<StdMutex<HashMap<(PausePoint, PathBuf), PauseHandles>>> =
         LazyLock::new(|| StdMutex::new(HashMap::new()));
 
-    /// Called by `commit_inner` once it has read the staged entries. If a pause is installed for
-    /// this workspace, signals that the read happened and waits to be resumed. One-shot.
-    pub(super) async fn pause_after_staged_read(workspace_path: &Path) {
+    /// Called by `commit_inner` at `point`, on a blocking thread. If a pause is installed there for
+    /// this workspace, signals that the commit reached it and blocks until resumed. One-shot: the
+    /// pause is removed when first reached.
+    pub(super) fn pause_at(point: PausePoint, workspace_path: &Path) {
         let pause = PAUSES
             .lock()
             .expect("no test should panic while holding the pause registry")
-            .remove(workspace_path);
+            .remove(&(point, workspace_path.to_path_buf()));
         if let Some((reached, resume)) = pause {
             reached
                 .send(())
                 .expect("the test waiting on the pause should still be listening");
             resume
-                .await
+                .blocking_recv()
                 .expect("the test should resume the paused commit");
         }
     }
 
-    /// Makes the next commit of the workspace at `workspace_path` pause after reading its staged
-    /// entries. Returns a receiver that fires once it pauses and a sender that resumes it.
-    fn pause_commit_after_staged_read(
+    /// Commits `workspace` to `main`, then removes any pause at `point` the commit returned
+    /// without reaching. That ends the wait on the pause's receiver, so a commit that fails before
+    /// its pause makes the test fail with its error instead of hanging.
+    async fn commit_then_clear_pause(
+        point: PausePoint,
+        workspace: &Workspace,
+        body: &NewCommitBody,
+    ) -> Result<Commit, OxenError> {
+        let result = commit(workspace, body, "main").await;
+        PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .remove(&(point, workspace.workspace_repo.path.clone()));
+        result
+    }
+
+    /// Makes the next commit of the workspace at `workspace_path` pause at `point`. Returns a
+    /// receiver that fires once it pauses and a sender that resumes it.
+    fn pause_commit_at(
+        point: PausePoint,
         workspace_path: &Path,
     ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
         let (reached_tx, reached_rx) = oneshot::channel();
@@ -910,7 +1029,10 @@ mod tests {
         PAUSES
             .lock()
             .expect("no test should panic while holding the pause registry")
-            .insert(workspace_path.to_path_buf(), (reached_tx, resume_rx));
+            .insert(
+                (point, workspace_path.to_path_buf()),
+                (reached_tx, resume_rx),
+            );
         (reached_rx, resume_tx)
     }
 }
