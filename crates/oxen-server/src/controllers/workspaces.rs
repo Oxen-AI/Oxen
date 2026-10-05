@@ -455,6 +455,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
                 branch,
             })))
         }
+        Err(err @ OxenError::CommitIdTaken(_)) => Err(err.into()),
         Err(err) => {
             // The 422 below already tells the caller they got this wrong, so `warn!` rather than
             // `error!` — an `error!` here reports every rejected commit as a server fault.

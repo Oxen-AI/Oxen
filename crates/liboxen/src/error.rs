@@ -400,6 +400,13 @@ pub enum OxenError {
     #[error("No changes to commit")]
     NoChanges,
 
+    /// The repository already holds, or is writing, a commit with this id, so a second commit
+    /// was refused rather than written under it. Its parents, message, author, email, and second
+    /// decide the id, so a retry in a later second gets another one. oxen-server maps this to
+    /// HTTP 429 with `Retry-After`.
+    #[error("A commit with id {0} already exists or is being written")]
+    CommitIdTaken(MerkleHash),
+
     #[error("No such commit, dir, or vnode Merkle tree node with hash (hex): {0}")]
     MerkleNodeNotFound(HexHash),
 
@@ -813,6 +820,9 @@ impl OxenError {
             BranchNotFound(_) => "List available branches with `oxen branch --all`.",
             LockTimeout(_) => {
                 "A maintenance operation holds the repository's exclusive lock. Wait a few seconds and retry."
+            }
+            CommitIdTaken(_) => {
+                "Another commit with the same parent, message, author, and email was made in the same second. Retry the commit."
             }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."

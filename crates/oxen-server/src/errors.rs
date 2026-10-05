@@ -337,6 +337,21 @@ impl error::ResponseError for OxenHttpError {
                             .insert_header(("Retry-After", "5"))
                             .json(error_json)
                     }
+                    OxenError::CommitIdTaken(commit_id) => {
+                        tracing::warn!(%commit_id, "Refused a commit whose id is already taken");
+                        let error_json = json!({
+                            "error": {
+                                "type": "commit_id_taken",
+                                "title": "Commit id already taken",
+                                "detail": error.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "1"))
+                            .json(error_json)
+                    }
                     OxenError::NoMergeBase { base, head } => {
                         log::debug!("No merge base between {base} and {head}");
                         let error_json = json!({

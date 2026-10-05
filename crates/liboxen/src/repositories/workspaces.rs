@@ -843,8 +843,10 @@ mod tests {
     use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
     use crate::model::NewCommitBody;
     use crate::repositories;
+    use crate::repositories::commits::commit_writer::pin_commit_timestamp;
     use crate::test;
     use crate::util;
+    use time::Duration;
 
     #[tokio::test]
     async fn test_can_commit_different_files_workspaces_without_merge_conflicts()
@@ -967,10 +969,12 @@ mod tests {
         .await
     }
 
-    // Two commits with the same parent, message, author, email, and timestamp but different
-    // contents are different commits, and each id must name its own tree.
+    // A commit's parent, message, author, email, and second decide its id, so a second commit
+    // matching all five is refused rather than written under the first one's id, and a retry in a
+    // later second lands with an id of its own.
     #[tokio::test]
-    async fn test_commits_with_the_same_metadata_get_distinct_ids() -> Result<(), OxenError> {
+    async fn test_a_commit_whose_id_is_taken_is_refused_until_a_later_second()
+    -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let head = repositories::commits::head_commit(&repo)?;
             let mut staged = vec![];
@@ -989,34 +993,50 @@ mod tests {
 
             // Both commits carry one timestamp, and each goes to its own new branch, which starts
             // at `head`, so both share that parent: only their contents differ.
-            repositories::commits::commit_writer::pin_commit_timestamp(
-                &repo.path,
-                OffsetDateTime::now_utc(),
+            let now = OffsetDateTime::now_utc();
+            pin_commit_timestamp(&repo.path, now);
+            let [
+                (first_workspace, first_name),
+                (second_workspace, second_name),
+            ] = &staged[..]
+            else {
+                unreachable!("two workspaces were staged");
+            };
+            let second_branch = format!("branch-{second_name}");
+            let first = commit(first_workspace, &body, format!("branch-{first_name}")).await?;
+            let refused = commit(second_workspace, &body, &second_branch).await;
+            assert!(
+                matches!(refused, Err(OxenError::CommitIdTaken(id)) if id.to_string() == first.id),
+                "a commit whose id is already taken is refused, got {refused:?}"
             );
-            let mut commits = vec![];
-            for (workspace, name) in &staged {
-                let branch = format!("branch-{name}");
-                commits.push(repositories::workspaces::commit(workspace, &body, &branch).await?);
-            }
-            let (first, second) = (&commits[0], &commits[1]);
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &first, Path::new(first_name))?
+                    .is_some()
+                    && repositories::tree::get_file_by_path(&repo, &first, Path::new(second_name))?
+                        .is_none(),
+                "the refused commit leaves the first commit's tree as it was"
+            );
             assert_eq!(
-                (&first.parent_ids, first.timestamp),
-                (&second.parent_ids, second.timestamp),
-                "both commits should share a parent and a timestamp, or this test no longer \
-                 builds two commits that differ only in their contents"
+                repositories::branches::get_by_name(&repo, &second_branch)?.commit_id,
+                head.id,
+                "the refused commit leaves its branch where it was"
             );
 
-            assert_ne!(
-                first.id, second.id,
-                "commits with different contents should get different ids"
+            pin_commit_timestamp(&repo.path, now + Duration::seconds(1));
+            let second = commit(second_workspace, &body, &second_branch).await?;
+            assert_eq!(
+                second.parent_ids, first.parent_ids,
+                "the retry shares the parent"
             );
-            for (commit, (_, name)) in commits.iter().zip(&staged) {
-                assert!(
-                    repositories::tree::get_file_by_path(&repo, commit, Path::new(name))?.is_some(),
-                    "the tree of commit {} should hold {name}",
-                    commit.id
-                );
-            }
+            assert_ne!(
+                second.id, first.id,
+                "a retry in a later second gets its own id"
+            );
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &second, Path::new(second_name))?
+                    .is_some(),
+                "the retried commit's tree holds its own file"
+            );
 
             Ok(())
         })

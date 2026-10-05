@@ -3,9 +3,11 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use indicatif::{ProgressBar, ProgressStyle};
+use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 use std::path::PathBuf;
 use std::str;
+use std::sync::LazyLock;
 use std::time::Duration;
 use std::time::Instant;
 use time::OffsetDateTime;
@@ -70,6 +72,47 @@ fn put_dir_hashes(
         put_dir_hash(dir_hash_db, path, hash)?;
     }
     Ok(())
+}
+
+/// The commit ids this process is writing, each with the path of the repository it is writing in.
+static COMMIT_IDS_IN_FLIGHT: LazyLock<Mutex<HashSet<(PathBuf, MerkleHash)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// One commit's hold on its id while the commit is written, released on drop.
+struct CommitIdClaim {
+    repo_path: PathBuf,
+    commit_id: MerkleHash,
+}
+
+impl CommitIdClaim {
+    /// Claims `commit_id` in `repo`, or returns [`OxenError::CommitIdTaken`] when another commit in
+    /// this process is writing it or the repository already holds it. Keep the claim until the
+    /// commit node is written.
+    fn new(repo: &LocalRepository, commit_id: MerkleHash) -> Result<Self, OxenError> {
+        if !COMMIT_IDS_IN_FLIGHT
+            .lock()
+            .insert((repo.path.clone(), commit_id))
+        {
+            return Err(OxenError::CommitIdTaken(commit_id));
+        }
+        // Built only once the insert succeeds, since dropping it removes the entry.
+        let claim = Self {
+            repo_path: repo.path.clone(),
+            commit_id,
+        };
+        if repo.merkle_node_store().exists(&commit_id)? {
+            return Err(OxenError::CommitIdTaken(commit_id));
+        }
+        Ok(claim)
+    }
+}
+
+impl Drop for CommitIdClaim {
+    fn drop(&mut self) {
+        COMMIT_IDS_IN_FLIGHT
+            .lock()
+            .remove(&(self.repo_path.clone(), self.commit_id));
+    }
 }
 
 #[derive(Clone)]
@@ -256,6 +299,7 @@ pub(crate) fn commit_dir_entries_with_parents(
 
     // Compute the commit hash
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let mut parent_hashes = Vec::new();
     for parent_id in &new_commit.parent_ids {
@@ -345,6 +389,7 @@ pub fn commit_dir_entries_new(
     )?;
 
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let node = CommitNode::new(CommitNodeOpts {
         hash: commit_id,
@@ -458,6 +503,7 @@ pub fn commit_dir_entries(
         timestamp,
     };
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let node = CommitNode::new(CommitNodeOpts {
         hash: commit_id,
@@ -1529,6 +1575,18 @@ mod tests {
 
             assert!(tree.has_path(Path::new("all_files/dir_0/new_file.txt"))?);
             assert!(tree.has_path(Path::new("files/dir_0/new_file.txt"))?);
+
+            let id = MerkleHash::new(1);
+            let held = super::CommitIdClaim::new(&repo, id)?;
+            assert!(
+                matches!(
+                    super::CommitIdClaim::new(&repo, id),
+                    Err(OxenError::CommitIdTaken(_))
+                ),
+                "an id another commit is writing is taken"
+            );
+            drop(held);
+            drop(super::CommitIdClaim::new(&repo, id).expect("a dropped claim frees its id"));
 
             Ok(())
         })
