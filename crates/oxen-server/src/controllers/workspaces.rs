@@ -399,7 +399,8 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
         (status = 400, description = "Invalid request body"),
         (status = 404, description = "Workspace or branch not found"),
         (status = 409, description = "Conflict — a staged file also changed on the target branch since the workspace's base commit"),
-        (status = 422, description = "Unprocessable Entity — the commit failed for another reason")
+        (status = 422, description = "Unprocessable Entity — the commit failed for another reason"),
+        (status = 429, description = "Too Many Requests: another commit already holds this commit's id, so retry after the Retry-After delay")
     )
 )]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
