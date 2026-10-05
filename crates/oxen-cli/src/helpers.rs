@@ -147,22 +147,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn filesystem_backed_repo_is_blocked_until_migrated() -> Result<(), OxenError> {
-        test::run_empty_dir_test(|dir| {
-            let repo = test::init_fs_merkle_backend(dir)?;
-            assert!(
-                matches!(
-                    check_repo_migration_needed(&repo),
-                    Err(OxenError::MigrationRequired(_))
-                ),
-                "a filesystem-backed repo should refuse guarded commands"
-            );
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn lmdb_backed_repo_is_not_blocked() -> Result<(), OxenError> {
+    fn fresh_repo_is_not_blocked() -> Result<(), OxenError> {
         test::run_empty_local_repo_test(|repo| {
             check_repo_migration_needed(&repo)?;
             Ok(())

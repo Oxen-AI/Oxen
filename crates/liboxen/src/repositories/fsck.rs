@@ -409,9 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scan_node_format_finds_planted_pre_v0_25_node() -> Result<(), OxenError> {
-        // Pins the filesystem backend: the planting below rewrites raw bytes under
-        // `.oxen/tree/nodes`, a layout only the pre-0.25 backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let clean = scan_node_format(&repo)?;
             assert!(
                 !clean.is_affected(),
@@ -421,41 +419,33 @@ mod tests {
             assert_eq!(clean.undecodable, 0);
 
             // Rewrite one vnode into the pre-0.25 shape, in place.
-            let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
-                .join(crate::constants::TREE_DIR)
-                .join(crate::constants::NODES_DIR);
+            let store = repo.merkle_node_store();
             let mut planted = false;
-            for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
-                for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
-                    let node_file = node_dir.join("node");
-                    let blob = std::fs::read(&node_file)?;
-                    // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
-                    if blob.first() != Some(&MerkleTreeNodeType::VNode.to_u8()) {
-                        continue;
-                    }
-                    let data_len =
-                        u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
-                    let vnode = crate::model::merkle_tree::node::VNode::deserialize(
-                        &blob[21..21 + data_len],
-                    )
-                    .expect("fixture vnode should decode before rewriting");
-                    let legacy = rmp_serde::to_vec(&LegacyVNodeData {
-                        hash: *vnode.hash(),
-                        node_type: MerkleTreeNodeType::VNode,
-                    })
-                    .expect("legacy vnode should serialize");
+            for hash in store.list_hashes()? {
+                let blob = store.read_node(&hash)?;
+                // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
+                if blob.first() != Some(&MerkleTreeNodeType::VNode.to_u8()) {
+                    continue;
+                }
+                let data_len =
+                    u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
+                let vnode =
+                    crate::model::merkle_tree::node::VNode::deserialize(&blob[21..21 + data_len])
+                        .expect("fixture vnode should decode before rewriting");
+                let legacy = rmp_serde::to_vec(&LegacyVNodeData {
+                    hash: *vnode.hash(),
+                    node_type: MerkleTreeNodeType::VNode,
+                })
+                .expect("legacy vnode should serialize");
 
-                    let mut rewritten = blob[..17].to_vec();
-                    rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
-                    rewritten.extend_from_slice(&legacy);
-                    rewritten.extend_from_slice(&blob[21 + data_len..]);
-                    std::fs::write(&node_file, rewritten)?;
-                    planted = true;
-                    break;
-                }
-                if planted {
-                    break;
-                }
+                let mut rewritten = blob[..17].to_vec();
+                rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
+                rewritten.extend_from_slice(&legacy);
+                rewritten.extend_from_slice(&blob[21 + data_len..]);
+                let children = store.read_children(&hash)?;
+                store.write_nodes(vec![(hash, rewritten.into(), children)], true)?;
+                planted = true;
+                break;
             }
             assert!(planted, "fixture repo should contain a vnode to rewrite");
 
