@@ -229,6 +229,7 @@ pub(crate) fn commit_dir_entries_with_parents(
         None
     };
 
+    let dir_entries = with_parent_dirs(dir_entries);
     let directories = dir_entries
         .keys()
         .map(|path| path.to_path_buf())
@@ -320,6 +321,7 @@ pub fn commit_dir_entries_new(
         parent_ids.push(parent.hash()?);
     }
 
+    let dir_entries = with_parent_dirs(dir_entries);
     let directories = dir_entries
         .keys()
         .map(|path| path.to_path_buf())
@@ -394,6 +396,34 @@ pub fn commit_dir_entries_new(
     Ok(node.to_commit())
 }
 
+/// Adds an entry for every directory above a staged path that `dir_entries` lacks, so each staged
+/// entry is reachable from the root whether or not its directories were staged with it.
+fn with_parent_dirs(
+    mut dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+) -> HashMap<PathBuf, Vec<StagedMerkleTreeNode>> {
+    let mut staged_dirs: HashSet<PathBuf> = dir_entries
+        .values()
+        .flatten()
+        .filter(|entry| matches!(entry.node.node, EMerkleTreeNode::Directory(_)))
+        .filter_map(|entry| entry.node.maybe_path().ok())
+        .collect();
+    let dirs: Vec<PathBuf> = dir_entries.keys().cloned().collect();
+    for dir in dirs {
+        for (child, parent) in dir.ancestors().zip(dir.ancestors().skip(1)) {
+            if staged_dirs.insert(child.to_path_buf()) {
+                dir_entries
+                    .entry(parent.to_path_buf())
+                    .or_default()
+                    .push(StagedMerkleTreeNode {
+                        status: StagedEntryStatus::Added,
+                        node: MerkleTreeNode::default_dir_from_path(child),
+                    });
+            }
+        }
+    }
+    dir_entries
+}
+
 pub fn commit_dir_entries(
     repo: &LocalRepository,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
@@ -431,6 +461,7 @@ pub fn commit_dir_entries(
         parent_ids.push(parent.hash()?);
     }
 
+    let dir_entries = with_parent_dirs(dir_entries);
     let directories = dir_entries
         .keys()
         .map(|path| path.to_path_buf())
@@ -845,8 +876,9 @@ fn r_create_dir_node(
     log::debug!("r_create_dir_node path {path:?} keys: {keys:?}");
 
     let Some((vnodes, _)) = entries.get(&path) else {
-        log::debug!("r_create_dir_node No entries found for directory {path:?}");
-        return Ok(());
+        return Err(OxenError::internal_error(format!(
+            "No staged entries for directory {path:?}"
+        )));
     };
 
     log::debug!("Processing dir {:?} with {} vnodes", path, vnodes.len());

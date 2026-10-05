@@ -322,15 +322,6 @@ async fn server_three_way_merge(
                 status: status.clone(),
                 node: MerkleTreeNode::from_file(named_node),
             });
-        // Ensure all ancestor directories are present in dir_entries
-        let mut ancestor = path.to_path_buf();
-        while let Some(p) = ancestor.parent() {
-            ancestor = p.to_path_buf();
-            dir_entries.entry(ancestor.clone()).or_default();
-            if ancestor == Path::new("") {
-                break;
-            }
-        }
     }
 
     let new_commit = crate::model::NewCommitBody {
