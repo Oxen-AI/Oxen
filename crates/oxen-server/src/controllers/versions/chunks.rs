@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo;
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, path_param, request_relative_path};
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use futures_util::stream::StreamExt as _;
@@ -119,6 +119,7 @@ pub async fn complete(req: HttpRequest, body: String) -> Result<HttpResponse, Ox
             } else {
                 PathBuf::from(file.file_name.clone())
             };
+            let dst_path = request_relative_path(&dst_path, false, "destination path")?;
 
             core::v_latest::workspaces::files::add_version_file(&workspace, &dst_path, &version_id)
                 .await?;

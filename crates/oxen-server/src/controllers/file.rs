@@ -1426,6 +1426,31 @@ mod tests {
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
         assert!(!sync_dir.join("escaped.txt").exists());
 
+        let config_path = repo.path.join(".oxen").join("config.toml");
+        let config_before = std::fs::read(&config_path)?;
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(
+            repo.path.join("payload.txt"),
+            "file",
+            "text/plain",
+            "payload.txt",
+        );
+        let (header, body) = multipart_form_data_builder.build();
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/file/main/.OXEN/config.toml"
+            ))
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            std::fs::read(&config_path)?,
+            config_before,
+            "a target inside .oxen leaves the repository's metadata alone"
+        );
+
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
     }
