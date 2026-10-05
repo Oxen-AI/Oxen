@@ -587,9 +587,13 @@ async fn compute_staged_merkle_tree_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::v_latest::add::stage_file_with_hash;
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::util::hasher;
+    use parking_lot::Mutex;
+    use std::collections::HashSet;
     use std::time::{Duration, Instant};
     use tokio::sync::oneshot;
 
@@ -794,8 +798,81 @@ mod tests {
                 "the paused commit should carry the first upload"
             );
 
+            // A batch upload stages each directory entry once per batch, so a commit landing
+            // partway through it leaves the batch's later files staged without the directory
+            // entries that commit unstaged. The next commit keeps the branch and carries them.
+            let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+            stage_in_batch(&workspace, &seen_dirs, "uploads/batch_first.txt").await?;
+            commit(&workspace, &body_one, "main").await?;
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            stage_in_batch(&workspace, &seen_dirs, "uploads/batch_second.txt").await?;
+            assert!(
+                !get_staged_db_manager(&workspace.workspace_repo)?.exists("")?,
+                "the batch's later files should be staged without a root entry, or this test no \
+                 longer reaches the state a commit mid-batch leaves"
+            );
+            let after_batch = commit(&workspace, &body_two, "main").await?;
+            for name in [
+                "file1.txt",
+                "uploads/batch_first.txt",
+                "uploads/batch_second.txt",
+            ] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &after_batch, Path::new(name))?
+                        .is_some(),
+                    "{name} should be on main after committing files staged without their \
+                     directory entries"
+                );
+            }
+
+            // A commit can also read a file in a new directory after its entry is written and
+            // before its directory entries are.
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            let in_new_dir = Path::new("new_dir/new.txt");
+            let path = workspace.workspace_repo.path.join(in_new_dir);
+            util::fs::write_to_path(&path, "staged without its directory entries")?;
+            repositories::workspaces::files::add(&workspace, &path).await?;
+            {
+                let staged = get_staged_db_manager(&workspace.workspace_repo)?;
+                for dir in in_new_dir.ancestors().skip(1) {
+                    staged.delete_entry(dir)?;
+                }
+            }
+            let after_window = commit(&workspace, &body_one, "main").await?;
+            for name in [Path::new("file1.txt"), in_new_dir] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &after_window, name)?.is_some(),
+                    "{name:?} should be on main after committing a file in a new directory staged \
+                     without its directory entries"
+                );
+            }
+
             Ok(())
         })
+        .await
+    }
+
+    /// Stages `name` as one file of a batch upload sharing `seen_dirs`, as the workspace upload
+    /// endpoint does.
+    async fn stage_in_batch(
+        workspace: &Workspace,
+        seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+        name: &str,
+    ) -> Result<(), OxenError> {
+        let path = workspace.workspace_repo.path.join(name);
+        util::fs::write_to_path(&path, name)?;
+        let hash = hasher::hash_file_contents(&path)?;
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        stage_file_with_hash(
+            workspace,
+            &path,
+            Path::new(name),
+            &hash,
+            &staged_db_manager,
+            seen_dirs,
+        )
         .await
     }
 
