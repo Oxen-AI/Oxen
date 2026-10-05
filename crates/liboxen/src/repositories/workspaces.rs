@@ -1566,6 +1566,22 @@ mod tests {
             repositories::workspaces::delete(&workspace)?;
             assert!(!workspace.dir().exists());
 
+            let body = NewCommitBody {
+                message: "Committing a deleted workspace".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
+            let result =
+                repositories::workspaces::commit(&workspace, &body, DEFAULT_BRANCH_NAME).await;
+            assert!(
+                matches!(result, Err(OxenError::WorkspaceNotFound(_))),
+                "a commit through a copy of a deleted workspace fails as not found, got {result:?}"
+            );
+            assert!(
+                !workspace.dir().exists(),
+                "the failed commit leaves no workspace directory behind"
+            );
+
             Ok(())
         })
         .await
