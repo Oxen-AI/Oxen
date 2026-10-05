@@ -673,6 +673,10 @@ async fn fast_forward_merge(
     // If there are no conflicts, restore the entries
     // Grouping the processing of merge_tree_results and base_tree_results like this ensures no files are modified if the merge doesn't complete
     if base_tree_results.cannot_overwrite_entries.is_empty() {
+        for entry in &merge_tree_results.entries_to_restore {
+            util::fs::working_tree_path(&repo.path, &entry.path)?;
+        }
+
         // All conflict checks have passed; the next lines mutate the working
         // tree. Write the resume marker *now* so a SIGTERM mid-restore is
         // recoverable, but no marker is left behind when the merge errors out
@@ -1444,6 +1448,10 @@ pub async fn find_merge_conflicts(
 
     // If there are no conflicts, restore the entries
     if cannot_overwrite_entries.is_empty() {
+        for entry in &entries_to_restore {
+            util::fs::working_tree_path(&repo.path, &entry.path)?;
+        }
+
         // Working-tree mutation starts here. Bracket it with the resume marker
         // so a SIGTERM mid-restore can be recovered by a subsequent merge
         // against the same target. Only when write_to_disk=true — the
