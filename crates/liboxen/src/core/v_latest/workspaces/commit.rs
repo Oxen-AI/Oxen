@@ -550,6 +550,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use std::time::{Duration, Instant};
     use tokio::sync::oneshot;
 
     #[tokio::test]
@@ -690,6 +691,7 @@ mod tests {
                     .expect("the next commit should be waiting to start");
                 // Resume only once the next commit waits on the lock the paused one holds: the
                 // registry's handle, the paused commit's, and the waiting commit's.
+                let deadline = Instant::now() + Duration::from_secs(10);
                 while COMMIT_LOCKS
                     .lock()
                     .expect("no test should panic while holding the commit lock registry")
@@ -697,7 +699,11 @@ mod tests {
                     .map_or(0, Arc::strong_count)
                     < 3
                 {
-                    tokio::task::yield_now().await;
+                    assert!(
+                        Instant::now() < deadline,
+                        "the next commit should be waiting on the paused commit's lock"
+                    );
+                    tokio::time::sleep(Duration::from_millis(2)).await;
                 }
                 resume
                     .send(())
