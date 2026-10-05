@@ -449,6 +449,8 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
                 commit,
             }))
         }
+        Err(OxenError::WorkspaceNotFound(_)) => Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id))),
         Err(OxenError::WorkspaceBehind(workspace)) => {
             Err(OxenHttpError::WorkspaceBehind(Box::new(WorkspaceBranch {
                 workspace: *workspace.clone(),
