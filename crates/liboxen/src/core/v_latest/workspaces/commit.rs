@@ -669,10 +669,20 @@ mod tests {
             let workspace_path = &workspace.workspace_repo.path;
             let (reached, resume) = pause_commit_after_staged_read(workspace_path);
             let (start_next, next_started) = oneshot::channel();
+            // A commit that returns before its pause removes the pause, which ends the wait on
+            // `reached`, so the test fails with that commit's own error instead of hanging.
+            let paused_commit = async {
+                let result = commit(&workspace, &body_one, "main").await;
+                PAUSES
+                    .lock()
+                    .expect("no test should panic while holding the pause registry")
+                    .remove(workspace_path);
+                result
+            };
             let stage_mid_commit = async {
-                reached
-                    .await
-                    .expect("the commit should reach the pause after reading staged entries");
+                if reached.await.is_err() {
+                    return Ok(());
+                }
                 stage("uploads/staged_mid_commit.txt", "staged mid-commit").await?;
                 stage("rows.csv", "id,text\n1,first\n2,second\n3,third\n").await?;
                 start_next
@@ -695,19 +705,17 @@ mod tests {
                 Ok::<_, OxenError>(())
             };
             let next_commit = async {
-                next_started
-                    .await
-                    .expect("the next commit should be started once the files are staged");
-                commit(&workspace, &body_two, "main").await
+                match next_started.await {
+                    Ok(()) => commit(&workspace, &body_two, "main").await.map(Some),
+                    Err(_) => Ok(None),
+                }
             };
-            let (paused_commit, staged, next_commit) = tokio::join!(
-                commit(&workspace, &body_one, "main"),
-                stage_mid_commit,
-                next_commit
-            );
+            let (paused_commit, staged, next_commit) =
+                tokio::join!(paused_commit, stage_mid_commit, next_commit);
             let paused_commit = paused_commit?;
             staged?;
-            let next_commit = next_commit?;
+            let next_commit = next_commit?
+                .expect("the paused commit should reach its pause after reading staged entries");
             assert!(
                 repositories::tree::get_file_by_path(&repo, &paused_commit, staged_mid_commit)?
                     .is_none(),
