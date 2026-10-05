@@ -331,17 +331,9 @@ mod tests {
                 Some(2),
                 "three calls during the held pass should run exactly one follow-up pass"
             );
-            Ok(())
-        })
-        .await
-    }
 
-    // A walk that panics still ends its pass: a walk a call asked for meanwhile runs, and a pass
-    // whose last walk panicked reports a failure.
-    #[tokio::test]
-    async fn test_a_panicking_walk_runs_the_queued_walk_and_reports_a_failure()
-    -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
+            // A walk that panics still ends its pass: a walk a call asked for meanwhile runs, and a
+            // pass whose last walk panicked reports a failure.
             let (reached, release) = hold_next_walk(&repo.path);
             panic_next_walk(&repo.path);
             update_size(&repo)?;
@@ -360,7 +352,7 @@ mod tests {
             );
             assert_eq!(
                 WALKS.lock().get(&repo.path).copied(),
-                Some(2),
+                Some(4),
                 "the pass should walk once more after its walk panicked"
             );
 
