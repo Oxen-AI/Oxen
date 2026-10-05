@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::LazyLock;
+use std::thread;
 use utoipa::ToSchema;
 
 use crate::core::repo_locks;
@@ -69,7 +70,7 @@ pub fn update_size(repo: &LocalRepository) -> Result<(), OxenError> {
     }
 
     let mut next = Some(repo.clone());
-    let spawned = std::thread::Builder::new().spawn(move || {
+    let spawned = thread::Builder::new().spawn(move || {
         let _write = write;
         while let Some(repo) = next.take() {
             // A panicking walk counts as a failed one, so the pass still ends and runs any walk a
