@@ -90,9 +90,7 @@ async fn commit_inner(
     new_commit: &NewCommitBody,
     branch_name: &str,
 ) -> Result<Commit, OxenError> {
-    // The caller's copy may have been loaded before a commit of this workspace that finished while
-    // this one waited on the lock and moved the workspace's base commit. Reload it under the lock,
-    // so the conflict check and the data-frame export compare against the current base.
+    // Reload under the lock: a commit that held it may have moved this workspace's base commit.
     let Some(workspace) = &repositories::workspaces::get_by_dir(
         &workspace.base_repo,
         &workspace.workspace_repo.path,
