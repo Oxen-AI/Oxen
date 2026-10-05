@@ -491,10 +491,7 @@ pub fn commit_dir_entries(
     let vnode_entries = split_into_vnodes(repo, &dir_entries, &existing_nodes, new_commit)?;
 
     // Compute the commit hash
-    #[cfg(test)]
-    let timestamp = pinned_commit_timestamp(&repo.path).unwrap_or_else(OffsetDateTime::now_utc);
-    #[cfg(not(test))]
-    let timestamp = OffsetDateTime::now_utc();
+    let timestamp = commit_timestamp(&repo.path);
     let new_commit = NewCommit {
         parent_ids: parent_ids.iter().map(|id| id.to_string()).collect(),
         message: message.to_string(),
@@ -1269,9 +1266,8 @@ fn create_commit_data(
 // Timestamps tests pin for the commits `commit_dir_entries` makes in a repository, keyed by
 // repository path so a pin only affects the test that set it.
 #[cfg(test)]
-static PINNED_COMMIT_TIMESTAMPS: std::sync::LazyLock<
-    parking_lot::Mutex<HashMap<PathBuf, OffsetDateTime>>,
-> = std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::new()));
+static PINNED_COMMIT_TIMESTAMPS: LazyLock<Mutex<HashMap<PathBuf, OffsetDateTime>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Makes every commit `commit_dir_entries` makes in the repository at `repo_path` carry
 /// `timestamp`.
@@ -1282,9 +1278,21 @@ pub(crate) fn pin_commit_timestamp(repo_path: &Path, timestamp: OffsetDateTime) 
         .insert(repo_path.to_path_buf(), timestamp);
 }
 
+/// The time a commit `commit_dir_entries` makes in the repository at `repo_path` records.
+#[cfg(not(test))]
+fn commit_timestamp(_repo_path: &Path) -> OffsetDateTime {
+    OffsetDateTime::now_utc()
+}
+
+/// The time a commit `commit_dir_entries` makes in the repository at `repo_path` records: the time
+/// a test pinned for that repository, or now.
 #[cfg(test)]
-fn pinned_commit_timestamp(repo_path: &Path) -> Option<OffsetDateTime> {
-    PINNED_COMMIT_TIMESTAMPS.lock().get(repo_path).copied()
+fn commit_timestamp(repo_path: &Path) -> OffsetDateTime {
+    PINNED_COMMIT_TIMESTAMPS
+        .lock()
+        .get(repo_path)
+        .copied()
+        .unwrap_or_else(OffsetDateTime::now_utc)
 }
 
 #[cfg(test)]
