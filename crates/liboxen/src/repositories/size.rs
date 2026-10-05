@@ -1,8 +1,6 @@
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::HashMap;
-#[cfg(test)]
-use std::collections::HashSet;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::LazyLock;
 use utoipa::ToSchema;
@@ -11,8 +9,6 @@ use crate::core::repo_locks;
 use crate::error::OxenError;
 use crate::util::fs::AtomicFile;
 use crate::{model::LocalRepository, util};
-#[cfg(test)]
-use std::path::Path;
 use std::path::PathBuf;
 
 #[derive(Serialize, Debug, Clone, PartialEq, ToSchema)]
@@ -251,6 +247,8 @@ mod tests {
     use super::*;
     use crate::repositories;
     use crate::test;
+    use std::collections::HashSet;
+    use std::path::Path;
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::time::Duration;
 
