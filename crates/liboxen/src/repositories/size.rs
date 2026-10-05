@@ -252,6 +252,7 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use std::sync::mpsc::{self, Receiver, Sender};
+    use std::time::Duration;
 
     /// Walks that completed per repository, the holds `hold_next_walk` installed, and the
     /// repositories whose next walk `panic_next_walk` made panic.
@@ -305,7 +306,7 @@ mod tests {
             let (reached, release) = hold_next_walk(&repo.path);
             update_size(&repo)?;
             reached
-                .recv()
+                .recv_timeout(Duration::from_secs(30))
                 .expect("the pass should hold once it has walked");
 
             let added = repo.path.join("added.txt");
@@ -338,7 +339,7 @@ mod tests {
             panic_next_walk(&repo.path);
             update_size(&repo)?;
             reached
-                .recv()
+                .recv_timeout(Duration::from_secs(30))
                 .expect("the pass should hold once it has walked");
             update_size(&repo)?;
             release
