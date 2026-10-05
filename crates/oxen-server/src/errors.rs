@@ -284,6 +284,11 @@ impl error::ResponseError for OxenHttpError {
                             "A namespace and a repository name must each be a single path segment",
                         ))
                     }
+                    OxenError::InvalidTreePath(_) => {
+                        log::warn!("Refused a ref advance onto an invalid tree path: {error}");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
                     OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => {
                         log::warn!("Rejected request path: {error}");
                         HttpResponse::BadRequest()
