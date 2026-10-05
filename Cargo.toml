@@ -185,6 +185,7 @@ debug = "limited"
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 1
 strip = "symbols"
 debug-assertions = false
 
