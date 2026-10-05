@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::fs::File;
 use tokio::io::BufReader;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -64,8 +64,9 @@ pub async fn commit(
     let lock_key = workspace.workspace_repo.path.clone();
     let lock = commit_lock_for(&lock_key);
     let result = {
-        let _guard = lock.lock().await;
-        commit_inner(workspace, new_commit, branch_name.as_ref()).await
+        // Each blocking task holds a clone, so the lock outlives a caller that stops waiting.
+        let guard = Arc::new(Arc::clone(&lock).lock_owned().await);
+        commit_inner(workspace, new_commit, branch_name.as_ref(), guard).await
     };
     drop(lock);
     cleanup_commit_lock(&lock_key);
@@ -89,83 +90,101 @@ async fn commit_inner(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: &str,
+    commit_guard: Arc<OwnedMutexGuard<()>>,
 ) -> Result<Commit, OxenError> {
-    let repo = &workspace.base_repo;
-    let commit = &workspace.commit;
-
-    let branch = match repositories::branches::get_by_name(repo, branch_name) {
-        Ok(branch) => branch,
-        Err(OxenError::BranchNotFound(_)) => {
-            log::debug!("commit creating branch: {branch_name}");
-            repositories::branches::create(repo, branch_name, &commit.id)?
-        }
-        Err(e) => return Err(e),
-    };
-    log::debug!("commit looking up branch: {:#?}", branch);
-
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
-
     log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
-    let (commit, staged_snapshot) = {
-        let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
+    let (dir_entries, staged_snapshot) = {
+        let (workspace, branch_name, commit_guard) = (
+            workspace.clone(),
+            branch_name.to_string(),
+            Arc::clone(&commit_guard),
+        );
+        tokio::task::spawn_blocking(move || {
+            let _commit_guard = commit_guard;
+            let repo = &workspace.base_repo;
+            let branch = match repositories::branches::get_by_name(repo, &branch_name) {
+                Ok(branch) => branch,
+                Err(OxenError::BranchNotFound(_)) => {
+                    log::debug!("commit creating branch: {branch_name}");
+                    repositories::branches::create(repo, &branch_name, &workspace.commit.id)?
+                }
+                Err(e) => return Err(e),
+            };
+            log::debug!("commit looking up branch: {:#?}", branch);
 
-        // Read all the staged entries
-        let (dir_entries, staged_snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
-            .read_staged_entries_for_commit(&commit_progress_bar)?;
+            let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
 
-        #[cfg(test)]
-        tests::pause_after_staged_read(&workspace.workspace_repo.path).await;
+            // Read all the staged entries
+            let (dir_entries, staged_snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_staged_entries_for_commit(&commit_progress_bar)?;
 
-        let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
-        if !conflicts.is_empty() {
-            return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
-        }
+            let conflicts = list_conflicts(&workspace, &dir_entries, &branch)?;
+            if !conflicts.is_empty() {
+                return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
+            }
+            Ok((dir_entries, staged_snapshot))
+        })
+        .await??
+    };
 
-        let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
+    #[cfg(test)]
+    tests::pause_after_staged_read(&workspace.workspace_repo.path).await;
 
+    let dir_entries = export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
+
+    let (workspace, new_commit, branch_name) = (
+        workspace.clone(),
+        new_commit.clone(),
+        branch_name.to_string(),
+    );
+    tokio::task::spawn_blocking(move || {
+        // Held until the write finishes, even when the caller stops waiting for it.
+        let _commit_guard = commit_guard;
         let commit = repositories::commits::commit_writer::commit_dir_entries(
             &workspace.base_repo,
             dir_entries,
-            new_commit,
-            branch_name,
+            &new_commit,
+            &branch_name,
         )?;
-        (commit, staged_snapshot)
-    };
 
-    // Unstage through the shared handle rather than dropping it and removing the directory: the
-    // next reader's open would collide with RocksDB's per-directory LOCK until the last holder
-    // finishes. Anything staged or restaged since the read stays for the next commit.
-    log::debug!("Unstaging committed entries: {staged_db_path:?}");
-    get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&staged_snapshot)?;
+        // Unstage through the shared handle rather than dropping it and removing the directory:
+        // the next reader's open would collide with RocksDB's per-directory LOCK until the last
+        // holder finishes. Anything staged or restaged since the read stays for the next commit.
+        log::debug!("Unstaging committed entries: {staged_db_path:?}");
+        get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&staged_snapshot)?;
 
-    // DEBUG
-    // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
-    // log::debug!("0.19.0::workspaces::commit tree");
-    // tree.print();
+        // DEBUG
+        // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
+        // log::debug!("0.19.0::workspaces::commit tree");
+        // tree.print();
 
-    // Update the branch
-    let commit_id = commit.id.to_owned();
-    with_ref_manager(&workspace.base_repo, |manager| {
-        manager.set_branch_commit_id(branch_name, &commit_id)
-    })?;
+        // Update the branch
+        let commit_id = commit.id.to_owned();
+        with_ref_manager(&workspace.base_repo, |manager| {
+            manager.set_branch_commit_id(&branch_name, &commit_id)
+        })?;
 
-    if workspace.name.is_some() {
-        // Named workspaces aren't deleted on commit, instead we
-        // update the workspace config to point to the new commit
-        repositories::workspaces::update_commit(workspace, &commit_id)?;
-    } else {
-        // Unnamed workspaces are deleted on commit. The commit has already landed at this point:
-        // a delete that cannot run yet leaves the directory for a later delete to remove.
-        if let Err(err) = repositories::workspaces::delete(workspace) {
-            tracing::error!(
-                workspace_id = %workspace.id,
-                cause = ?err,
-                "Workspace commit landed but the workspace could not be deleted"
-            );
+        if workspace.name.is_some() {
+            // Named workspaces aren't deleted on commit, instead we
+            // update the workspace config to point to the new commit
+            repositories::workspaces::update_commit(&workspace, &commit_id)?;
+        } else {
+            // Unnamed workspaces are deleted on commit. The commit has already landed at this
+            // point: a delete that cannot run yet leaves the directory for a later delete to
+            // remove.
+            if let Err(err) = repositories::workspaces::delete(&workspace) {
+                tracing::error!(
+                    workspace_id = %workspace.id,
+                    cause = ?err,
+                    "Workspace commit landed but the workspace could not be deleted"
+                );
+            }
         }
-    }
 
-    Ok(commit)
+        Ok(commit)
+    })
+    .await?
 }
 
 pub fn mergeability(
@@ -302,6 +321,7 @@ fn list_conflicts(
 async fn export_tabular_data_frames(
     workspace: &Workspace,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+    commit_guard: &Arc<OwnedMutexGuard<()>>,
 ) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
     // Export all the workspace data frames and add them to the commit
     let mut new_dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -326,10 +346,23 @@ async fn export_tabular_data_frames(
                     // Recompute the metadata for tabular data frames that carry
                     // a staged DuckDB index (editable df and eval).
                     let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
-                    let mut should_export = is_tabular
-                        && repositories::workspaces::data_frames::is_indexed(
-                            workspace, &node_path,
-                        )?;
+                    let (indexed, staged_table) = if is_tabular {
+                        let (workspace, node_path) = (workspace.clone(), node_path.clone());
+                        tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+                            let indexed = repositories::workspaces::data_frames::is_indexed(
+                                &workspace, &node_path,
+                            )?;
+                            let staged_table = !indexed
+                                && repositories::workspaces::data_frames::has_staged_table(
+                                    &workspace, &node_path,
+                                )?;
+                            Ok((indexed, staged_table))
+                        })
+                        .await??
+                    } else {
+                        (false, false)
+                    };
+                    let mut should_export = indexed;
 
                     // A staged table that exists but fails the indexed gate was
                     // written by an older version of oxen (or left by an
@@ -340,12 +373,7 @@ async fn export_tabular_data_frames(
                     // any indexed table. reindex_preserving_rows only errors
                     // (WorkspaceStaleStagedIndex) when there is no user data to
                     // recover.
-                    if is_tabular
-                        && !should_export
-                        && repositories::workspaces::data_frames::has_staged_table(
-                            workspace, &node_path,
-                        )?
-                    {
+                    if staged_table {
                         log::warn!(
                             "workspace commit recovering stale staged data frame {node_path:?} before export"
                         );
@@ -363,10 +391,21 @@ async fn export_tabular_data_frames(
                             file_node.name()
                         );
 
-                        let exported_path =
-                            workspaces::data_frames::extract_file_node_to_working_dir(
-                                workspace, &dir_path, file_node,
-                            )?;
+                        let exported_path = {
+                            let (workspace, dir_path, file_node, commit_guard) = (
+                                workspace.clone(),
+                                dir_path.clone(),
+                                file_node.clone(),
+                                Arc::clone(commit_guard),
+                            );
+                            tokio::task::spawn_blocking(move || {
+                                let _commit_guard = commit_guard;
+                                workspaces::data_frames::extract_file_node_to_working_dir(
+                                    &workspace, &dir_path, &file_node,
+                                )
+                            })
+                            .await??
+                        };
 
                         log::debug!("exported path: {exported_path:?}");
 
@@ -396,11 +435,12 @@ async fn export_tabular_data_frames(
                         // the base-node lookup (a merkle traversal) only then —
                         // not for every Added/Removed export.
                         if entry_status == StagedEntryStatus::Modified
-                            && let Some(base_node) = repositories::tree::get_file_by_path(
+                            && let Some(base_node) = repositories::tree::get_file_by_path_async(
                                 &workspace.base_repo,
                                 &workspace.commit,
                                 &node_path,
-                            )?
+                            )
+                            .await?
                             && new_staged_merkle_tree_node.node.file()?.combined_hash()
                                 == base_node.combined_hash()
                         {

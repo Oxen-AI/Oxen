@@ -76,6 +76,12 @@ pub use crate::core::v_latest::commits::head_commit;
 /// Returns None if the head commit does not exist (empty repo)
 pub use crate::core::v_latest::commits::head_commit_maybe;
 
+/// [`head_commit_maybe`], off the async worker.
+pub async fn head_commit_maybe_async(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
+    let repo = repo.clone();
+    tokio::task::spawn_blocking(move || head_commit_maybe(&repo)).await?
+}
+
 /// Get the root commit of a repository
 pub use crate::core::v_latest::commits::root_commit_maybe;
 
@@ -89,6 +95,16 @@ pub fn get_by_id(
 ) -> Result<Option<Commit>, OxenError> {
     let commit_id = commit_id.as_ref();
     core::v_latest::commits::get_by_id(repo, commit_id)
+}
+
+/// [`get_by_id`], off the async worker.
+pub async fn get_by_id_async(
+    repo: &LocalRepository,
+    commit_id: &str,
+) -> Result<Option<Commit>, OxenError> {
+    let repo = repo.clone();
+    let commit_id = commit_id.to_string();
+    tokio::task::spawn_blocking(move || get_by_id(&repo, commit_id)).await?
 }
 
 /// Commit id exists
@@ -112,15 +128,22 @@ pub fn create_empty_commit(
 /// Create an initial empty commit for an empty repository.
 /// This creates the first commit with an empty tree and sets up the branch.
 /// Returns an error if the repository already has commits.
-pub fn create_initial_commit(
+pub async fn create_initial_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
+    branch_name: &str,
     user: &User,
-    message: impl AsRef<str>,
+    message: &str,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    let message = message.as_ref();
-    core::v_latest::commits::create_initial_commit(repo, branch_name, user, message)
+    let (repo, branch_name, user, message) = (
+        repo.clone(),
+        branch_name.to_string(),
+        user.clone(),
+        message.to_string(),
+    );
+    tokio::task::spawn_blocking(move || {
+        core::v_latest::commits::create_initial_commit(&repo, &branch_name, &user, &message)
+    })
+    .await?
 }
 
 /// List commits on the current branch from HEAD
@@ -1368,7 +1391,7 @@ A: Oxen.ai
                 name: "Test User".to_string(),
                 email: "test@example.com".to_string(),
             };
-            let commit = create_initial_commit(&repo, "main", &user, "Initial commit")?;
+            let commit = create_initial_commit(&repo, "main", &user, "Initial commit").await?;
 
             // Verify commit was created correctly
             assert_eq!(commit.message, "Initial commit");
@@ -1397,6 +1420,7 @@ A: Oxen.ai
 
             // Now that the repo has commits, create_initial_commit should fail
             let err = create_initial_commit(&repo, "another-branch", &user, "Should fail")
+                .await
                 .expect_err("a repo that already has commits takes no initial commit");
             assert!(err.to_string().contains("already has commits"));
 
@@ -1413,7 +1437,7 @@ A: Oxen.ai
                 name: "Test User".to_string(),
                 email: "test@example.com".to_string(),
             };
-            let commit = create_initial_commit(&repo, "develop", &user, "Initial commit")?;
+            let commit = create_initial_commit(&repo, "develop", &user, "Initial commit").await?;
 
             // Verify branch was created with custom name
             let branches = repositories::branches::list(&repo).await?;

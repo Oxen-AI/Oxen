@@ -31,6 +31,13 @@ pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Branch, OxenErr
         .ok_or_else(|| OxenError::local_branch_not_found(name))
 }
 
+/// [`get_by_name`], off the async worker.
+pub async fn get_by_name_async(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
+    let repo = repo.clone();
+    let name = name.to_string();
+    tokio::task::spawn_blocking(move || get_by_name(&repo, &name)).await?
+}
+
 /// Get commit id from a branch by name
 pub fn get_commit_id(repo: &LocalRepository, name: &str) -> Result<Option<String>, OxenError> {
     with_ref_manager(repo, |manager| manager.get_commit_id_for_branch(name))
