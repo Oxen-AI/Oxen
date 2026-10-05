@@ -249,50 +249,47 @@ fn list_conflicts(
         return Ok(vec![]);
     }
 
-    // A staged file conflicts when it also changed on the target branch since the workspace's base
-    // commit. Look each staged file up in both commits with a strict, non-recursive `read_file`: it
-    // reports a genuinely absent path as `None` but propagates read failures rather than masking
-    // them as a skipped check. Loading each commit's dir hashes once and reading only the staged
-    // files keeps peak memory flat — neither whole Merkle tree is materialized.
+    // A staged path conflicts when the target branch changed it since the workspace's base commit
+    // (added, modified, or removed it) and does not already hold what the workspace stages. Look
+    // each staged file up in both commits with a strict, non-recursive `read_file`: it reports an
+    // absent path as `None` but propagates read failures rather than masking them as a skipped
+    // check. Loading each commit's dir hashes once and reading only the staged files keeps peak
+    // memory flat, since neither whole Merkle tree is materialized.
     let branch_dir_hashes = CommitMerkleTree::dir_hashes(&workspace.base_repo, &branch_commit)?;
     let workspace_dir_hashes =
         CommitMerkleTree::dir_hashes(&workspace.base_repo, workspace_commit)?;
 
     let mut conflicts = vec![];
-    for (path, entries) in dir_entries {
+    for entries in dir_entries.values() {
         for entry in entries {
-            let EMerkleTreeNode::File(_) = &entry.node.node else {
-                // Only check files for conflicts
-                continue;
+            let path = entry.node.maybe_path()?;
+            let (base_hash, branch_hash) = match &entry.node.node {
+                EMerkleTreeNode::File(_) => {
+                    let read = |dir_hashes| {
+                        CommitMerkleTree::read_file(&workspace.base_repo, dir_hashes, &path)
+                            .map(|node| node.map(|node| node.hash))
+                    };
+                    (read(&workspace_dir_hashes)?, read(&branch_dir_hashes)?)
+                }
+                // A removed directory takes everything under it, so any change the branch made
+                // inside it conflicts.
+                EMerkleTreeNode::Directory(_) if entry.status == StagedEntryStatus::Removed => (
+                    workspace_dir_hashes.get(&path).copied(),
+                    branch_dir_hashes.get(&path).copied(),
+                ),
+                _ => continue,
             };
-
-            log::debug!("checking if workspace is behind: {path:?} -> {entry}");
-            let file_path = entry.node.maybe_path()?;
-            log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) =
-                CommitMerkleTree::read_file(&workspace.base_repo, &branch_dir_hashes, &file_path)?
-            else {
-                log::debug!("branch node not found: {file_path:?}");
-                continue;
-            };
-            let Some(workspace_node) = CommitMerkleTree::read_file(
-                &workspace.base_repo,
-                &workspace_dir_hashes,
-                &file_path,
-            )?
-            else {
-                log::debug!("workspace node not found: {file_path:?}");
-                continue;
-            };
-            log::debug!("comparing hashes: {path:?} -> {entry}");
-            log::debug!("branch node hash: {:?}", branch_node.hash);
-            log::debug!("workspace node hash: {:?}", workspace_node.hash);
-            if branch_node.hash == workspace_node.hash {
-                log::debug!("branch node hashes match: {path:?} -> {entry}");
+            if branch_hash == base_hash {
                 continue;
             }
-            log::debug!("got conflict: {file_path:?}");
-            conflicts.push(file_path.to_path_buf());
+            let staged_hash =
+                (entry.status != StagedEntryStatus::Removed).then_some(entry.node.hash);
+            if branch_hash == staged_hash {
+                log::debug!("branch already holds what the workspace stages: {path:?}");
+                continue;
+            }
+            log::debug!("got conflict: {path:?}");
+            conflicts.push(path);
         }
     }
 
