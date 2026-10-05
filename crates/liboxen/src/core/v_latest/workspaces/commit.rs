@@ -600,7 +600,7 @@ mod tests {
             // Stage two files in the same workspace.
             for (name, content) in [
                 ("file1.txt", "content of file1.txt"),
-                ("rows.csv", "id,text\n1,first\n"),
+                ("file2.txt", "content of file2.txt"),
             ] {
                 let path = workspace.workspace_repo.path.join(name);
                 util::fs::write_to_path(&path, content)?;
@@ -641,7 +641,7 @@ mod tests {
             let branch = repositories::branches::get_by_name(&repo, "main")?;
             let head = repositories::commits::get_by_id(&repo, &branch.commit_id)?
                 .expect("branch head commit should exist");
-            for name in ["file1.txt", "rows.csv"] {
+            for name in ["file1.txt", "file2.txt"] {
                 assert!(
                     repositories::tree::get_file_by_path(&repo, &head, Path::new(name))?.is_some(),
                     "{name} should be committed at the branch head"
@@ -663,9 +663,9 @@ mod tests {
                     repositories::workspaces::files::add(workspace, &path).await
                 }
             };
-            let reuploaded = Path::new("rows.csv");
+            let reuploaded = Path::new("file2.txt");
             let staged_mid_commit = Path::new("uploads/staged_mid_commit.txt");
-            stage("rows.csv", "id,text\n1,first\n2,second\n").await?;
+            stage("file2.txt", "first upload").await?;
 
             let workspace_path = &workspace.workspace_repo.path;
             let (reached, resume) = pause_commit_after_staged_read(workspace_path);
@@ -685,7 +685,7 @@ mod tests {
                     return Ok(());
                 }
                 stage("uploads/staged_mid_commit.txt", "staged mid-commit").await?;
-                stage("rows.csv", "id,text\n1,first\n2,second\n3,third\n").await?;
+                stage("file2.txt", "second upload").await?;
                 start_next
                     .send(())
                     .expect("the next commit should be waiting to start");
