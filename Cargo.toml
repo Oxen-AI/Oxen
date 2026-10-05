@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.97.1"
 
 [workspace.lints.clippy]
-disallowed-methods = "deny"
+disallowed_methods = "deny"
 
 [workspace.lints.rust]
 # Allows the expected macOS "__eh_frame section too large" note from the
