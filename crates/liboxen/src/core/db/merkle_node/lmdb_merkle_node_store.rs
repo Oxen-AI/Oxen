@@ -1,12 +1,10 @@
 //! LMDB-backed [`MerkleNodeStore`]: both of a node's blobs live as two keys in one LMDB env at
-//! `.oxen/tree/nodes_lmdb`, instead of two files per node on disk. The msgpack + lookup-table
-//! framing is unchanged — only *where the two blobs live* differs from
-//! [`FsMerkleNodeStore`](super::fs_merkle_node_store::FsMerkleNodeStore).
+//! `.oxen/tree/nodes_lmdb`.
 //!
 //! Key layout: a node's two blobs share its [`MerkleHash`] and are distinguished by a one-byte
 //! tag suffix — `hash_le(16) ‖ 0` holds the `node` blob, `hash_le(16) ‖ 1` holds `children`.
 //! `write_nodes` puts both under one write transaction, so a node is never observable with only
-//! one blob (the same atomicity the FS backend gets from writing both files before anything reads).
+//! one blob.
 
 use std::path::{Path, PathBuf};
 
@@ -15,7 +13,6 @@ use bytesize::ByteSize;
 
 use crate::constants;
 use crate::error::OxenError;
-use crate::lmdb::lmdb_env::lmdb_env_exists;
 use crate::lmdb::store::{LmdbSlot, LmdbStore};
 use crate::model::MerkleHash;
 
@@ -47,21 +44,9 @@ impl LmdbMerkleNodeStore {
     /// Prepare the LMDB merkle node store for the repo rooted at `repo_path`. The env is opened
     /// (creating it if absent) on the first read or write, not here.
     pub(crate) fn new(repo_path: &Path) -> Result<Self, OxenError> {
-        Self::new_at(&Self::env_dir(repo_path))
-    }
-
-    /// Prepare an LMDB merkle node store at an explicit env directory. Used by the FS→LMDB
-    /// migration to build the env in a temp dir before atomically publishing it.
-    pub(crate) fn new_at(env_dir: &Path) -> Result<Self, OxenError> {
         Ok(Self {
-            lmdb: LmdbSlot::new(env_dir.to_path_buf()),
+            lmdb: LmdbSlot::new(Self::env_dir(repo_path)),
         })
-    }
-
-    /// Whether an LMDB merkle node env already exists on disk for `repo_path`. Checks the data file
-    /// directly so the caller can pick a backend without opening (and creating) an env.
-    pub(crate) fn exists_on_disk(repo_path: &Path) -> bool {
-        lmdb_env_exists(&Self::env_dir(repo_path))
     }
 
     /// The env directory for the repo rooted at `repo_path` (`.oxen/tree/nodes_lmdb`).
@@ -182,11 +167,10 @@ impl MerkleNodeStore for LmdbMerkleNodeStore {
         })
     }
 
-    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<Option<PathBuf>, MerkleDbError> {
+    fn snapshot_for_archive(&self, dst_dir: &Path) -> Result<PathBuf, MerkleDbError> {
         // `mdb_env_copy` writes a single, point-in-time-consistent `data.mdb` and no `lock.mdb`,
         // so the archive captures durable state without the live env's runtime lock file.
-        let data_file = self.snapshot_to(dst_dir)?;
-        Ok(Some(data_file))
+        Ok(self.snapshot_to(dst_dir)?)
     }
 }
 
@@ -195,6 +179,7 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::error::OxenError;
+    use crate::lmdb::lmdb_env::lmdb_env_exists;
 
     use super::*;
 
@@ -220,7 +205,7 @@ mod tests {
         // Any access opens (creates) the env; a read is enough.
         store.list_hashes()?;
         assert!(
-            LmdbMerkleNodeStore::exists_on_disk(dir.path()),
+            lmdb_env_exists(&LmdbMerkleNodeStore::env_dir(dir.path())),
             "the first access must open the env"
         );
         Ok(())
@@ -286,35 +271,8 @@ mod tests {
         Ok(())
     }
 
-    /// The two backends are interchangeable: the same node written to each reads back identically,
-    /// so the engine choice never changes observable behavior.
-    #[test]
-    fn lmdb_and_fs_backends_round_trip_identically() -> Result<(), OxenError> {
-        use super::super::fs_merkle_node_store::FsMerkleNodeStore;
-
-        let fs_dir = tempfile::tempdir().expect("create temp dir");
-        let lmdb_dir = tempfile::tempdir().expect("create temp dir");
-        let fs = FsMerkleNodeStore::new(fs_dir.path());
-        let lmdb = LmdbMerkleNodeStore::new(lmdb_dir.path())?;
-
-        let hash = MerkleHash::new(0x0bad_c0de_dead_beef);
-        let node = Bytes::from_static(b"node blob bytes");
-        let children = Bytes::from_static(b"children blob bytes");
-
-        fs.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
-        lmdb.write_nodes(vec![(hash, node.clone(), children.clone())], true)?;
-
-        assert_eq!(fs.exists(&hash)?, lmdb.exists(&hash)?);
-        assert_eq!(fs.read_node(&hash)?, lmdb.read_node(&hash)?);
-        assert_eq!(fs.read_children(&hash)?, lmdb.read_children(&hash)?);
-        assert_eq!(fs.node_byte_sizes(&hash)?, lmdb.node_byte_sizes(&hash)?);
-        assert_eq!(fs.list_hashes()?, lmdb.list_hashes()?);
-        Ok(())
-    }
-
     /// `write_nodes` commits the whole batch in one transaction, returns exactly the hashes it newly
-    /// wrote, and skips nodes already present unless overwriting. This is the same batch contract the
-    /// filesystem backend satisfies, checked here over LMDB's single transaction path.
+    /// wrote, and skips nodes already present unless overwriting.
     #[test]
     fn lmdb_write_nodes_batches_and_respects_existing() -> Result<(), OxenError> {
         use std::collections::HashSet;

@@ -2044,6 +2044,34 @@ mod tests {
                 !merge_marker::exists(&repo).await?,
                 "marker must be absent after a clean merge"
             );
+
+            let main = repositories::branches::current_branch(&repo)?.expect("on a branch");
+            repositories::branches::create_checkout(&repo, "oxen-dir")?;
+            let data_dir = repo.path.join("data");
+            util::fs::create_dir_all(data_dir.join(".OXEN"))?;
+            util::fs::write_to_path(data_dir.join("ok.txt"), "ok")?;
+            util::fs::write_to_path(data_dir.join(".OXEN").join("config.toml"), "not a config")?;
+            repositories::add(&repo, &data_dir).await?;
+            repositories::commit(&repo, "add data/.OXEN/config.toml")?;
+            repositories::checkout(&repo, &main.name).await?;
+            util::fs::remove_dir_all(&data_dir)?;
+
+            for merge_kind in ["fast-forward", "three-way"] {
+                if merge_kind == "three-way" {
+                    util::fs::write_to_path(repo.path.join("main.txt"), "main")?;
+                    repositories::add(&repo, &repo.path.join("main.txt")).await?;
+                    repositories::commit(&repo, "diverge main")?;
+                }
+                let result = repositories::merge::merge(&repo, "oxen-dir").await;
+                assert!(
+                    matches!(result, Err(OxenError::InvalidTreePath(_))),
+                    "{merge_kind}: {result:?}"
+                );
+                assert!(
+                    !merge_marker::exists(&repo).await? && !data_dir.join("ok.txt").exists(),
+                    "{merge_kind}: a merge refused over a .oxen path writes nothing"
+                );
+            }
             Ok(())
         })
         .await

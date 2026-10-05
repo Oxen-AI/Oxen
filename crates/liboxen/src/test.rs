@@ -3,11 +3,11 @@
 
 use crate::api;
 use crate::api::requests::RepoNew;
+#[cfg(test)]
 use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
-use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::df::duckdb_setup;
 use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use crate::error::OxenError;
@@ -518,63 +518,6 @@ where
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
-    Ok(())
-}
-
-/// Init a repo pinned to the filesystem Merkle node backend. For tests whose assertions read the
-/// on-disk `tree/nodes` layout — the wire-format byte-compat reference implementations and the
-/// FS→LMDB migration source — which only the filesystem backend produces. Persists
-/// `merkle_node_backend = filesystem` to `config.toml`, the authoritative record
-/// `create_merkle_node_store` resolves from. Pair with [`run_empty_dir_test_async`] for empty
-/// repos, or use [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is
-/// needed.
-pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError> {
-    let hidden_dir = util::fs::oxen_hidden_dir(path);
-    if hidden_dir.try_exists()? {
-        return Err(OxenError::basic_str(format!(
-            "Oxen repository already exists: {path:?}"
-        )));
-    }
-    util::fs::create_dir_all(&hidden_dir)?;
-    let config = RepositoryConfig {
-        min_version: Some("0.36.0".to_string()),
-        merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
-        ..Default::default()
-    };
-    let repo = LocalRepository::new(path, config)?;
-    repo.save()?;
-    Ok(repo)
-}
-
-/// Like [`run_one_commit_local_repo_test_async`], but pins the repo to the filesystem Merkle node
-/// backend (see [`init_fs_merkle_backend`]). For empty repos, use [`run_empty_dir_test_async`] +
-/// [`init_fs_merkle_backend`] directly.
-pub async fn run_one_commit_local_repo_test_async_fs_backend<T, Fut>(
-    test: T,
-) -> Result<(), OxenError>
-where
-    T: FnOnce(LocalRepository) -> Fut,
-    Fut: Future<Output = Result<(), OxenError>>,
-{
-    init_test_env();
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = init_fs_merkle_backend(&repo_dir)?;
-
-    let txt = generate_random_string(20);
-    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&repo, &file_path).await?;
-    repositories::commit(&repo, "Init commit")?;
-
-    let result = match test(repo).await {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
-        }
-    };
-
-    maybe_cleanup_repo(&repo_dir)?;
     assert!(result);
     Ok(())
 }

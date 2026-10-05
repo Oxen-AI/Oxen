@@ -51,7 +51,8 @@ pub const DIRS_DIR: &str = "dirs";
 pub const DIR_HASHES_DIR: &str = "dir_hashes";
 /// prefix for the commit merkle tree db
 pub const TREE_DIR: &str = "tree";
-/// prefix for the commit merkle tree node dbs (filesystem backend)
+/// Directory under `.oxen/tree` holding per-node files: node sync status, and the retired
+/// filesystem merkle node backend's nodes
 pub const NODES_DIR: &str = "nodes";
 /// directory holding the LMDB env for the LMDB merkle node backend
 pub const NODES_LMDB_DIR: &str = "nodes_lmdb";

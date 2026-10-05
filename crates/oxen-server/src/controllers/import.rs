@@ -8,7 +8,7 @@ use utoipa::ToSchema;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, get_repo};
-use crate::params::{app_data, parse_resource, path_param, query_param};
+use crate::params::{app_data, parse_resource, path_param, resource_param};
 
 use liboxen::core::repo_locks;
 use liboxen::core::v_latest::workspaces::files::decompress_zip;
@@ -301,7 +301,7 @@ async fn handle_initial_upload_zip_empty_repo(
     payload: Multipart,
     repo: &liboxen::model::LocalRepository,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(query_param(&req, "resource"));
+    let resource = resource_param(&req)?;
 
     // Parse the resource for the path and branch name
     let mut resource = resource.components();
@@ -474,6 +474,9 @@ mod tests {
 
     use liboxen::error::OxenError;
 
+    use actix_multipart_test::MultiPartFormDataBuilder;
+    use actix_web::http::StatusCode;
+    use actix_web::test::TestRequest;
     use actix_web::{App, web};
     use std::path::PathBuf;
 
@@ -573,6 +576,44 @@ mod tests {
         let author = "test_user";
         let email = "ox@oxen.ai";
         let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData {
+                    test_mode: true,
+                    ..OxenAppData::new(sync_dir.clone())
+                })
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
+                    web::post().to(controllers::import::import),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/import/upload/{resource:.*}",
+                    web::post().to(controllers::import::upload_zip),
+                ),
+        )
+        .await;
+
+        // The repository has no commits yet, so this takes the zip upload's first-commit path.
+        let mut form = MultiPartFormDataBuilder::new();
+        form.with_text("commit_message", "upload");
+        let (header, payload) = form.build();
+        let req = TestRequest::post()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/import/upload/main/../data"
+            ))
+            .insert_header(header)
+            .set_payload(payload)
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("Invalid resource"),
+            "the zip upload refuses a `..` in its destination before reading the archive"
+        );
+
         util::fs::create_dir_all(repo.path.join("data"))?;
         let hello_file = repo.path.join("data/hello.txt");
         util::fs::write_to_path(&hello_file, "Hello")?;
@@ -612,24 +653,29 @@ mod tests {
             .set_json(&body)
             .to_request();
 
-        let app = actix_web::test::init_service(
-            App::new()
-                .app_data(OxenAppData {
-                    test_mode: true,
-                    ..OxenAppData::new(sync_dir.clone())
-                })
-                .route(
-                    "/oxen/{namespace}/{repo_name}/file/import/{resource:.*}",
-                    web::post().to(controllers::import::import),
-                ),
-        )
-        .await;
-
         let resp = actix_web::test::call_service(&app, req).await;
         let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
         let body = std::str::from_utf8(&bytes).unwrap();
         let resp: CommitResponse = serde_json::from_str(body)?;
         assert_eq!(resp.status.status, "success");
+
+        let req = TestRequest::post()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/file/import/main/../notebooks"
+            ))
+            .set_json(serde_json::json!({}))
+            .to_request();
+        let refused = actix_web::test::call_service(&app, req).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let bytes = actix_http::body::to_bytes(refused.into_body())
+            .await
+            .unwrap();
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("Invalid resource"),
+            "the URL import refuses a `..` in its destination"
+        );
 
         let entry = repositories::entries::get_file(
             &repo,

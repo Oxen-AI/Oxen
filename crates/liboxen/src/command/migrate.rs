@@ -5,9 +5,6 @@ use colored::Colorize;
 pub mod m20260408_add_workspace_name_index;
 pub use m20260408_add_workspace_name_index::AddWorkspaceNameIndexMigration;
 
-pub mod m20260626_migrate_merkle_nodes_to_lmdb;
-pub use m20260626_migrate_merkle_nodes_to_lmdb::MerkleNodesToLmdbMigration;
-
 pub mod m20260824_backfill_repo_identity;
 pub use m20260824_backfill_repo_identity::BackfillRepoIdentityMigration;
 
@@ -19,9 +16,8 @@ pub use m20260930_place_repository_by_uuid::PlaceRepositoryByUuidMigration;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantNames};
 
-/// Migration direction. Passed to [`Migrate::is_applicable`] so reversible migrations
-/// (like the file ↔ LMDB merkle store transcode) can report applicability separately
-/// for each direction.
+/// Migration direction. Passed to [`Migrate::is_applicable`] so reversible migrations can report
+/// applicability separately for each direction.
 #[derive(
     Debug,
     Clone,
@@ -94,9 +90,8 @@ pub trait Migrate: Send + Sync {
 /// (`POST /api/repos/:ns/:name/migrations/:migration_name`) to look up a
 /// migration by name at runtime. New migrations **MUST** be listed here
 /// for the [`all_migrations`] function to work properly.
-pub const ALL_MIGRATIONS: [&dyn Migrate; 5] = [
+pub const ALL_MIGRATIONS: [&dyn Migrate; 4] = [
     &AddWorkspaceNameIndexMigration,
-    &MerkleNodesToLmdbMigration,
     &BackfillRepoIdentityMigration,
     &BackfillWorkspaceCreatedAtMigration,
     &PlaceRepositoryByUuidMigration,

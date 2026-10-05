@@ -1,6 +1,8 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, file_stream_response, get_repo, get_repo_async};
-use crate::params::{app_data, parse_resource, parse_resource_async, path_param, query_param};
+use crate::params::{
+    app_data, parse_resource, parse_resource_async, path_param, query_param, request_relative_path,
+};
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
@@ -24,7 +26,7 @@ use liboxen::util;
 use liboxen::util::fs::AtomicFile;
 use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::slice;
 use std::sync::Arc;
 use tokio::task::spawn_blocking;
@@ -650,7 +652,7 @@ fn build_files_from_upload_parts(
 
             let temp_file = take_single_file_part(file_parts)?;
             Ok(vec![FileNew {
-                path: normalize_relative_upload_path(target_path, false, "target path")?,
+                path: request_relative_path(target_path, false, "target path")?,
                 contents: temp_file.contents.clone(),
                 user: user.clone(),
             }])
@@ -658,9 +660,9 @@ fn build_files_from_upload_parts(
         MultipartUploadMode::DirectoryFromFile => {
             let temp_file = take_single_file_part(file_parts)?;
             let normalized_target_dir =
-                normalize_relative_upload_path(target_path, true, "target directory")?;
+                request_relative_path(target_path, true, "target directory")?;
             let normalized_file_path =
-                normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
+                request_relative_path(&temp_file.path, false, "uploaded file")?;
             Ok(vec![FileNew {
                 path: normalized_target_dir.join(normalized_file_path),
                 contents: temp_file.contents.clone(),
@@ -669,12 +671,12 @@ fn build_files_from_upload_parts(
         }
         MultipartUploadMode::DirectoryFromFilesArray => {
             let normalized_target_dir =
-                normalize_relative_upload_path(target_path, true, "target directory")?;
+                request_relative_path(target_path, true, "target directory")?;
             files_array_parts
                 .iter()
                 .map(|temp_file| {
                     let normalized_file_path =
-                        normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
+                        request_relative_path(&temp_file.path, false, "uploaded file")?;
                     Ok(FileNew {
                         path: normalized_target_dir.join(normalized_file_path),
                         contents: temp_file.contents.clone(),
@@ -690,43 +692,6 @@ fn take_single_file_part(file_part: Option<&TempFileNew>) -> Result<&TempFileNew
     file_part.ok_or_else(|| {
         OxenHttpError::BadRequest("Missing file data: expected one `file` part".into())
     })
-}
-
-fn normalize_relative_upload_path(
-    path: &Path,
-    allow_empty: bool,
-    path_label: &str,
-) -> Result<PathBuf, OxenHttpError> {
-    if path.is_absolute() {
-        return Err(OxenHttpError::BadRequest(
-            format!("Invalid {path_label}: absolute paths are not allowed").into(),
-        ));
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => normalized.push(part),
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(OxenHttpError::BadRequest(
-                    format!(
-                        "Invalid {path_label}: path traversal is not allowed: {}",
-                        path.display()
-                    )
-                    .into(),
-                ));
-            }
-        }
-    }
-
-    if !allow_empty && normalized.as_os_str().is_empty() {
-        return Err(OxenHttpError::BadRequest(
-            format!("Invalid {path_label}: path cannot be empty").into(),
-        ));
-    }
-
-    Ok(normalized)
 }
 
 fn ensure_no_file_ancestors_in_tree(
@@ -799,7 +764,6 @@ async fn process_and_add_files(
 mod tests {
     use super::{
         MultipartUploadMode, build_files_from_upload_parts, ensure_no_file_ancestors_in_tree,
-        normalize_relative_upload_path,
     };
     use crate::errors::OxenHttpError;
     use crate::test;
@@ -1418,33 +1382,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_normalize_relative_upload_path_collapses_current_dir_components() {
-        let normalized =
-            normalize_relative_upload_path(Path::new("./pages/./home"), true, "target directory")
-                .unwrap();
-
-        assert_eq!(normalized, PathBuf::from("pages/home"));
-    }
-
-    #[test]
-    fn test_normalize_relative_upload_path_rejects_parent_dir_components() {
-        let err =
-            normalize_relative_upload_path(Path::new("../../outside.txt"), false, "uploaded file")
-                .unwrap_err();
-
-        assert!(matches!(err, OxenHttpError::BadRequest(_)));
-    }
-
-    #[test]
-    fn test_normalize_relative_upload_path_rejects_absolute_paths() {
-        let err =
-            normalize_relative_upload_path(Path::new("/tmp/outside.txt"), false, "uploaded file")
-                .unwrap_err();
-
-        assert!(matches!(err, OxenHttpError::BadRequest(_)));
-    }
-
     #[actix_web::test]
     async fn test_controllers_file_put_empty_repo_rejects_target_outside_repo()
     -> Result<(), OxenError> {
@@ -1488,6 +1425,31 @@ mod tests {
         let put_resp = actix_web::test::call_service(&app, put_req).await;
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
         assert!(!sync_dir.join("escaped.txt").exists());
+
+        let config_path = repo.path.join(".oxen").join("config.toml");
+        let config_before = std::fs::read(&config_path)?;
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(
+            repo.path.join("payload.txt"),
+            "file",
+            "text/plain",
+            "payload.txt",
+        );
+        let (header, body) = multipart_form_data_builder.build();
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/file/main/.OXEN/config.toml"
+            ))
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            std::fs::read(&config_path)?,
+            config_before,
+            "a target inside .oxen leaves the repository's metadata alone"
+        );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())

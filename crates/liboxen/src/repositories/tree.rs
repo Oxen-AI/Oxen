@@ -1708,6 +1708,9 @@ pub struct AddedObjects {
     /// Nodes the store holds but could not read, mapped to the failure. Whatever each one contains
     /// is absent from `nodes` and `versions`.
     pub unreadable: HashMap<MerkleHash, String>,
+    /// Added entries whose name is not a single plain path component or names a `.oxen`
+    /// directory, so a working tree cannot hold them. Their contents are still walked.
+    pub invalid_paths: Vec<PathBuf>,
 }
 
 /// The merkle nodes and version blobs that `head`'s tree introduces relative to `base`. Returns
@@ -1783,6 +1786,9 @@ pub async fn find_missing_added_objects(
                     format!("merkle node {hash} could not be read: {err}").into(),
                 ));
             }
+            if let Some(path) = added.invalid_paths.first() {
+                return Err(OxenError::InvalidTreePath(path.clone().into()));
+            }
 
             let store = walk_repo.merkle_node_store();
             let mut missing_nodes = Vec::new();
@@ -1857,6 +1863,14 @@ fn collect_added_from_dir(
         {
             // Identical entry (same content-addressed hash) — already present from the base.
             continue;
+        }
+
+        let name_path = Path::new(&name);
+        let is_plain_name = util::fs::normalize_relative_path(name_path).is_ok_and(|normalized| {
+            normalized.as_os_str() == name_path.as_os_str() && normalized.components().count() == 1
+        });
+        if !is_plain_name {
+            added.invalid_paths.push(head_dir_path.join(&name));
         }
 
         match entry.kind {
@@ -1978,8 +1992,6 @@ fn insert_entry(entries: &mut HashMap<String, DirEntry>, hash: MerkleHash, node:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constants;
-    use crate::core::db::merkle_node::merkle_node_db::node_db_path;
     use crate::error::OxenError;
     use crate::model::Commit;
     use crate::model::merkle_tree::node::DirNode;
@@ -1991,6 +2003,29 @@ mod tests {
     use bytesize::ByteSize;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    /// The directory holding a node's `node` and `children` files in the `.oxen/tree/nodes`
+    /// layout the reference implementations below read and write.
+    fn node_db_path(repo_path: &Path, hash: &MerkleHash) -> PathBuf {
+        repo_path
+            .join(OXEN_HIDDEN_DIR)
+            .join(TREE_DIR)
+            .join(NODES_DIR)
+            .join(hash.to_hex_hash().node_db_prefix())
+    }
+
+    /// Lay every node in `repo`'s store out under `.oxen/tree/nodes`, so a reference
+    /// implementation can read the repo's nodes.
+    fn write_fs_node_tree(repo: &LocalRepository) -> Result<(), OxenError> {
+        let store = repo.merkle_node_store();
+        for hash in store.list_hashes()? {
+            let dir = node_db_path(&repo.path, &hash);
+            util::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join(NODE_FILE), store.read_node(&hash)?)?;
+            std::fs::write(dir.join(CHILDREN_FILE), store.read_children(&hash)?)?;
+        }
+        Ok(())
+    }
 
     // The incremental check must flag a blob the head commit *adds* when it's missing,
     // and must NOT re-check blobs inherited unchanged from the base (that's the whole point of
@@ -2099,6 +2134,17 @@ mod tests {
             assert!(
                 added.nodes.is_empty() && added.versions.is_empty(),
                 "identical base/head must add nothing, got: {added:?}"
+            );
+
+            let nested_oxen = repo.path.join("data").join(".OXEN");
+            util::fs::create_dir_all(&nested_oxen)?;
+            test::write_txt_file_to_path(nested_oxen.join("config.toml"), "not a config")?;
+            repositories::add(&repo, &repo.path).await?;
+            let head = repositories::commit(&repo, "add data/.OXEN/config.toml")?;
+            let result = find_missing_added_objects(&repo, Some(&commit), &head).await;
+            assert!(
+                matches!(result, Err(OxenError::InvalidTreePath(_))),
+                "the gate accepted a path a working tree cannot hold: {result:?}"
             );
 
             Ok(())
@@ -2628,9 +2674,9 @@ mod tests {
     /// payload must be identical.
     #[tokio::test]
     async fn test_compress_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `compress_nodes` implementation walks the on-disk `tree/nodes`
-        // layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `compress_nodes` implementation walks the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -2658,9 +2704,9 @@ mod tests {
     /// Same byte-compat check for the whole-tree path.
     #[tokio::test]
     async fn test_compress_tree_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `compress_tree` implementation walks the on-disk `tree/nodes`
-        // layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `compress_tree` implementation walks the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             // prior code for packing an entire Merkle tree into a .tar.gz
             let old_pack_method = compress_tree(&repo)?;
 
@@ -2684,9 +2730,9 @@ mod tests {
     /// `pack_nodes(&{hash})`).
     #[tokio::test]
     async fn test_compress_node_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `compress_node` implementation walks the on-disk `tree/nodes`
-        // layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `compress_node` implementation walks the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let hash = head.hash().expect("no commit for head");
 
@@ -2716,9 +2762,9 @@ mod tests {
     /// `pack_nodes(&{commit hashes})`).
     #[tokio::test]
     async fn test_compress_commits_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `compress_commits` implementation walks the on-disk `tree/nodes`
-        // layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `compress_commits` implementation walks the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let commits: Vec<Commit> = vec![head];
 
@@ -2778,9 +2824,9 @@ mod tests {
     /// store in both target repos.
     #[tokio::test]
     async fn test_unpack_nodes_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `unpack_nodes` implementation writes/reads the on-disk
-        // `tree/nodes` layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `unpack_nodes` implementation reads and writes the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -2789,15 +2835,14 @@ mod tests {
             let bytes = compress_nodes_client_push_format(&repo, &hashes)
                 .expect("client-push-format pack failed");
 
-            // Unpack into two fresh repos: one via `unpack_nodes`, one via `unpack`. Both are
-            // FS-pinned: the legacy `unpack_nodes` writes the on-disk layout directly, so its store
-            // must read from disk to see the result.
+            // Unpack into two fresh repos: one via `unpack_nodes`, which writes the `tree/nodes`
+            // layout, and one via `unpack`, which writes the store.
             let tmp_old = tempfile::TempDir::new()?;
-            let repo_old = test::init_fs_merkle_backend(tmp_old.path())?;
+            let repo_old = repositories::init(tmp_old.path())?;
             let old_hashes = unpack_nodes(&repo_old, &bytes[..]).expect("old unpack_nodes failed");
 
             let tmp_new = tempfile::TempDir::new()?;
-            let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
+            let repo_new = repositories::init(tmp_new.path())?;
             // Old `unpack_nodes` skipped existing files; mirror that with
             // `UnpackOptions::SkipExisting` so the parity check is semantically faithful.
             let new_hashes = unpack(
@@ -2817,11 +2862,11 @@ mod tests {
                 "no hashes were unpacked — test input was empty"
             );
 
-            // Every installed hash must be readable through both stores.
+            // Every installed hash must be present in both repos.
             for h in &new_hashes {
                 assert!(
-                    repo_old.merkle_node_store().exists(h)?,
-                    "hash {h} not readable in repo unpacked via legacy unpack_nodes"
+                    node_db_path(&repo_old.path, h).join(NODE_FILE).is_file(),
+                    "hash {h} not installed in repo unpacked via legacy unpack_nodes"
                 );
                 assert!(
                     repo_new.merkle_node_store().exists(h)?,
@@ -2838,7 +2883,8 @@ mod tests {
     /// blob read — is what surfaces the error.
     #[tokio::test]
     async fn test_unpack_truncated_at_entry_boundary_errors() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
             let packed = super::compress_nodes(&repo, &hashes)?;
@@ -2862,7 +2908,7 @@ mod tests {
             let truncated = encoder.finish()?;
 
             let tmp = tempfile::TempDir::new()?;
-            let target = test::init_fs_merkle_backend(tmp.path())?;
+            let target = repositories::init(tmp.path())?;
             let result = unpack(
                 &target,
                 &mut &truncated[..],
@@ -2914,25 +2960,22 @@ mod tests {
     /// cover every installed hash directory.
     #[tokio::test]
     async fn test_node_download_request_unpack_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: this compares on-disk merkle node trees between the old unpack and the new one,
-        // a layout only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let mut packed = Vec::new();
             pack_tree(&repo, &mut packed).expect("pack_tree failed");
             assert!(!packed.is_empty(), "pack_tree produced empty buffer");
 
-            // Old client install path (mirror of node_download_request on main). Both targets are
-            // FS-pinned: the comparison reads the on-disk `tree/nodes` tree, which only the
-            // filesystem backend produces.
+            // Old client install path (mirror of node_download_request on main), which writes the
+            // `tree/nodes` layout.
             let tmp_old = tempfile::TempDir::new()?;
-            let repo_old = test::init_fs_merkle_backend(tmp_old.path())?;
+            let repo_old = repositories::init(tmp_old.path())?;
             node_download_request_unpack_old(&repo_old, &packed)
                 .await
                 .expect("old unpack failed");
 
             // New client install path: `unpack`, with download-path overwrite semantics.
             let tmp_new = tempfile::TempDir::new()?;
-            let repo_new = test::init_fs_merkle_backend(tmp_new.path())?;
+            let repo_new = repositories::init(tmp_new.path())?;
             let installed = unpack(
                 &repo_new,
                 &mut &packed[..],
@@ -2940,8 +2983,9 @@ mod tests {
                 NodeReport::Collect,
             )
             .expect("new unpack failed");
+            write_fs_node_tree(&repo_new)?;
 
-            // 1. The on-disk node trees must be identical.
+            // 1. The installed nodes must be identical.
             let old_tree = collect_dir_contents(
                 &repo_old
                     .path
@@ -3074,7 +3118,7 @@ mod tests {
     #[tokio::test]
     async fn test_unpack_recovers_hash_with_leading_zero_nibbles() -> Result<(), OxenError> {
         test::run_empty_dir_test_async(|dir| async move {
-            let repo = test::init_fs_merkle_backend(&dir)?;
+            let repo = repositories::init(&dir)?;
             // Pick a small `u128` whose hex form is much shorter than 32 chars.
             // `MerkleHash`'s `Display` is `{:x}` (no zero padding) so this is
             // exactly the shape that triggered the bug.
@@ -3085,18 +3129,15 @@ mod tests {
                 "expected hex form < 32 chars to exercise the regression, got {hex:?}"
             );
 
-            // Manually plant a `{prefix}/{suffix}/node` and `.../children`
-            // pair on disk so `pack_nodes` will tar them up.
-            let prefix = stripped_hash.to_hex_hash().node_db_prefix();
-            let nodes_root = repo
-                .path
-                .join(crate::constants::OXEN_HIDDEN_DIR)
-                .join(crate::constants::TREE_DIR)
-                .join(crate::constants::NODES_DIR);
-            let node_dir = nodes_root.join(prefix);
-            std::fs::create_dir_all(&node_dir)?;
-            std::fs::write(node_dir.join("node"), b"node-bytes")?;
-            std::fs::write(node_dir.join("children"), b"children-bytes")?;
+            // Plant the node in the store so `pack_nodes` will tar it up.
+            repo.merkle_node_store().write_nodes(
+                vec![(
+                    stripped_hash,
+                    Bytes::from_static(b"node-bytes"),
+                    Bytes::from_static(b"children-bytes"),
+                )],
+                true,
+            )?;
 
             // Pack just this hash.
             let hashes = HashSet::from_iter([stripped_hash]);
@@ -3367,9 +3408,9 @@ mod tests {
     /// upload wire format.
     #[tokio::test]
     async fn test_create_nodes_wire_format_unchanged() -> Result<(), OxenError> {
-        // FS-pinned: the reference `create_nodes_pack_old` implementation walks the on-disk
-        // `tree/nodes` layout, which only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        // The reference `create_nodes_pack_old` implementation walks the `tree/nodes` layout.
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            write_fs_node_tree(&repo)?;
             let head = repositories::commits::head_commit(&repo)?;
             let hashes = HashSet::from_iter([head.hash().expect("no commit for head")]);
 
@@ -3603,53 +3644,43 @@ mod tests {
     // the decoder alone.
     #[tokio::test]
     async fn test_pre_v0_25_dir_node_is_still_readable() -> Result<(), OxenError> {
-        // FS-pinned: the rewrite below edits node blobs in the on-disk `tree/nodes` layout, which
-        // only the filesystem backend produces.
-        test::run_one_commit_local_repo_test_async_fs_backend(|repo| async move {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit_hash: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
 
-            let nodes_dir = util::fs::oxen_hidden_dir(&repo.path)
-                .join(constants::TREE_DIR)
-                .join(constants::NODES_DIR);
-
             // Rewrite the first dir node we find into the pre-0.25 shape, in place.
+            let store = repo.merkle_node_store();
             let mut rewritten_hash: Option<MerkleHash> = None;
-            for prefix in util::fs::list_dirs_in_dir(&nodes_dir)? {
-                for node_dir in util::fs::list_dirs_in_dir(&prefix)? {
-                    let node_file = node_dir.join("node");
-                    let blob = std::fs::read(&node_file)?;
-                    // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
-                    if blob.first() != Some(&MerkleTreeNodeType::Dir.to_u8()) {
-                        continue;
-                    }
-                    let data_len =
-                        u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
-                    let dir = DirNode::deserialize(&blob[21..21 + data_len])
-                        .expect("fixture dir node should decode before rewriting");
-                    let legacy = rmp_serde::to_vec(&LegacyDirNodeData {
-                        node_type: *dir.node_type(),
-                        name: dir.name().to_string(),
-                        hash: *dir.hash(),
-                        num_bytes: dir.num_bytes(),
-                        last_commit_id: *dir.last_commit_id(),
-                        last_modified_seconds: dir.last_modified_seconds(),
-                        last_modified_nanoseconds: dir.last_modified_nanoseconds(),
-                        data_type_counts: dir.data_type_counts().clone(),
-                        data_type_sizes: dir.data_type_sizes().clone(),
-                    })
-                    .expect("legacy dir node should serialize");
+            for hash in store.list_hashes()? {
+                let blob = store.read_node(&hash)?;
+                // [dtype u8][parent_id u128 LE][data_len u32 LE][payload][child entries...]
+                if blob.first() != Some(&MerkleTreeNodeType::Dir.to_u8()) {
+                    continue;
+                }
+                let data_len =
+                    u32::from_le_bytes(blob[17..21].try_into().expect("4 bytes")) as usize;
+                let dir = DirNode::deserialize(&blob[21..21 + data_len])
+                    .expect("fixture dir node should decode before rewriting");
+                let legacy = rmp_serde::to_vec(&LegacyDirNodeData {
+                    node_type: *dir.node_type(),
+                    name: dir.name().to_string(),
+                    hash: *dir.hash(),
+                    num_bytes: dir.num_bytes(),
+                    last_commit_id: *dir.last_commit_id(),
+                    last_modified_seconds: dir.last_modified_seconds(),
+                    last_modified_nanoseconds: dir.last_modified_nanoseconds(),
+                    data_type_counts: dir.data_type_counts().clone(),
+                    data_type_sizes: dir.data_type_sizes().clone(),
+                })
+                .expect("legacy dir node should serialize");
 
-                    let mut rewritten = blob[..17].to_vec();
-                    rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
-                    rewritten.extend_from_slice(&legacy);
-                    rewritten.extend_from_slice(&blob[21 + data_len..]);
-                    std::fs::write(&node_file, rewritten)?;
-                    rewritten_hash = Some(*dir.hash());
-                    break;
-                }
-                if rewritten_hash.is_some() {
-                    break;
-                }
+                let mut rewritten = blob[..17].to_vec();
+                rewritten.extend_from_slice(&(legacy.len() as u32).to_le_bytes());
+                rewritten.extend_from_slice(&legacy);
+                rewritten.extend_from_slice(&blob[21 + data_len..]);
+                let children = store.read_children(&hash)?;
+                store.write_nodes(vec![(hash, Bytes::from(rewritten), children)], true)?;
+                rewritten_hash = Some(*dir.hash());
+                break;
             }
             let rewritten_hash =
                 rewritten_hash.expect("fixture repo should contain a dir node to rewrite");

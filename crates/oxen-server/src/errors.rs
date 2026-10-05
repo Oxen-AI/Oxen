@@ -284,6 +284,16 @@ impl error::ResponseError for OxenHttpError {
                             "A namespace and a repository name must each be a single path segment",
                         ))
                     }
+                    OxenError::InvalidTreePath(_) => {
+                        log::warn!("Refused a ref advance onto an invalid tree path: {error}");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
+                    OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => {
+                        log::warn!("Rejected request path: {error}");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
                     OxenError::ResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
                         let error_json = json!({
@@ -709,6 +719,19 @@ impl error::ResponseError for OxenHttpError {
                                     "Unsupported Repository Version",
                                 "detail":
                                     format!("This repository is stored in the Oxen v{version} on-disk format, which this server can no longer read. Migrate it up to the current format with an older Oxen release."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::MerkleNodesOnFilesystem(_) => {
+                        log::warn!("Repository still on the filesystem merkle node backend");
+                        let error_json = json!({
+                            "error": {
+                                "type": "merkle_nodes_on_filesystem",
+                                "title": "Retired Repository Storage Format",
+                                "detail": "This repository stores its Merkle nodes on the filesystem backend, which this server can no longer read. Migrate it to LMDB with Oxen 0.61.0.",
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,

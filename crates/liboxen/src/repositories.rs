@@ -7,7 +7,7 @@ use crate::api::requests::RepoNew;
 use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::core;
-use crate::core::db::merkle_node::DEFAULT_MERKLE_NODE_BACKEND;
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::refs::with_ref_manager;
 use crate::core::repo_locks;
 use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
@@ -150,6 +150,9 @@ pub fn get_by_namespace_and_name(
             // defect. See docs/deprecations.md.
             OxenError::UnsupportedRepoVersion(version) => {
                 log::warn!("Unsupported repo on-disk version {version} at {repo_dir:?}")
+            }
+            OxenError::MerkleNodesOnFilesystem(_) => {
+                log::warn!("Repo at {repo_dir:?} is still on the filesystem merkle node backend")
             }
             _ => tracing::error!(repo_dir = ?repo_dir, cause = ?err, "Error getting repo from dir"),
         })
@@ -700,7 +703,7 @@ fn save_new_repo(
                 kind,
                 versions_path: None,
             }),
-        merkle_node_backend: Some(DEFAULT_MERKLE_NODE_BACKEND),
+        merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
         identity: Some(identity),
         ..Default::default()
     };
@@ -841,7 +844,6 @@ mod tests {
     use crate::config::UserConfig;
     use crate::constants;
     use crate::constants::OXEN_HIDDEN_DIR;
-    use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::core::repo_locks;
     use crate::core::workspaces::workspace_name_index;
     use crate::error::OxenError;
@@ -1542,19 +1544,6 @@ mod tests {
                 "a create refused for having no identity leaves nothing on disk"
             );
 
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_create_defaults_to_lmdb_backend() -> Result<(), OxenError> {
-        test::run_empty_dir_test_async(|sync_dir| async move {
-            let repo_new = RepoNew::from_namespace_name("ns", "repo", None);
-            let repo =
-                repositories::create(&sync_dir, repo_new, server_identity("ns", "repo"), None)
-                    .await?;
-            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
             Ok(())
         })
         .await

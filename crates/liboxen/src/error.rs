@@ -269,6 +269,23 @@ pub enum OxenError {
     #[error("Not a single file: {0}")]
     NotAFile(PathBufError),
 
+    /// A commit's tree names a path that would land outside the working tree or inside a `.oxen`
+    /// directory, so it is not written there.
+    #[error("Path cannot be written to the working tree: {0}")]
+    InvalidTreePath(PathBufError),
+
+    /// A path a request or an archive supplied names a location outside the repository's working
+    /// tree, so nothing is written there.
+    #[error("{path} is outside the working tree: {reason}")]
+    PathOutsideWorkingTree {
+        path: PathBufError,
+        reason: &'static str,
+    },
+
+    /// A path a request supplied normalizes to the repository root where a file path is expected.
+    #[error("Expected a file path, but the path is empty")]
+    EmptyPath,
+
     /// A move or rename targeted a path that already has a staged entry.
     #[error("Destination already staged: {0}")]
     DestinationAlreadyStaged(PathBufError),
@@ -319,6 +336,13 @@ pub enum OxenError {
     /// The repository was created by an Oxen version this CLI no longer supports.
     #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
     UnsupportedRepoVersion(StringError),
+
+    /// The repository at this path stores its Merkle nodes on the filesystem backend, which this
+    /// build no longer reads.
+    #[error(
+        "The repository at {0:?} stores its Merkle nodes on the filesystem backend, which this version of Oxen no longer reads."
+    )]
+    MerkleNodesOnFilesystem(PathBuf),
 
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
@@ -827,6 +851,9 @@ impl OxenError {
             | ResourceNotFound(_)
             | ParsedResourceNotFound(_)
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            InvalidTreePath(_) => {
+                "The commit contains this path, so it cannot be checked out. Ask the repository's owner to rename or remove it."
+            }
             NotADataFrame(_) => {
                 "Schema operations need a tabular file (csv, tsv, jsonl, parquet, arrow)."
             }
@@ -888,6 +915,9 @@ impl OxenError {
             }
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
+            }
+            MerkleNodesOnFilesystem(_) => {
+                "Run `oxen migrate up merkle_nodes_to_lmdb <path>` with Oxen 0.61.0 to move the repository onto LMDB, then retry with this version."
             }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
@@ -992,9 +1022,12 @@ impl OxenError {
             OxenError::RemotePointsAtDifferentRepo { .. } => true,
             OxenError::RepoUuidTaken(_) => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            OxenError::MerkleNodesOnFilesystem(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
+            OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.

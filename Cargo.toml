@@ -4,7 +4,7 @@ members = ["crates/*"]
 exclude = ["crates/data", "experiments/*"]
 
 [workspace.package]
-version = "0.61.0"
+version = "0.61.1"
 edition = "2024"
 license-file = "LICENSE"
 homepage = "https://oxen.ai"
@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.97.1"
 
 [workspace.lints.clippy]
-disallowed-methods = "deny"
+disallowed_methods = "deny"
 
 [workspace.lints.rust]
 # Allows the expected macOS "__eh_frame section too large" note from the
@@ -90,7 +90,7 @@ libduckdb-sys = { version = "=1.10506.0" }
 # liboxen's `version` is kept in lockstep with `[workspace.package].version` by `bin/bump-version`.
 # `path` is used for local builds; `version` is used by `cargo publish` so oxen-cli and oxen-server
 # resolve liboxen from crates.io when published.
-liboxen = { path = "crates/liboxen", version = "=0.61.0" }
+liboxen = { path = "crates/liboxen", version = "=0.61.1" }
 lofty = "0.25"
 log = "0.4.33"
 lru = "0.18"
@@ -185,6 +185,7 @@ debug = "limited"
 
 [profile.dev.package."*"]
 debug = false
+opt-level = 1
 strip = "symbols"
 debug-assertions = false
 
