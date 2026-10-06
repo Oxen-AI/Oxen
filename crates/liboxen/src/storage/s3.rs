@@ -1126,7 +1126,7 @@ impl Stream for ByteStreamAdapter {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::storage::version_store::VersionStore;
 
@@ -1170,7 +1170,9 @@ mod tests {
         (addr, tmp, server_handle)
     }
 
-    async fn setup() -> (
+    /// An S3 store on an in-process s3s server, in a bucket of its own. Keep the returned temp dir
+    /// and join handle alive for as long as the store is used.
+    pub(crate) async fn setup() -> (
         S3VersionStore,
         async_tempfile::TempDir,
         tokio::task::JoinHandle<()>,

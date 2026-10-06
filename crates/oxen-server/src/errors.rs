@@ -540,6 +540,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    OxenError::StorageChangedDuringMove(repo) => {
+                        tracing::warn!(repo = %repo, "Storage move refused, the repository's storage changed during it");
+                        let error_json = json!({
+                            "error": {
+                                "type": "storage_changed_during_move",
+                                "title": "Storage changed during the move",
+                                "detail": "Another operation changed this repository's storage while its version files were moving. Run the move again.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::PathStagedForRemoval(path) => {
                         log::warn!("Edit refused, path staged for removal: {path}");
                         let error_json = json!({

@@ -154,7 +154,7 @@ impl std::str::FromStr for StorageKind {
 /// value is promoted into `versions_path` on load. Any path — new or legacy — is
 /// re-emitted as `versions_path` in `[storage]`; `[storage.settings]` goes away on
 /// the first save after upgrade.
-#[derive(Serialize, Debug, Clone, Default)]
+#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct StorageConfig {
     pub kind: StorageKind,
     /// For the "local" backend, the directory where version files are stored. If `None`,

@@ -20,6 +20,7 @@ pub mod prune;
 pub mod repositories;
 pub mod revisions;
 pub mod schemas;
+pub mod storage;
 pub mod tree;
 pub mod verify;
 pub mod versions;

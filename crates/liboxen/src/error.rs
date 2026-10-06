@@ -396,6 +396,11 @@ pub enum OxenError {
     )]
     S3RepoWithoutIdentity(PathBufError),
 
+    /// A storage move found the repository's storage changed after the move loaded it, as when
+    /// another move switched it first, so it stopped without switching.
+    #[error("The storage of repository {0} changed while its version files were moving")]
+    StorageChangedDuringMove(PathBufError),
+
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
     #[error("{}", format_restore_failures(failures))]
@@ -931,6 +936,9 @@ impl OxenError {
             }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
+            }
+            StorageChangedDuringMove(_) => {
+                "Run the move again. It finishes the move, or does nothing if the repository is already on the requested storage."
             }
             TabularExportMissingMetadata(_) => {
                 "The data frame has no rows to commit. Add at least one row, or discard the workspace edits, then retry."
