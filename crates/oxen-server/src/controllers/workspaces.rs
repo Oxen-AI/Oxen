@@ -440,15 +440,15 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let branch = match repositories::branches::get_by_name_async(&repo, &branch_name).await {
-        Ok(branch) => branch,
+    match repositories::branches::get_by_name_async(&repo, &branch_name).await {
+        Ok(_) => {}
         Err(OxenError::BranchNotFound(_)) => {
             return Ok(
                 HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name))
             );
         }
         Err(e) => return Err(e.into()),
-    };
+    }
 
     match repositories::workspaces::commit(&workspace, &data, &branch_name).await {
         Ok(commit) => {
@@ -458,7 +458,11 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
                 commit,
             }))
         }
+        Err(OxenError::WorkspaceNotFound(_)) => Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id))),
         Err(OxenError::WorkspaceBehind(workspace)) => {
+            // The 409 reports the branch head as of the conflict, not as of the request.
+            let branch = repositories::branches::get_by_name_async(&repo, &branch_name).await?;
             Err(OxenHttpError::WorkspaceBehind(Box::new(WorkspaceBranch {
                 workspace: *workspace.clone(),
                 branch,
