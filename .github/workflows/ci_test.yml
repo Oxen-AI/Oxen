@@ -55,6 +55,9 @@ jobs:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
@@ -192,6 +195,9 @@ jobs:
         with:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
+
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377

@@ -26,6 +26,9 @@ jobs:
         with:
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
+
       # Must precede the tool versions load: rust-cache hashes every CARGO*/RUST* environment
       # variable into its key, so the cargo-tool pins in tool-versions.env would otherwise bust
       # the whole build cache every time one of them is bumped.
