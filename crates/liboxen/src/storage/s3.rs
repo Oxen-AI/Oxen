@@ -1,5 +1,7 @@
 use crate::error::OxenError;
 use async_trait::async_trait;
+use aws_config::BehaviorVersion;
+use aws_config::timeout::TimeoutConfig;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
@@ -13,7 +15,7 @@ use log;
 use std::path::Path;
 use std::pin::pin;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tokio::io::AsyncReadExt;
 use tokio::sync::OnceCell;
 use tokio_stream::Stream;
@@ -31,6 +33,31 @@ const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
 /// The most keys S3 accepts in one DeleteObjects request.
 const DELETE_OBJECTS_MAX_KEYS: usize = 1000;
+
+/// The S3 client every store in the process shares, so connections and resolved credentials carry
+/// over from one request to the next. The server reads one bucket in one region.
+static CLIENT: OnceCell<Arc<Client>> = OnceCell::const_new();
+
+/// The process's S3 client, built for `region` on first use. Its timeouts bound the wait for a
+/// response's first byte and for a whole operation with its retries, but not the reading of a
+/// streamed response body.
+async fn shared_client(region: &str) -> Arc<Client> {
+    let client = CLIENT
+        .get_or_init(|| async {
+            let timeouts = TimeoutConfig::builder()
+                .read_timeout(Duration::from_secs(60))
+                .operation_timeout(Duration::from_secs(5 * 60))
+                .build();
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new(region.to_string()))
+                .timeout_config(timeouts)
+                .load()
+                .await;
+            Arc::new(Client::new(&config))
+        })
+        .await;
+    Arc::clone(client)
+}
 
 /// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket
 /// and region are server-wide settings (the server can rotate them without rewriting every repo's
@@ -81,7 +108,7 @@ fn object_head_error(
 /// S3 implementation of version storage
 #[derive(Debug)]
 pub struct S3VersionStore {
-    client: OnceCell<Result<Arc<Client>, OxenError>>,
+    client: OnceCell<Arc<Client>>,
     bucket: String,
     /// AWS region the bucket lives in (from the server's S3 config). Used to build the client
     /// directly, avoiding a `GetBucketLocation` round-trip per store.
@@ -114,28 +141,18 @@ impl S3VersionStore {
         }
     }
 
-    pub async fn client(&self) -> Result<Arc<Client>, OxenError> {
-        let result_ref = self
-            .client
-            .get_or_init(|| async {
-                let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(Region::new(self.region.clone()))
-                    .load()
-                    .await;
-                Ok::<Arc<Client>, OxenError>(Arc::new(Client::new(&config)))
-            })
-            .await;
-
-        match result_ref {
-            Ok(client) => Ok(client.clone()),
-            Err(e) => Err(OxenError::basic_str(format!("{e:?}"))),
-        }
+    async fn client(&self) -> Arc<Client> {
+        Arc::clone(
+            self.client
+                .get_or_init(|| shared_client(&self.region))
+                .await,
+        )
     }
 
     /// Verify the configured bucket exists and is reachable with the current credentials and
     /// region (HeadBucket). Object read/write permission is not probed.
     async fn check_bucket_accessible(&self) -> Result<(), OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         client
             .head_bucket()
             .bucket(&self.bucket)
@@ -158,10 +175,8 @@ impl S3VersionStore {
         prefix: String,
         endpoint_url: Option<String>,
     ) -> Self {
-        let cell = OnceCell::new();
-        cell.set(Ok(client)).expect("cell was just created");
         Self {
-            client: cell,
+            client: OnceCell::new_with(Some(client)),
             bucket,
             region,
             prefix,
@@ -197,7 +212,7 @@ impl S3VersionStore {
         &self,
         prefix: &str,
     ) -> Result<impl Stream<Item = Result<String, OxenError>> + Send, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let bucket = self.bucket.clone();
         let prefix = prefix.to_string();
 
@@ -283,7 +298,7 @@ impl S3VersionStore {
 
         let resp = self
             .client()
-            .await?
+            .await
             .delete_objects()
             .bucket(&self.bucket)
             .delete(delete)
@@ -329,7 +344,7 @@ impl VersionStore for S3VersionStore {
         self.check_bucket_accessible().await?;
 
         // Write access: round-trip a small sentinel object under this store's prefix.
-        let client = self.client().await?;
+        let client = self.client().await;
         let test_key = format!("{}/_permission_check", self.prefix);
         let body = ByteStream::from("permission-check".as_bytes().to_vec());
         client
@@ -370,7 +385,7 @@ impl VersionStore for S3VersionStore {
         reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         size: u64,
     ) -> Result<(), OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         const MIN_PART_SIZE: usize = 5 * 1024 * 1024; // 5 MB, S3 minimum
@@ -524,7 +539,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         log::debug!("Storing version to S3");
         let key = self.generate_key(hash);
 
@@ -555,7 +570,7 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
         derived_data: Bytes,
     ) -> Result<(), OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         client
@@ -574,7 +589,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -593,7 +608,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -620,7 +635,7 @@ impl VersionStore for S3VersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<u64, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         let resp = client
@@ -639,7 +654,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         let resp = client
@@ -660,7 +675,7 @@ impl VersionStore for S3VersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<BoxedByteStream, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         let resp = client
@@ -680,7 +695,7 @@ impl VersionStore for S3VersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<bool, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
 
         match client
@@ -737,7 +752,7 @@ impl VersionStore for S3VersionStore {
         offset: u64,
         data: Bytes,
     ) -> Result<(), OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.chunk_key(hash, offset);
 
         client
@@ -761,7 +776,7 @@ impl VersionStore for S3VersionStore {
             return Ok(Vec::new());
         }
 
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         // HTTP Range is inclusive on both ends: bytes=start-end means bytes [start..=end]
@@ -809,7 +824,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         match client
@@ -860,7 +875,7 @@ impl VersionStore for S3VersionStore {
         // given `{hash}/` into one entry. Keys that sit directly under the prefix with no
         // further slash (e.g. the init-time `_permission_check`) come back as Contents
         // rather than CommonPrefixes, so they don't appear in the result.
-        let client = self.client().await?;
+        let client = self.client().await;
         let base = format!("{}/", self.prefix);
         let mut hashes = Vec::new();
         let mut continuation_token: Option<String> = None;
@@ -909,7 +924,7 @@ impl VersionStore for S3VersionStore {
         }
         log::debug!("combine_version_chunks found {} chunks", offsets.len());
 
-        let client = self.client().await?;
+        let client = self.client().await;
         let key = self.generate_key(hash);
 
         // 2. Create multipart upload
@@ -1457,7 +1472,7 @@ pub(crate) mod tests {
             .expect("store_version_chunk should succeed");
 
         // Verify by reading the object back directly from S3
-        let client = store.client().await.expect("client should succeed");
+        let client = store.client().await;
         let resp = client
             .get_object()
             .bucket(&store.bucket)
@@ -1489,7 +1504,7 @@ pub(crate) mod tests {
             .expect("store chunk at offset 1024 should succeed");
 
         // Verify each chunk stored independently
-        let client = store.client().await.expect("client should succeed");
+        let client = store.client().await;
 
         let body0 = client
             .get_object()
@@ -1563,7 +1578,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_stream_and_delete_objects_with_prefix_paginate() {
         let (store, _tmp, _server) = setup().await;
-        let client = store.client().await.unwrap();
+        let client = store.client().await;
 
         // Seed more than one page of keys (list_objects_v2 returns <= 1000 per response) and more
         // than one delete batch, so both the lister's paging and the batched delete cross their
@@ -1794,7 +1809,7 @@ pub(crate) mod tests {
             .expect("combine_version_chunks should succeed");
 
         // Verify VERSION object has the correct content
-        let client = store.client().await.expect("client");
+        let client = store.client().await;
         let resp = client
             .get_object()
             .bucket(&store.bucket)
