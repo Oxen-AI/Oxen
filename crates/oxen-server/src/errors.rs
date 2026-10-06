@@ -553,6 +553,19 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    OxenError::StorageMoveInProgress(repo) => {
+                        tracing::warn!(repo = %repo, "Storage move refused, another move of the repository is running");
+                        let error_json = json!({
+                            "error": {
+                                "type": "storage_move_in_progress",
+                                "title": "Storage move in progress",
+                                "detail": "This repository is already moving to other storage. Wait for that move to finish, then run this one again if it is still needed.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     OxenError::PathStagedForRemoval(path) => {
                         log::warn!("Edit refused, path staged for removal: {path}");
                         let error_json = json!({

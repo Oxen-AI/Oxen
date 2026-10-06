@@ -401,6 +401,10 @@ pub enum OxenError {
     #[error("The storage of repository {0} changed while its version files were moving")]
     StorageChangedDuringMove(PathBufError),
 
+    /// A storage move was refused because another move of the same repository is still running.
+    #[error("Repository {0} is already moving to other storage")]
+    StorageMoveInProgress(PathBufError),
+
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
     #[error("{}", format_restore_failures(failures))]
@@ -939,6 +943,9 @@ impl OxenError {
             }
             StorageChangedDuringMove(_) => {
                 "Run the move again. It finishes the move, or does nothing if the repository is already on the requested storage."
+            }
+            StorageMoveInProgress(_) => {
+                "Wait for the move already running to finish, then run this one again if it is still needed."
             }
             TabularExportMissingMetadata(_) => {
                 "The data frame has no rows to commit. Add at least one row, or discard the workspace edits, then retry."
