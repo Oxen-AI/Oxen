@@ -1001,6 +1001,11 @@ mod tests {
                 "the second commit should be built on the first, which held the branch while the \
                  second waited"
             );
+            assert_eq!(
+                repositories::branches::get_by_name(&repo, "main")?.commit_id,
+                second_commit.id,
+                "main should end on the commit that waited for the branch"
+            );
             for name in ["first.txt", "second.txt"] {
                 assert!(
                     repositories::tree::get_file_by_path(&repo, &second_commit, Path::new(name))?
