@@ -915,6 +915,7 @@ mod tests {
                 ("greetings/hello.txt", "Hello"),
                 ("greetings/bye.txt", "Bye"),
                 ("docs/readme.txt", "Read me"),
+                ("other/notes.txt", "Notes"),
             ] {
                 util::fs::write_to_path(repo.path.join(path), content)?;
             }
@@ -960,8 +961,12 @@ mod tests {
                     util::fs::write_to_path(&path, content)?;
                     repositories::workspaces::files::add(&temp_workspace, path).await?;
                 }
-                repositories::workspaces::files::rm(&temp_workspace, &[PathBuf::from("docs")])
-                    .await?;
+                // main has not touched `other`, so removing it is not a conflict
+                repositories::workspaces::files::rm(
+                    &temp_workspace,
+                    &[PathBuf::from("docs"), PathBuf::from("other")],
+                )
+                .await?;
 
                 let mut conflicts = mergeability(&temp_workspace, DEFAULT_BRANCH_NAME)?
                     .conflicts
