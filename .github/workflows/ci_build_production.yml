@@ -30,7 +30,7 @@ jobs:
       # variable into its key, so the cargo-tool pins in tool-versions.env would otherwise bust
       # the whole build cache every time one of them is bumped.
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           prefix-key: rust-production

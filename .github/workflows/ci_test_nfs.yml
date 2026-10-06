@@ -34,7 +34,7 @@ jobs:
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
       - name: Rust Cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           prefix-key: rust-test # Restore the cache the PR test job saves on main.
           cache-all-crates: true
