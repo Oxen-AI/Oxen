@@ -155,7 +155,7 @@ tar = "0.4.44"
 tempfile = "3.8.0"
 thiserror = "2.0.18"
 time = { version = "0.3.55", features = ["serde", "formatting"] }
-tokio = { version = "1.32.0", features = ["full", "tracing"] }
+tokio = { version = "1.53.2", features = ["full", "tracing"] }
 tokio-stream = "0.1.17"
 tokio-util = { version = "0.7.8", features = ["compat", "io", "io-util"] }
 toml = "1.1"

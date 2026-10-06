@@ -362,6 +362,30 @@ impl error::ResponseError for OxenHttpError {
                             .insert_header(("Retry-After", "1"))
                             .json(error_json)
                     }
+                    OxenError::BranchHeadMismatch {
+                        branch,
+                        expected,
+                        actual,
+                    } => {
+                        tracing::warn!(
+                            %branch,
+                            ?expected,
+                            ?actual,
+                            "Refused to move a branch another write moved first"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "branch_head_mismatch",
+                                "title": "Branch moved during the write",
+                                "detail": error.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "1"))
+                            .json(error_json)
+                    }
                     OxenError::NoMergeBase { base, head } => {
                         log::debug!("No merge base between {base} and {head}");
                         let error_json = json!({
