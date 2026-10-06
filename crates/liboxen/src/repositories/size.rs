@@ -125,8 +125,8 @@ fn walk_and_record(repo: &LocalRepository) -> bool {
                 }
                 Err(e) => {
                     tracing::error!(
-                        repo = ?repo.path,
-                        cause = ?e,
+                        oxen.repository_path = %repo.path.display(),
+                        exception.message = ?e,
                         "Could not record a repository's recalculated size"
                     );
                     true
@@ -135,8 +135,8 @@ fn walk_and_record(repo: &LocalRepository) -> bool {
         }
         Err(e) => {
             tracing::error!(
-                repo = ?repo.path,
-                cause = ?e,
+                oxen.repository_path = %repo.path.display(),
+                exception.message = ?e,
                 "Could not calculate a repository's size"
             );
             true
@@ -174,8 +174,8 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
     } else {
         match &recorded {
             Some(Err(cause)) => tracing::error!(
-                repo = ?repo.path,
-                ?cause,
+                oxen.repository_path = %repo.path.display(),
+                exception.message = ?cause,
                 "Replacing a recorded repository size that is not a figure"
             ),
             _ => log::info!(
@@ -187,8 +187,8 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
             Ok(()) => SizeStatus::Pending,
             Err(cause) => {
                 tracing::error!(
-                    repo = ?repo.path,
-                    ?cause,
+                    oxen.repository_path = %repo.path.display(),
+                    exception.message = ?cause,
                     "Could not start the recalculation a repository with no figure needs"
                 );
                 SizeStatus::Error

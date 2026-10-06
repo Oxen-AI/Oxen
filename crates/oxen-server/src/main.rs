@@ -849,11 +849,13 @@ async fn start(
     match seed::run_if_incomplete(sync_dir) {
         Ok(Some(seeded)) => log::info!("Seeded the name table: {seeded:?}"),
         Ok(None) => {}
-        Err(err) => tracing::error!(%err, "Failed to seed the name table"),
+        Err(err) => tracing::error!(exception.message = %err, "Failed to seed the name table"),
     }
     // Held until the server stops, so a request's repository lookup finds the table's env open.
     let _name_table = NameTable::open(sync_dir)
-        .inspect_err(|err| tracing::error!(%err, "Failed to open the name table"))
+        .inspect_err(
+            |err| tracing::error!(exception.message = %err, "Failed to open the name table"),
+        )
         .ok();
 
     let data = app_data::OxenAppData {

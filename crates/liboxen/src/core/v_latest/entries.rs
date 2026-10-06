@@ -318,8 +318,8 @@ fn dir_node_to_metadata_entry(
         let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?;
         if commit.is_none() {
             tracing::error!(
-                commit_id = %dir_node.last_commit_id(),
-                entry = %dir_node.name(),
+                oxen.commit_id = %dir_node.last_commit_id(),
+                oxen.entry_name = %dir_node.name(),
                 "Entry names a commit the repository does not have"
             );
         }
@@ -369,8 +369,8 @@ fn file_node_to_metadata_entry(
         let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?;
         if commit.is_none() {
             tracing::error!(
-                commit_id = %file_node.last_commit_id(),
-                entry = %file_node.name(),
+                oxen.commit_id = %file_node.last_commit_id(),
+                oxen.entry_name = %file_node.name(),
                 "Entry names a commit the repository does not have"
             );
         }

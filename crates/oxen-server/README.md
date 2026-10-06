@@ -295,6 +295,10 @@ trace id and nothing to correlate them against. The server warns at startup
 when it is configured that way, and reports an error when `OTEL_LOGS_EXPORTER`
 asks for log export and no endpoint resolves at all.
 
+A record's instrumentation scope is the target it was logged under. One logged
+through the `log` crate, as most of the server's are, also carries its call
+site as `code.file.path` and `code.line.number`.
+
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 OTEL_LOGS_EXPORTER=otlp \

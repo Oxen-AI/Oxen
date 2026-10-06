@@ -884,12 +884,144 @@ fn build_otel_log_layer(
         .build();
 
     let provider = SdkLoggerProvider::builder()
-        .with_log_processor(processor)
+        .with_log_processor(BridgedLogLocation::new(processor))
         .with_resource(otel_resource(app_name))
         .build();
 
     let layer = OpenTelemetryTracingBridge::new(&provider);
     Some((layer, provider))
+}
+
+/// A log processor that hands each record to `inner`, first moving the call site of a record
+/// bridged from the `log` crate to where the OpenTelemetry semantic conventions put it.
+///
+/// `tracing-log` turns a `log` record into a `tracing` event whose target is `log`, carrying the
+/// record's own target, module path, file, and line as `log.target`, `log.module_path`,
+/// `log.file`, and `log.line` fields. The appender exports those fields as attributes under the
+/// same names, and the `log` target as the instrumentation scope. A record that carries
+/// `log.target` is rebuilt so that:
+/// - `log.target` becomes the record's target, which the exporter sends as the scope name, the
+///   same place a `tracing` event's target goes;
+/// - `log.file` and `log.line` become `code.file.path` and `code.line.number`;
+/// - `log.module_path` is dropped, since the file and line already locate the call site.
+///
+/// Every other attribute, and every record without `log.target`, passes through unchanged.
+///
+/// The appender's `experimental_metadata_attributes` feature also replaces the `log.*`
+/// attributes, but with the deprecated `code.filepath`, `code.lineno`, and `code.namespace`, plus
+/// a `code.filename` no convention defines, and it leaves the scope named `log`.
+///
+/// shortcut: the SDK cannot remove an attribute from a record, so a bridged record is copied into
+/// a blank one minted by `blank_records`, a logger whose provider has no processors. Drop this
+/// processor for the appender's feature once it emits `code.file.path` and the record's target.
+#[cfg(feature = "otel")]
+#[derive(Debug)]
+struct BridgedLogLocation<P> {
+    inner: P,
+    blank_records: opentelemetry_sdk::logs::SdkLogger,
+}
+
+#[cfg(feature = "otel")]
+impl<P> BridgedLogLocation<P> {
+    fn new(inner: P) -> Self {
+        use opentelemetry::logs::LoggerProvider;
+        let blank_records = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+            .build()
+            .logger("blank records");
+        Self {
+            inner,
+            blank_records,
+        }
+    }
+
+    /// `record` with its `log.*` attributes moved as the type's documentation describes.
+    fn relocated(
+        &self,
+        record: &opentelemetry_sdk::logs::SdkLogRecord,
+    ) -> opentelemetry_sdk::logs::SdkLogRecord {
+        use opentelemetry::logs::{AnyValue, LogRecord, Logger};
+
+        let mut relocated = self.blank_records.create_log_record();
+        if let Some(name) = record.event_name() {
+            relocated.set_event_name(name);
+        }
+        if let Some(target) = record.target() {
+            relocated.set_target(target.clone());
+        }
+        if let Some(timestamp) = record.timestamp() {
+            relocated.set_timestamp(timestamp);
+        }
+        if let Some(timestamp) = record.observed_timestamp() {
+            relocated.set_observed_timestamp(timestamp);
+        }
+        if let Some(context) = record.trace_context() {
+            relocated.set_trace_context(context.trace_id, context.span_id, context.trace_flags);
+        }
+        if let Some(text) = record.severity_text() {
+            relocated.set_severity_text(text);
+        }
+        if let Some(number) = record.severity_number() {
+            relocated.set_severity_number(number);
+        }
+        if let Some(body) = record.body() {
+            relocated.set_body(body.clone());
+        }
+        for (key, value) in record.attributes_iter() {
+            match (key.as_str(), value) {
+                ("log.target", AnyValue::String(target)) => {
+                    relocated.set_target(target.as_str().to_owned());
+                }
+                ("log.file", _) => relocated.add_attribute("code.file.path", value.clone()),
+                ("log.line", _) => relocated.add_attribute("code.line.number", value.clone()),
+                ("log.module_path", _) => {}
+                _ => relocated.add_attribute(key.clone(), value.clone()),
+            }
+        }
+        relocated
+    }
+}
+
+#[cfg(feature = "otel")]
+impl<P: opentelemetry_sdk::logs::LogProcessor> opentelemetry_sdk::logs::LogProcessor
+    for BridgedLogLocation<P>
+{
+    fn emit(
+        &self,
+        record: &mut opentelemetry_sdk::logs::SdkLogRecord,
+        scope: &opentelemetry::InstrumentationScope,
+    ) {
+        if record
+            .attributes_iter()
+            .any(|(key, _)| key.as_str() == "log.target")
+        {
+            *record = self.relocated(record);
+        }
+        self.inner.emit(record, scope);
+    }
+
+    fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
+        self.inner.force_flush()
+    }
+
+    fn shutdown_with_timeout(
+        &self,
+        timeout: std::time::Duration,
+    ) -> opentelemetry_sdk::error::OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+
+    fn event_enabled(
+        &self,
+        level: opentelemetry::logs::Severity,
+        target: &str,
+        name: Option<&str>,
+    ) -> bool {
+        self.inner.event_enabled(level, target, name)
+    }
+
+    fn set_resource(&mut self, resource: &opentelemetry_sdk::Resource) {
+        self.inner.set_resource(resource);
+    }
 }
 
 #[cfg(test)]
@@ -1289,24 +1421,99 @@ mod tests {
                 1,
                 "only the application's own event should be exported, got {exported:?}"
             );
-            let (trace_id, span_id) = exported[0];
-            assert_eq!(trace_id, expected_trace_id);
+            let context = exported[0]
+                .trace_context()
+                .expect("an exported record should carry a trace context");
+            assert_eq!(context.trace_id, expected_trace_id);
             assert_ne!(
-                span_id,
+                context.span_id,
                 SpanId::INVALID,
                 "the record should name the span it was recorded in"
             );
         }
 
-        /// Collects the trace and span id of every record handed to it, standing in for a
-        /// collector.
+        /// A record bridged from the `log` crate leaves with its own target as the scope and its
+        /// call site under the semantic-convention names, and a `tracing` event's fields pass
+        /// through as they were recorded.
+        #[test]
+        fn bridged_log_records_carry_their_call_site_by_the_conventions() {
+            use super::super::BridgedLogLocation;
+            use opentelemetry::logs::AnyValue;
+            use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+            use opentelemetry_sdk::logs::{SdkLoggerProvider, SimpleLogProcessor};
+            use tracing_subscriber::layer::SubscriberExt;
+
+            let exporter = CollectingLogExporter::default();
+            let logger_provider = SdkLoggerProvider::builder()
+                .with_log_processor(BridgedLogLocation::new(SimpleLogProcessor::new(
+                    exporter.clone(),
+                )))
+                .build();
+            let subscriber = tracing_subscriber::registry()
+                .with(OpenTelemetryTracingBridge::new(&logger_provider));
+
+            tracing::subscriber::with_default(subscriber, || {
+                // The fields `tracing-log` gives the event it makes of a `log` record.
+                tracing::warn!(
+                    log.target = "liboxen::repositories::size",
+                    log.module_path = "liboxen::repositories::size",
+                    log.file = "crates/liboxen/src/repositories/size.rs",
+                    log.line = 42u32,
+                    "bridged"
+                );
+                tracing::warn!(oxen.namespace = "ox", "native");
+            });
+
+            let exported = exporter.exported();
+            assert_eq!(
+                exported.len(),
+                2,
+                "both events should export, got {exported:?}"
+            );
+            let attributes = |index: usize| -> Vec<(String, AnyValue)> {
+                exported[index]
+                    .attributes_iter()
+                    .map(|(key, value)| (key.to_string(), value.clone()))
+                    .collect()
+            };
+
+            assert_eq!(
+                exported[0].target().map(|target| target.as_ref()),
+                Some("liboxen::repositories::size")
+            );
+            assert_eq!(
+                attributes(0),
+                vec![
+                    (
+                        "code.file.path".to_string(),
+                        AnyValue::from("crates/liboxen/src/repositories/size.rs".to_string())
+                    ),
+                    ("code.line.number".to_string(), AnyValue::Int(42)),
+                ]
+            );
+            assert_eq!(
+                exported[0].body(),
+                Some(&AnyValue::from("bridged".to_string()))
+            );
+            assert!(exported[0].severity_number().is_some());
+
+            assert_eq!(
+                attributes(1),
+                vec![(
+                    "oxen.namespace".to_string(),
+                    AnyValue::from("ox".to_string())
+                )]
+            );
+        }
+
+        /// Keeps every record handed to it, standing in for a collector.
         #[derive(Debug, Default, Clone)]
         struct CollectingLogExporter {
-            records: std::sync::Arc<std::sync::Mutex<Vec<(TraceId, SpanId)>>>,
+            records: std::sync::Arc<std::sync::Mutex<Vec<opentelemetry_sdk::logs::SdkLogRecord>>>,
         }
 
         impl CollectingLogExporter {
-            fn exported(&self) -> Vec<(TraceId, SpanId)> {
+            fn exported(&self) -> Vec<opentelemetry_sdk::logs::SdkLogRecord> {
                 self.records
                     .lock()
                     .expect("the exporter's records should not be poisoned")
@@ -1323,12 +1530,7 @@ mod tests {
                     .records
                     .lock()
                     .expect("the exporter's records should not be poisoned");
-                for (record, _scope) in batch.iter() {
-                    let context = record
-                        .trace_context()
-                        .expect("an exported record should carry a trace context");
-                    records.push((context.trace_id, context.span_id));
-                }
+                records.extend(batch.iter().map(|(record, _scope)| record.clone()));
                 Ok(())
             }
         }
