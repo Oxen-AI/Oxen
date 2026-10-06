@@ -409,7 +409,7 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
         (status = 404, description = "Workspace or branch not found"),
         (status = 409, description = "Conflict — a staged file also changed on the target branch since the workspace's base commit"),
         (status = 422, description = "Unprocessable Entity — the commit failed for another reason"),
-        (status = 429, description = "Too Many Requests: another commit already holds this commit's id, so retry after the Retry-After delay")
+        (status = 429, description = "Too Many Requests: another commit already holds this commit's id, or another write moved the branch while this commit was being written, so retry after the Retry-After delay")
     )
 )]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
@@ -469,7 +469,9 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
                 branch,
             })))
         }
-        Err(err @ OxenError::CommitIdTaken(_)) => Err(err.into()),
+        Err(err @ (OxenError::CommitIdTaken(_) | OxenError::BranchHeadMismatch { .. })) => {
+            Err(err.into())
+        }
         Err(err) => {
             // The 422 below already tells the caller they got this wrong, so `warn!` rather than
             // `error!` — an `error!` here reports every rejected commit as a server fault.

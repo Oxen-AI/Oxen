@@ -531,7 +531,8 @@ pub enum OxenError {
 
     /// `compare_and_swap_branch_commit_id` saw a branch head that did not match the expected
     /// previous value. `expected = None` means the caller expected the branch to be absent;
-    /// `actual = None` means the branch was absent at the time of the swap attempt.
+    /// `actual = None` means the branch was absent at the time of the swap attempt. oxen-server
+    /// maps this to HTTP 429 with `Retry-After`.
     #[error("Branch '{branch}' head mismatch: expected {expected:?}, found {actual:?}")]
     BranchHeadMismatch {
         branch: String,
@@ -847,6 +848,9 @@ impl OxenError {
             }
             CommitIdTaken(_) => {
                 "Another commit with the same parent, message, author, and email was made in the same second. Retry the commit."
+            }
+            BranchHeadMismatch { .. } => {
+                "Another write moved the branch while this commit was being written. Retry the commit."
             }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."
