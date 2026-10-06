@@ -106,7 +106,7 @@ elif [ "$PLATFORM" = "linux" ]; then
         ok "All system packages already installed"
     fi
 
-    # Install FFmpeg 9 for the `ffmpeg` feature via the shared helper; bin/test-rust points
+    # Install FFmpeg 9 for the `ffmpeg` feature via the shared helper; bin/test points
     # pkg-config at this prefix.
     "$SCRIPT_DIR/install-ffmpeg"
 fi
@@ -328,10 +328,10 @@ info "You can now build the project:"
 info "  cargo build --workspace"
 info "  cd oxen-python && uv sync --verbose"
 
-# bin/test-rust --ffmpeg wires up PKG_CONFIG_PATH itself; a bare ffmpeg-feature build needs it set.
+# bin/test --ffmpeg wires up PKG_CONFIG_PATH itself; a bare ffmpeg-feature build needs it set.
 if [ "$PLATFORM" = "linux" ]; then
     echo ""
-    info "To build the 'ffmpeg' feature outside bin/test-rust, point pkg-config at /opt/ffmpeg:"
+    info "To build the 'ffmpeg' feature outside bin/test, point pkg-config at /opt/ffmpeg:"
     info "  export PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:\$PKG_CONFIG_PATH"
 fi
 

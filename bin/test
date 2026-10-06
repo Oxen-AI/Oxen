@@ -2,7 +2,7 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
+# Usage: bin/test [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
 #
 #   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
@@ -17,11 +17,11 @@
 #   All remaining arguments are forwarded after `--` to the libtest binaries (or `pytest` under -p).
 #
 # Examples:
-#   test-rust                       # Run all Rust tests
-#   test-rust test_name             # Run Rust tests matching test_name
-#   test-rust --timings test_name   # Report each matching test's duration
-#   test-rust -p                    # Run all Python tests
-#   test-rust -p -k test_init      # Run Python tests matching test_init
+#   bin/test                        # Run all Rust tests
+#   bin/test test_name              # Run Rust tests matching test_name
+#   bin/test --timings test_name    # Report each matching test's duration
+#   bin/test -p                     # Run all Python tests
+#   bin/test -p -k test_init        # Run Python tests matching test_init
 #
 # Logs (Rust runs — overwritten each invocation):
 #   ./data/test/oxen-server.log     # oxen-server subprocess stdout+stderr
