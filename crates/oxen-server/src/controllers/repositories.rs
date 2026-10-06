@@ -503,7 +503,7 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             HttpResponse::Conflict().json(StatusMessage::error("Repo already exists."))
         }
         OxenError::RepoUuidTaken(repo_uuid) => {
-            tracing::warn!(%repo_uuid, "Refused a create whose repository UUID is already in use");
+            tracing::warn!(oxen.repository_id = %repo_uuid, "Refused a create whose repository UUID is already in use");
             HttpResponse::Conflict().json(StatusMessage::error(format!(
                 "Repository UUID {repo_uuid} is already in use."
             )))

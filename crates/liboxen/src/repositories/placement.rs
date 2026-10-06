@@ -159,7 +159,7 @@ fn forget_cached_handles(repo_dir: &Path) -> Result<(), OxenError> {
 fn remove_if_empty(namespace_dir: &Path) {
     let empty = std::fs::read_dir(namespace_dir).is_ok_and(|mut entries| entries.next().is_none());
     if empty && let Err(err) = std::fs::remove_dir(namespace_dir) {
-        tracing::warn!(?namespace_dir, %err, "Could not remove an emptied namespace directory");
+        tracing::warn!(oxen.namespace_path = %namespace_dir.display(), exception.message = %err, "Could not remove an emptied namespace directory");
     }
 }
 
