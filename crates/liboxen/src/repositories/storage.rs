@@ -25,7 +25,10 @@ use crate::util;
 /// [`OxenError::S3RepoWithoutIdentity`] when moving to S3 a repository that records no UUID, and
 /// [`OxenError::StorageChangedDuringMove`] when another operation switched `repo`'s storage while
 /// this move copied.
-#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(
+    skip(repo, kind),
+    fields(oxen.repository_path = %repo.path.display(), oxen.target_storage_kind = %kind)
+)]
 pub async fn move_to(repo: &LocalRepository, kind: StorageKind) -> Result<(), OxenError> {
     if repo.storage_config().kind == kind {
         tracing::info!("The repository is already on this storage");
@@ -72,7 +75,7 @@ async fn catch_up_and_switch(
         versions_path: None,
     });
     config.save(&path)?;
-    tracing::info!(%kind, moved = moved.len(), "Switched the repository to its new storage");
+    tracing::info!(oxen.target_storage_kind = %kind, oxen.moved_version_count = moved.len(), "Switched the repository to its new storage");
     Ok(moved)
 }
 
@@ -85,19 +88,19 @@ async fn delete_old_copies(repo: &LocalRepository, source: &dyn VersionStore, mo
         Ok(write) => write,
         Err(err) => {
             tracing::warn!(
-                %from,
-                cause = %err,
+                oxen.source_storage_kind = %from,
+                exception.message = %err,
                 "Left every version file on the storage a repository moved from"
             );
             return;
         }
     };
-    tracing::info!(%from, versions = moved.len(), "Deleting the old copies of the version files");
+    tracing::info!(oxen.source_storage_kind = %from, oxen.moved_version_count = moved.len(), "Deleting the old copies of the version files");
     let undeleted = stream::iter(moved.iter().cloned())
         .map(|hash| async move {
             let result = source.delete_version(&hash).await;
             if let Err(err) = &result {
-                tracing::warn!(hash = %hash, cause = %err, "Failed to delete the old copy of a version");
+                tracing::warn!(oxen.file_hash = %hash, exception.message = %err, "Failed to delete the old copy of a version");
             }
             result.is_err()
         })
@@ -106,8 +109,8 @@ async fn delete_old_copies(repo: &LocalRepository, source: &dyn VersionStore, mo
         .await;
     if undeleted > 0 {
         tracing::error!(
-            undeleted,
-            %from,
+            oxen.undeleted_version_count = undeleted,
+            oxen.source_storage_kind = %from,
             "Left version files on the storage a repository moved from"
         );
     }
@@ -140,9 +143,9 @@ async fn copy_missing(
 
     let missing = target.find_missing_versions(&to_move).await?;
     tracing::info!(
-        already_moved = moved.len(),
-        found = to_move.len(),
-        to_copy = missing.len(),
+        oxen.moved_version_count = moved.len(),
+        oxen.found_version_count = to_move.len(),
+        oxen.missing_version_count = missing.len(),
         "Copying the version files the target storage lacks"
     );
     // Finish every copy before returning an error, so no upload is dropped part-way.

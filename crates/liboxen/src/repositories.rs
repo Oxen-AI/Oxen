@@ -155,7 +155,7 @@ pub fn get_by_namespace_and_name(
             OxenError::MerkleNodesOnFilesystem(_) => {
                 log::warn!("Repo at {repo_dir:?} is still on the filesystem merkle node backend")
             }
-            _ => tracing::error!(repo_dir = ?repo_dir, cause = ?err, "Error getting repo from dir"),
+            _ => tracing::error!(oxen.repository_path = %repo_dir.display(), exception.message = ?err, "Error getting repo from dir"),
         })
         .map(Some)
 }
@@ -261,8 +261,8 @@ pub(crate) fn list_placed_repos_in_namespace(
             Ok(repo) => Some(repo),
             Err(cause) => {
                 tracing::warn!(
-                    ?repo_dir,
-                    ?cause,
+                    oxen.repository_path = %repo_dir.display(),
+                    exception.message = ?cause,
                     "Leaving out a repository placed by UUID that did not open"
                 );
                 None
@@ -659,9 +659,9 @@ async fn create_unclaimed(
     if let Err(err) = set_up_new_repo(&local_repo, files).await {
         if let Err(cause) = local_repo.version_store().destroy().await {
             tracing::error!(
-                ?repo_dir,
-                repo_uuid = ?local_repo.repo_uuid(),
-                ?cause,
+                oxen.repository_path = %repo_dir.display(),
+                oxen.repository_id = local_repo.repo_uuid().map(tracing::field::display),
+                exception.message = ?cause,
                 "Could not remove the version files of a failed create"
             );
         }
@@ -676,8 +676,8 @@ async fn create_unclaimed(
 async fn remove_failed_create_dir(repo_dir: &Path) {
     if let Err(cause) = delete_dir(repo_dir).await {
         tracing::error!(
-            ?repo_dir,
-            ?cause,
+            oxen.repository_path = %repo_dir.display(),
+            exception.message = ?cause,
             "Could not remove the directory of a failed create"
         );
     }
