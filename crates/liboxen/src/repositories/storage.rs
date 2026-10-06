@@ -1,8 +1,11 @@
 //! Moving a repository's version files between the local and S3 storage backends.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use futures_util::{StreamExt, stream};
+use parking_lot::Mutex;
 use tokio_util::io::StreamReader;
 
 use crate::config::RepositoryConfig;
@@ -24,9 +27,11 @@ use crate::util;
 /// [`OxenError::S3BackendMissingServerOpts`] when moving to S3 on a server with no bucket, and
 /// [`OxenError::S3RepoWithoutIdentity`] when moving to S3 a repository that records no UUID, and
 /// [`OxenError::StorageChangedDuringMove`] when another operation switched `repo`'s storage while
-/// this move copied.
+/// this move copied, and [`OxenError::StorageMoveInProgress`] when another move of `repo` is still
+/// running in this process.
 #[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
 pub async fn move_to(repo: &LocalRepository, kind: StorageKind) -> Result<(), OxenError> {
+    let _moving = MoveInProgress::begin(repo)?;
     if repo.storage_config().kind == kind {
         tracing::info!("The repository is already on this storage");
         return Ok(());
@@ -46,6 +51,34 @@ pub async fn move_to(repo: &LocalRepository, kind: StorageKind) -> Result<(), Ox
             .await?;
     delete_old_copies(repo, source, &moved).await;
     Ok(())
+}
+
+/// The directories of the repositories this process is moving.
+static MOVING: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Default::default);
+
+/// One repository's move, which keeps any other move of that repository from starting until this
+/// drops.
+struct MoveInProgress {
+    repo_dir: PathBuf,
+}
+
+impl MoveInProgress {
+    /// Records a move of `repo`, or refuses with [`OxenError::StorageMoveInProgress`] when one is
+    /// already running.
+    fn begin(repo: &LocalRepository) -> Result<Self, OxenError> {
+        if !MOVING.lock().insert(repo.path.clone()) {
+            return Err(OxenError::StorageMoveInProgress(repo.path.clone().into()));
+        }
+        Ok(Self {
+            repo_dir: repo.path.clone(),
+        })
+    }
+}
+
+impl Drop for MoveInProgress {
+    fn drop(&mut self) {
+        MOVING.lock().remove(&self.repo_dir);
+    }
 }
 
 /// Copy what `target` lacks beyond `moved`, the hashes an earlier pass moved, switch `repo` to
@@ -175,12 +208,21 @@ mod tests {
     #[tokio::test]
     async fn test_move_versions_to_s3_and_back() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
+            let moving = MoveInProgress::begin(&repo)?;
+            assert!(
+                matches!(
+                    move_to(&repo, StorageKind::S3).await,
+                    Err(OxenError::StorageMoveInProgress(_))
+                ),
+                "a repository already moving refuses a second move"
+            );
+            drop(moving);
             assert!(
                 matches!(
                     move_to(&repo, StorageKind::S3).await,
                     Err(OxenError::S3BackendMissingServerOpts)
                 ),
-                "a repository on a server with no S3 bucket cannot move to S3"
+                "a repository on a server with no S3 bucket cannot move to S3, once no move runs"
             );
 
             let (bucket, _tmp, _server) = s3::tests::setup().await;
