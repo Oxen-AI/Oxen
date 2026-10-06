@@ -939,55 +939,106 @@ mod tests {
     async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts()
     -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Both workspaces try to commit the same file
-            let hello_file = repo.path.join("greetings").join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file).await?;
-            let commit = repositories::commit(&repo, "Adding hello file")?;
+            for (path, content) in [
+                ("greetings/hello.txt", "Hello"),
+                ("greetings/bye.txt", "Bye"),
+                ("docs/readme.txt", "Read me"),
+                ("other/notes.txt", "Notes"),
+            ] {
+                util::fs::write_to_path(repo.path.join(path), content)?;
+            }
+            repositories::add(&repo, &repo.path).await?;
+            let commit = repositories::commit(&repo, "Adding greetings and docs")?;
+            let body = NewCommitBody {
+                message: "Updating greetings".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
 
             {
-                // Create temporary workspace in new scope
+                // Main moves on from the original commit through a first workspace
                 let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the hello file in the temporary workspace
-                let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
-                util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
-                // Commit the changes to the "main" branch
-                repositories::workspaces::commit(
+                for (path, content) in [
+                    ("greetings/hello.txt", "Hello again"),
+                    ("greetings/new.txt", "Added on main"),
+                    ("docs/added.txt", "Added on main"),
+                ] {
+                    let path = temp_workspace.dir().join(path);
+                    util::fs::write_to_path(&path, content)?;
+                    repositories::workspaces::files::add(&temp_workspace, path).await?;
+                }
+                repositories::workspaces::files::rm(
                     &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating hello file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
+                    &[Path::new("greetings").join("bye.txt")],
                 )
                 .await?;
+                repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
+                    .await?;
             } // temp_workspace goes out of scope here and gets cleaned up
 
             {
-                // Create a new temporary workspace off of the same original commit
+                // A workspace off the original commit changes each path main changed since, each
+                // differently from main
                 let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the hello file in the temporary workspace
-                let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
-                util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
-                // Commit the changes to the "main" branch
-                let result = repositories::workspaces::commit(
+                for (path, content) in [
+                    ("greetings/hello.txt", "Hello from behind main"),
+                    ("greetings/new.txt", "Added in a workspace behind main"),
+                    ("greetings/bye.txt", "Bye from behind main"),
+                ] {
+                    let path = temp_workspace.dir().join(path);
+                    util::fs::write_to_path(&path, content)?;
+                    repositories::workspaces::files::add(&temp_workspace, path).await?;
+                }
+                // main has not touched `other`, so removing it is not a conflict
+                repositories::workspaces::files::rm(
                     &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating hello file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
+                    &[PathBuf::from("docs"), PathBuf::from("other")],
                 )
-                .await;
+                .await?;
 
-                // We should get a merge conflict error
-                assert!(result.is_err());
+                let mut conflicts = mergeability(&temp_workspace, DEFAULT_BRANCH_NAME)?
+                    .conflicts
+                    .into_iter()
+                    .map(|conflict| PathBuf::from(conflict.path))
+                    .collect::<Vec<_>>();
+                conflicts.sort();
+                let mut expected = vec![
+                    PathBuf::from("docs"),
+                    Path::new("greetings").join("bye.txt"),
+                    Path::new("greetings").join("hello.txt"),
+                    Path::new("greetings").join("new.txt"),
+                ];
+                expected.sort();
+                assert_eq!(
+                    conflicts, expected,
+                    "a file main modified, added, or removed, and a directory main added to, each \
+                     conflict with the workspace's own change to it"
+                );
+
+                let result =
+                    repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
+                        .await;
+                assert!(
+                    matches!(result, Err(OxenError::WorkspaceBehind(_))),
+                    "a commit with conflicts is refused, got {result:?}"
+                );
+            } // temp_workspace goes out of scope here and gets cleaned up
+
+            {
+                // A workspace off the original commit stages exactly what main already holds
+                let temp_workspace = create_temporary(&repo, &commit).await?;
+                let path = temp_workspace.dir().join("greetings").join("new.txt");
+                util::fs::write_to_path(&path, "Added on main")?;
+                repositories::workspaces::files::add(&temp_workspace, path).await?;
+                let head = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
+                let landed =
+                    repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
+                        .await?;
+                assert_eq!(
+                    landed.parent_ids,
+                    vec![head.commit_id],
+                    "a workspace staging what main already holds commits on top of main"
+                );
             } // temp_workspace goes out of scope here and gets cleaned up
 
             Ok(())
