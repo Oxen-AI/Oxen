@@ -869,8 +869,10 @@ mod tests {
     use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
     use crate::model::NewCommitBody;
     use crate::repositories;
+    use crate::repositories::commits::commit_writer::pin_commit_timestamp;
     use crate::test;
     use crate::util;
+    use time::Duration;
 
     #[tokio::test]
     async fn test_can_commit_different_files_workspaces_without_merge_conflicts()
@@ -987,6 +989,80 @@ mod tests {
                 // We should get a merge conflict error
                 assert!(result.is_err());
             } // temp_workspace goes out of scope here and gets cleaned up
+
+            Ok(())
+        })
+        .await
+    }
+
+    // A commit's parent, message, author, email, and second decide its id, so a second commit
+    // matching all five is refused rather than written under the first one's id, and a retry in a
+    // later second lands with an id of its own.
+    #[tokio::test]
+    async fn test_a_commit_whose_id_is_taken_is_refused_until_a_later_second()
+    -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let mut staged = vec![];
+            for name in ["first.txt", "second.txt"] {
+                let workspace = create(&repo, &head, Uuid::new_v4().to_string(), true)?;
+                let path = workspace.workspace_repo.path.join(name);
+                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                repositories::workspaces::files::add(&workspace, &path).await?;
+                staged.push((workspace, name));
+            }
+            let body = NewCommitBody {
+                message: "Same message".to_string(),
+                author: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            };
+
+            // Both commits carry one timestamp, and each goes to its own new branch, which starts
+            // at `head`, so both share that parent: only their contents differ.
+            let now = OffsetDateTime::now_utc();
+            pin_commit_timestamp(&repo.path, now);
+            let [
+                (first_workspace, first_name),
+                (second_workspace, second_name),
+            ] = &staged[..]
+            else {
+                unreachable!("two workspaces were staged");
+            };
+            let second_branch = format!("branch-{second_name}");
+            let first = commit(first_workspace, &body, format!("branch-{first_name}")).await?;
+            let refused = commit(second_workspace, &body, &second_branch).await;
+            assert!(
+                matches!(refused, Err(OxenError::CommitIdTaken(id)) if id.to_string() == first.id),
+                "a commit whose id is already taken is refused, got {refused:?}"
+            );
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &first, Path::new(first_name))?
+                    .is_some()
+                    && repositories::tree::get_file_by_path(&repo, &first, Path::new(second_name))?
+                        .is_none(),
+                "the refused commit leaves the first commit's tree as it was"
+            );
+            assert_eq!(
+                repositories::branches::get_by_name(&repo, &second_branch)?.commit_id,
+                head.id,
+                "the refused commit leaves its branch where it was"
+            );
+
+            pin_commit_timestamp(&repo.path, now + Duration::seconds(1));
+            let second = commit(second_workspace, &body, &second_branch).await?;
+            assert_eq!(
+                second.parent_ids, first.parent_ids,
+                "the retry shares the parent"
+            );
+            assert_ne!(
+                second.id, first.id,
+                "a retry in a later second gets its own id"
+            );
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &second, Path::new(second_name))?
+                    .is_some(),
+                "the retried commit's tree holds its own file"
+            );
 
             Ok(())
         })

@@ -3,9 +3,11 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use indicatif::{ProgressBar, ProgressStyle};
+use parking_lot::Mutex;
 use rocksdb::{DBWithThreadMode, SingleThreaded};
 use std::path::PathBuf;
 use std::str;
+use std::sync::LazyLock;
 use std::time::Duration;
 use std::time::Instant;
 use time::OffsetDateTime;
@@ -70,6 +72,47 @@ fn put_dir_hashes(
         put_dir_hash(dir_hash_db, path, hash)?;
     }
     Ok(())
+}
+
+/// The commit ids this process is writing, each with the path of the repository it is writing in.
+static COMMIT_IDS_IN_FLIGHT: LazyLock<Mutex<HashSet<(PathBuf, MerkleHash)>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// One commit's hold on its id while the commit is written, released on drop.
+struct CommitIdClaim {
+    repo_path: PathBuf,
+    commit_id: MerkleHash,
+}
+
+impl CommitIdClaim {
+    /// Claims `commit_id` in `repo`, or returns [`OxenError::CommitIdTaken`] when another commit in
+    /// this process is writing it or the repository already holds it. Keep the claim until the
+    /// commit node is written.
+    fn new(repo: &LocalRepository, commit_id: MerkleHash) -> Result<Self, OxenError> {
+        if !COMMIT_IDS_IN_FLIGHT
+            .lock()
+            .insert((repo.path.clone(), commit_id))
+        {
+            return Err(OxenError::CommitIdTaken(commit_id));
+        }
+        // Built only once the insert succeeds, since dropping it removes the entry.
+        let claim = Self {
+            repo_path: repo.path.clone(),
+            commit_id,
+        };
+        if repo.merkle_node_store().exists(&commit_id)? {
+            return Err(OxenError::CommitIdTaken(commit_id));
+        }
+        Ok(claim)
+    }
+}
+
+impl Drop for CommitIdClaim {
+    fn drop(&mut self) {
+        COMMIT_IDS_IN_FLIGHT
+            .lock()
+            .remove(&(self.repo_path.clone(), self.commit_id));
+    }
 }
 
 #[derive(Clone)]
@@ -257,6 +300,7 @@ pub(crate) fn commit_dir_entries_with_parents(
 
     // Compute the commit hash
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let mut parent_hashes = Vec::new();
     for parent_id in &new_commit.parent_ids {
@@ -347,6 +391,7 @@ pub fn commit_dir_entries_new(
     )?;
 
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let node = CommitNode::new(CommitNodeOpts {
         hash: commit_id,
@@ -477,7 +522,7 @@ pub fn commit_dir_entries(
     let vnode_entries = split_into_vnodes(repo, &dir_entries, &existing_nodes, new_commit)?;
 
     // Compute the commit hash
-    let timestamp = OffsetDateTime::now_utc();
+    let timestamp = commit_timestamp(&repo.path);
     let new_commit = NewCommit {
         parent_ids: parent_ids.iter().map(|id| id.to_string()).collect(),
         message: message.to_string(),
@@ -486,6 +531,7 @@ pub fn commit_dir_entries(
         timestamp,
     };
     let commit_id = compute_commit_id(&new_commit)?;
+    let _claim = CommitIdClaim::new(repo, commit_id)?;
 
     let node = CommitNode::new(CommitNodeOpts {
         hash: commit_id,
@@ -1249,6 +1295,38 @@ fn create_commit_data(
     }
 }
 
+// Timestamps tests pin for the commits `commit_dir_entries` makes in a repository, keyed by
+// repository path so a pin only affects the test that set it.
+#[cfg(test)]
+static PINNED_COMMIT_TIMESTAMPS: LazyLock<Mutex<HashMap<PathBuf, OffsetDateTime>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Makes every commit `commit_dir_entries` makes in the repository at `repo_path` carry
+/// `timestamp`.
+#[cfg(test)]
+pub(crate) fn pin_commit_timestamp(repo_path: &Path, timestamp: OffsetDateTime) {
+    PINNED_COMMIT_TIMESTAMPS
+        .lock()
+        .insert(repo_path.to_path_buf(), timestamp);
+}
+
+/// The time a commit `commit_dir_entries` makes in the repository at `repo_path` records.
+#[cfg(not(test))]
+fn commit_timestamp(_repo_path: &Path) -> OffsetDateTime {
+    OffsetDateTime::now_utc()
+}
+
+/// The time a commit `commit_dir_entries` makes in the repository at `repo_path` records: the time
+/// a test pinned for that repository, or now.
+#[cfg(test)]
+fn commit_timestamp(repo_path: &Path) -> OffsetDateTime {
+    PINNED_COMMIT_TIMESTAMPS
+        .lock()
+        .get(repo_path)
+        .copied()
+        .unwrap_or_else(OffsetDateTime::now_utc)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::test;
@@ -1537,6 +1615,18 @@ mod tests {
 
             assert!(tree.has_path(Path::new("all_files/dir_0/new_file.txt"))?);
             assert!(tree.has_path(Path::new("files/dir_0/new_file.txt"))?);
+
+            let id = MerkleHash::new(1);
+            let held = super::CommitIdClaim::new(&repo, id)?;
+            assert!(
+                matches!(
+                    super::CommitIdClaim::new(&repo, id),
+                    Err(OxenError::CommitIdTaken(_))
+                ),
+                "an id another commit is writing is taken"
+            );
+            drop(held);
+            drop(super::CommitIdClaim::new(&repo, id).expect("a dropped claim frees its id"));
 
             Ok(())
         })
