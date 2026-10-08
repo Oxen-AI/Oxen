@@ -107,7 +107,7 @@ pub fn create_repo(
                     user: user.clone(),
                 })
                 .collect();
-            let mut repo = RepoNew::from_files(&namespace, &repo_name, files, storage_kind);
+            let mut repo = RepoNew::from_files(&namespace, &repo_name, &host, files, storage_kind);
             if !description.is_empty() {
                 repo.description = Some(description);
             }

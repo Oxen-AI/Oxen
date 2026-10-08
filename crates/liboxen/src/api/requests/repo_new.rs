@@ -180,17 +180,18 @@ impl RepoNew {
     }
 
     pub fn from_files(
-        namespace: impl AsRef<str>,
-        name: impl AsRef<str>,
+        namespace: &str,
+        name: &str,
+        host: &str,
         files: Vec<FileNew>,
         storage_kind: Option<StorageKind>,
     ) -> RepoNew {
         RepoNew {
-            namespace: String::from(namespace.as_ref()),
-            name: String::from(name.as_ref()),
+            namespace: String::from(namespace),
+            name: String::from(name),
             is_public: None,
-            host: Some(String::from(DEFAULT_HOST)),
-            scheme: Some(RepoNew::scheme_default(DEFAULT_HOST)),
+            host: Some(String::from(host)),
+            scheme: Some(RepoNew::scheme_default(host)),
             root_commit: None,
             description: None,
             files: Some(files),
