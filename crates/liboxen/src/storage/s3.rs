@@ -10,19 +10,22 @@ use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
 use bytes::Bytes;
 use futures::stream;
-use futures::{StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use log;
+use std::iter;
 use std::path::Path;
 use std::pin::pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::io::AsyncReadExt;
 use tokio::sync::OnceCell;
+use tokio::time::timeout;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
+use tokio_util::task::AbortOnDropHandle;
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore};
-use crate::constants::VERSION_FILE_NAME;
+use crate::constants::{VERSION_FILE_NAME, stream_segment_size};
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -33,6 +36,13 @@ const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
 /// The most keys S3 accepts in one DeleteObjects request.
 const DELETE_OBJECTS_MAX_KEYS: usize = 1000;
+
+/// How many ranged GETs one read of a version file keeps in flight, which also caps how many parts
+/// it holds in memory.
+const RANGE_READS_IN_FLIGHT: usize = 8;
+
+/// The longest one ranged GET may take, from sending the request to receiving its last byte.
+const RANGE_READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The S3 client every store in the process shares, so connections and resolved credentials carry
 /// over from one request to the next. The server reads one bucket in one region.
@@ -57,6 +67,44 @@ async fn shared_client(region: &str) -> Arc<Client> {
         })
         .await;
     Arc::clone(client)
+}
+
+/// Reads bytes `start..=end` of `key`, failing once `RANGE_READ_TIMEOUT` has passed.
+async fn read_range(
+    client: Arc<Client>,
+    bucket: String,
+    key: String,
+    start: u64,
+    end: u64,
+) -> io::Result<Bytes> {
+    let read = async {
+        let resp = client
+            .get_object()
+            .bucket(&bucket)
+            .key(&key)
+            .range(format!("bytes={start}-{end}"))
+            .send()
+            .await
+            .map_err(|e| io::Error::other(format!("S3 get_object failed for key {key}: {e}")))?;
+        let body = resp.body.collect().await.map_err(io::Error::other)?;
+        Ok(body.into_bytes())
+    };
+    within_range_deadline(read, &key, start, end).await
+}
+
+/// Runs `read` of bytes `start..=end` of `key`, failing once `RANGE_READ_TIMEOUT` has passed.
+async fn within_range_deadline(
+    read: impl Future<Output = io::Result<Bytes>>,
+    key: &str,
+    start: u64,
+    end: u64,
+) -> io::Result<Bytes> {
+    timeout(RANGE_READ_TIMEOUT, read).await.map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("S3 read of bytes {start}-{end} of {key} timed out"),
+        )
+    })?
 }
 
 /// Server-supplied S3 configuration carried separately from per-repo `StorageConfig`. The bucket
@@ -116,6 +164,8 @@ pub struct S3VersionStore {
     prefix: String,
     /// Threshold (bytes) below which we upload with a single PUT rather than a multipart upload.
     oneshot_size: u64,
+    /// Size (bytes) of the ranged GETs that read a version file larger than this.
+    range_part_size: u64,
     /// Optional endpoint override (S3-compatible stores, the in-process s3s test fixture, MinIO,
     /// etc.). `None` selects the default AWS endpoint. Surfaced through `VersionLocation::S3` so
     /// cloud-aware readers (Polars `CloudOptions`, DuckDB `SET s3_endpoint=...`) hit the same
@@ -137,6 +187,7 @@ impl S3VersionStore {
             region,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
+            range_part_size: stream_segment_size(),
             endpoint_url: None,
         }
     }
@@ -181,6 +232,7 @@ impl S3VersionStore {
             region,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
+            range_part_size: stream_segment_size(),
             endpoint_url,
         }
     }
@@ -653,21 +705,73 @@ impl VersionStore for S3VersionStore {
         Ok(size)
     }
 
+    /// A version file larger than one ranged part streams from several ranged GETs at once,
+    /// holding at most `RANGE_READS_IN_FLIGHT` parts in memory.
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await;
         let key = self.generate_key(hash);
 
-        let resp = client
+        let part_size = self.range_part_size;
+        let first = client
             .get_object()
             .bucket(&self.bucket)
             .key(&key)
+            .range(format!("bytes=0-{}", part_size - 1))
             .send()
-            .await
-            .map_err(|e| object_read_error(hash, &key, e))?;
+            .await;
+        let resp = match first {
+            Ok(resp) => resp,
+            // S3 refuses a range of an empty object, which has no byte 0.
+            Err(err)
+                if err
+                    .raw_response()
+                    .is_some_and(|r| r.status().as_u16() == 416) =>
+            {
+                return Ok(Box::new(stream::empty()));
+            }
+            Err(err) => return Err(object_read_error(hash, &key, err)),
+        };
 
-        let adapter = ByteStreamAdapter { inner: resp.body };
+        // `Content-Range` ends in the object's total size, as in `bytes 0-9/1234`.
+        let size = resp
+            .content_range()
+            .and_then(|range| range.rsplit_once('/'))
+            .and_then(|(_, total)| total.parse::<u64>().ok());
+        let Some(size) = size.filter(|&size| size > part_size) else {
+            // The entire file will be returned in the first call (either it's smaller than the part
+            // size or S3 ignored our range request and is returning the whole file)
+            return Ok(Box::new(ByteStreamAdapter { inner: resp.body }));
+        };
 
-        Ok(Box::new(adapter) as Box<_>)
+        // The first part is the response already open and the rest come from ranged GETs, all
+        // yielded in order.
+        let first_key = key.clone();
+        let first_part = async move {
+            let read = async {
+                Ok(resp
+                    .body
+                    .collect()
+                    .await
+                    .map_err(io::Error::other)?
+                    .into_bytes())
+            };
+            within_range_deadline(read, &first_key, 0, part_size - 1).await
+        }
+        .boxed();
+        let bucket = self.bucket.clone();
+        let other_parts = (1..size.div_ceil(part_size)).map(move |i| {
+            let start = i * part_size;
+            let end = size.min(start + part_size) - 1;
+            read_range(Arc::clone(&client), bucket.clone(), key.clone(), start, end).boxed()
+        });
+        // Each part downloads in a task of its own at S3's pace, and dropping the stream aborts
+        // the parts still running.
+        let spawned = iter::once(first_part).chain(other_parts).map(|part| {
+            let task = AbortOnDropHandle::new(tokio::spawn(part));
+            async move { task.await.map_err(io::Error::other)? }
+        });
+        let parts = stream::iter(spawned).buffered(RANGE_READS_IN_FLIGHT);
+        Ok(Box::new(parts))
     }
 
     async fn get_version_derived_stream(
@@ -1432,11 +1536,25 @@ pub(crate) mod tests {
 
         let retrieved = store.get_version(&hash).await.unwrap();
         assert!(retrieved.is_empty());
+
+        let streamed: Vec<Bytes> = store
+            .get_version_stream(&hash)
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert!(
+            streamed.concat().is_empty(),
+            "an empty version file streams back empty, though S3 refuses any range of it"
+        );
     }
 
     #[tokio::test]
     async fn test_copy_version_to_path_streams_to_dest() {
-        let (store, _tmp, _server) = setup().await;
+        let (mut store, _tmp, _server) = setup().await;
+        // 4-byte parts, so the reads below take several ranged GETs, or one for the shortest file.
+        store.range_part_size = 4;
         let data = b"streamed to destination";
         let hash = hasher::hash_buffer(data);
 
@@ -1458,6 +1576,44 @@ pub(crate) mod tests {
         assert_eq!(contents, data);
         let actual_mtime = std::fs::metadata(&dest_path).unwrap().modified().unwrap();
         assert_eq!(actual_mtime, mtime);
+
+        let whole_parts = b"twelve bytes";
+        let whole_parts_hash = hasher::hash_buffer(whole_parts);
+        store
+            .store_version(&whole_parts_hash, Bytes::from_static(whole_parts))
+            .await
+            .unwrap();
+        let streamed: Vec<Bytes> = store
+            .get_version_stream(&whole_parts_hash)
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            streamed.concat(),
+            whole_parts,
+            "a file of exactly three parts streams back whole and in order"
+        );
+
+        let under_a_part = b"abc";
+        let under_a_part_hash = hasher::hash_buffer(under_a_part);
+        store
+            .store_version(&under_a_part_hash, Bytes::from_static(under_a_part))
+            .await
+            .unwrap();
+        let streamed: Vec<Bytes> = store
+            .get_version_stream(&under_a_part_hash)
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert_eq!(
+            streamed.concat(),
+            under_a_part,
+            "a file smaller than one part streams back from the first ranged GET alone"
+        );
     }
 
     #[tokio::test]
