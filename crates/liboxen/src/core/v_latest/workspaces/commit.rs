@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex as StdMutex, PoisonError};
 use tokio::fs::File;
 use tokio::io::BufReader;
-use tokio::sync::Mutex as TokioMutex;
+use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
 use crate::constants::STAGED_DIR;
 use crate::core;
@@ -29,22 +30,28 @@ use crate::view::merge::{MergeConflictFile, Mergeable};
 use filetime::FileTime;
 use indicatif::ProgressBar;
 
+type LockRegistry<K> = StdMutex<HashMap<K, Arc<TokioMutex<()>>>>;
+
 // Serializes commits of the same workspace so two concurrent commits can't
-// tear each other's data-frame export mid-read or wipe the shared staged db.
+// tear each other's data-frame export mid-read or both commit the same staged entries.
 // Keyed by the workspace repo path; in-process, and entries are dropped once
 // no commit holds or waits on the lock.
-static COMMIT_LOCKS: LazyLock<StdMutex<HashMap<PathBuf, Arc<TokioMutex<()>>>>> =
-    LazyLock::new(|| StdMutex::new(HashMap::new()));
+static COMMIT_LOCKS: LazyLock<LockRegistry<PathBuf>> = LazyLock::new(Default::default);
 
-fn commit_lock_for(key: &Path) -> Arc<TokioMutex<()>> {
+// Serializes workspace commits to the same branch, so each one checks for conflicts against and
+// builds on the head the one before it moved the branch to. Keyed by the base repo path and branch
+// name. In-process, and entries are dropped once no commit holds or waits on the lock.
+static BRANCH_LOCKS: LazyLock<LockRegistry<(PathBuf, String)>> = LazyLock::new(Default::default);
+
+fn lock_for<K: Clone + Eq + Hash>(locks: &LockRegistry<K>, key: &K) -> Arc<TokioMutex<()>> {
     // Poisoning only means a holder panicked; the map of Arc handles is still
     // sound, so recover the guard.
-    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    locks.entry(key.to_path_buf()).or_default().clone()
+    let mut locks = locks.lock().unwrap_or_else(PoisonError::into_inner);
+    locks.entry(key.clone()).or_default().clone()
 }
 
-fn cleanup_commit_lock(key: &Path) {
-    let mut locks = COMMIT_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+fn cleanup_lock<K: Eq + Hash>(locks: &LockRegistry<K>, key: &K) {
+    let mut locks = locks.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some(lock) = locks.get(key) {
         // The registry's reference is the only one left — no holder, no
         // waiter — so the entry can be dropped. A late-arriving committer
@@ -56,19 +63,37 @@ fn cleanup_commit_lock(key: &Path) {
     }
 }
 
+/// The workspace and branch locks one commit holds until it has landed or failed.
+struct CommitGuard {
+    _workspace: OwnedMutexGuard<()>,
+    _branch: OwnedMutexGuard<()>,
+}
+
 pub async fn commit(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: impl AsRef<str>,
 ) -> Result<Commit, OxenError> {
-    let lock_key = workspace.workspace_repo.path.clone();
-    let lock = commit_lock_for(&lock_key);
+    let branch_name = branch_name.as_ref();
+    let workspace_key = workspace.workspace_repo.path.clone();
+    let branch_key = (workspace.base_repo.path.clone(), branch_name.to_string());
+    let workspace_lock = lock_for(&COMMIT_LOCKS, &workspace_key);
+    let branch_lock = lock_for(&BRANCH_LOCKS, &branch_key);
     let result = {
-        let _guard = lock.lock().await;
-        commit_inner(workspace, new_commit, branch_name.as_ref()).await
+        // Every commit takes the workspace lock before the branch lock. Each blocking task holds
+        // a clone of the guard, so the locks outlive a caller that stops waiting.
+        let workspace_guard = Arc::clone(&workspace_lock).lock_owned().await;
+        let branch_guard = Arc::clone(&branch_lock).lock_owned().await;
+        let guard = Arc::new(CommitGuard {
+            _workspace: workspace_guard,
+            _branch: branch_guard,
+        });
+        commit_inner(workspace, new_commit, branch_name, guard).await
     };
-    drop(lock);
-    cleanup_commit_lock(&lock_key);
+    drop(workspace_lock);
+    drop(branch_lock);
+    cleanup_lock(&COMMIT_LOCKS, &workspace_key);
+    cleanup_lock(&BRANCH_LOCKS, &branch_key);
 
     // The commit is what makes the workspace's version files referenced, so the recorded size
     // is stale until this recalculation lands. A repository held for maintenance keeps the stale
@@ -89,80 +114,132 @@ async fn commit_inner(
     workspace: &Workspace,
     new_commit: &NewCommitBody,
     branch_name: &str,
+    commit_guard: Arc<CommitGuard>,
 ) -> Result<Commit, OxenError> {
-    let repo = &workspace.base_repo;
-    let commit = &workspace.commit;
-
-    let branch = match repositories::branches::get_by_name(repo, branch_name) {
-        Ok(branch) => branch,
-        Err(OxenError::BranchNotFound(_)) => {
-            log::debug!("commit creating branch: {branch_name}");
-            repositories::branches::create(repo, branch_name, &commit.id)?
-        }
-        Err(e) => return Err(e),
-    };
-    log::debug!("commit looking up branch: {:#?}", branch);
-
     let staged_db_path = util::fs::oxen_hidden_dir(&workspace.workspace_repo.path).join(STAGED_DIR);
-
     log::debug!("workspaces::commit staged db path: {staged_db_path:?}");
-    let commit = {
-        let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
+    let (workspace, dir_entries, staged_snapshot) = {
+        let (workspace, branch_name, commit_guard) = (
+            workspace.clone(),
+            branch_name.to_string(),
+            Arc::clone(&commit_guard),
+        );
+        tokio::task::spawn_blocking(move || {
+            let _commit_guard = commit_guard;
+            // Reload under the lock: a commit that held it may have moved this workspace's base
+            // commit.
+            let Some(workspace) = repositories::workspaces::get_by_dir(
+                &workspace.base_repo,
+                &workspace.workspace_repo.path,
+            )?
+            else {
+                return Err(OxenError::WorkspaceNotFound(workspace.id.as_str().into()));
+            };
+            let repo = &workspace.base_repo;
+            let branch = match repositories::branches::get_by_name(repo, &branch_name) {
+                Ok(branch) => branch,
+                Err(OxenError::BranchNotFound(_)) => {
+                    log::debug!("commit creating branch: {branch_name}");
+                    repositories::branches::create(repo, &branch_name, &workspace.commit.id)?
+                }
+                Err(e) => return Err(e),
+            };
+            log::debug!("commit looking up branch: {:#?}", branch);
 
-        // Read all the staged entries
-        let (dir_entries, _) = core::v_latest::status::read_staged_entries_with_staged_db_manager(
-            &workspace.workspace_repo,
-            &commit_progress_bar,
-        )?;
+            let commit_progress_bar = FinishOnDropProgressBar(ProgressBar::new_spinner());
 
-        let conflicts = list_conflicts(workspace, &dir_entries, &branch)?;
-        if !conflicts.is_empty() {
-            return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
-        }
+            // Read all the staged entries
+            let (dir_entries, staged_snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_staged_entries_for_commit(&commit_progress_bar)?;
 
-        let dir_entries = export_tabular_data_frames(workspace, dir_entries).await?;
+            let conflicts = list_conflicts(&workspace, &dir_entries, &branch)?;
+            if !conflicts.is_empty() {
+                return Err(OxenError::WorkspaceBehind(Box::new(workspace.clone())));
+            }
 
-        repositories::commits::commit_writer::commit_dir_entries(
+            #[cfg(test)]
+            tests::pause_at(
+                tests::PausePoint::AfterStagedRead,
+                &workspace.workspace_repo.path,
+            );
+
+            Ok((workspace, dir_entries, staged_snapshot))
+        })
+        .await??
+    };
+    let workspace = &workspace;
+
+    let dir_entries = export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
+
+    let (workspace, new_commit, branch_name) = (
+        workspace.clone(),
+        new_commit.clone(),
+        branch_name.to_string(),
+    );
+    tokio::task::spawn_blocking(move || {
+        // Held until the write finishes, even when the caller stops waiting for it.
+        let _commit_guard = commit_guard;
+        let commit = repositories::commits::commit_writer::commit_dir_entries(
             &workspace.base_repo,
             dir_entries,
-            new_commit,
-            branch_name,
-        )?
-    };
+            &new_commit,
+            &branch_name,
+        )?;
 
-    // Clear through the shared handle rather than dropping it and removing the directory: the next
-    // reader's open would collide with RocksDB's per-directory LOCK until the last holder finishes.
-    log::debug!("Clearing staged db: {staged_db_path:?}");
-    get_staged_db_manager(&workspace.workspace_repo)?.clear()?;
+        // DEBUG
+        // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
+        // log::debug!("0.19.0::workspaces::commit tree");
+        // tree.print();
 
-    // DEBUG
-    // let tree = repositories::tree::get_by_commit(&workspace.base_repo, &commit)?;
-    // log::debug!("0.19.0::workspaces::commit tree");
-    // tree.print();
+        #[cfg(test)]
+        tests::pause_at(
+            tests::PausePoint::BeforeRefUpdate,
+            &workspace.workspace_repo.path,
+        );
 
-    // Update the branch
-    let commit_id = commit.id.to_owned();
-    with_ref_manager(&workspace.base_repo, |manager| {
-        manager.set_branch_commit_id(branch_name, &commit_id)
-    })?;
+        // Move the branch only from the head the commit was built on. A write outside workspace
+        // commits that moved it since fails this commit rather than being discarded.
+        let commit_id = commit.id.to_owned();
+        let parent_id = commit.parent_ids.first().map(String::as_str);
+        with_ref_manager(&workspace.base_repo, |manager| {
+            manager.compare_and_swap_branch_commit_id(&branch_name, parent_id, &commit_id)
+        })?;
 
-    if workspace.name.is_some() {
-        // Named workspaces aren't deleted on commit, instead we
-        // update the workspace config to point to the new commit
-        repositories::workspaces::update_commit(workspace, &commit_id)?;
-    } else {
-        // Unnamed workspaces are deleted on commit. The commit has already landed at this point:
-        // a delete that cannot run yet leaves the directory for a later delete to remove.
-        if let Err(err) = repositories::workspaces::delete(workspace) {
+        // Unstage through the shared handle rather than dropping it and removing the directory:
+        // the next reader's open would collide with RocksDB's per-directory LOCK until the last
+        // holder finishes. Anything staged or restaged since the read stays for the next commit.
+        // The commit has already landed, so a failure here leaves its entries staged.
+        log::debug!("Unstaging committed entries: {staged_db_path:?}");
+        if let Err(err) = get_staged_db_manager(&workspace.workspace_repo)
+            .and_then(|staged| staged.remove_unchanged(&staged_snapshot))
+        {
             tracing::error!(
                 workspace_id = %workspace.id,
                 cause = ?err,
-                "Workspace commit landed but the workspace could not be deleted"
+                "Workspace commit landed but its entries could not be unstaged"
             );
         }
-    }
 
-    Ok(commit)
+        if workspace.name.is_some() {
+            // Named workspaces aren't deleted on commit, instead we
+            // update the workspace config to point to the new commit
+            repositories::workspaces::update_commit(&workspace, &commit_id)?;
+        } else {
+            // Unnamed workspaces are deleted on commit. The commit has already landed at this
+            // point: a delete that cannot run yet leaves the directory for a later delete to
+            // remove.
+            if let Err(err) = repositories::workspaces::delete(&workspace) {
+                tracing::error!(
+                    workspace_id = %workspace.id,
+                    cause = ?err,
+                    "Workspace commit landed but the workspace could not be deleted"
+                );
+            }
+        }
+
+        Ok(commit)
+    })
+    .await?
 }
 
 pub fn mergeability(
@@ -246,50 +323,47 @@ fn list_conflicts(
         return Ok(vec![]);
     }
 
-    // A staged file conflicts when it also changed on the target branch since the workspace's base
-    // commit. Look each staged file up in both commits with a strict, non-recursive `read_file`: it
-    // reports a genuinely absent path as `None` but propagates read failures rather than masking
-    // them as a skipped check. Loading each commit's dir hashes once and reading only the staged
-    // files keeps peak memory flat — neither whole Merkle tree is materialized.
+    // A staged path conflicts when the target branch changed it since the workspace's base commit
+    // (added, modified, or removed it) and does not already hold what the workspace stages. Look
+    // each staged file up in both commits with a strict, non-recursive `read_file`: it reports an
+    // absent path as `None` but propagates read failures rather than masking them as a skipped
+    // check. Loading each commit's dir hashes once and reading only the staged files keeps peak
+    // memory flat, since neither whole Merkle tree is materialized.
     let branch_dir_hashes = CommitMerkleTree::dir_hashes(&workspace.base_repo, &branch_commit)?;
     let workspace_dir_hashes =
         CommitMerkleTree::dir_hashes(&workspace.base_repo, workspace_commit)?;
 
     let mut conflicts = vec![];
-    for (path, entries) in dir_entries {
+    for entries in dir_entries.values() {
         for entry in entries {
-            let EMerkleTreeNode::File(_) = &entry.node.node else {
-                // Only check files for conflicts
-                continue;
+            let path = entry.node.maybe_path()?;
+            let (base_hash, branch_hash) = match &entry.node.node {
+                EMerkleTreeNode::File(_) => {
+                    let read = |dir_hashes| {
+                        CommitMerkleTree::read_file(&workspace.base_repo, dir_hashes, &path)
+                            .map(|node| node.map(|node| node.hash))
+                    };
+                    (read(&workspace_dir_hashes)?, read(&branch_dir_hashes)?)
+                }
+                // A removed directory takes everything under it, so any change the branch made
+                // inside it conflicts.
+                EMerkleTreeNode::Directory(_) if entry.status == StagedEntryStatus::Removed => (
+                    workspace_dir_hashes.get(&path).copied(),
+                    branch_dir_hashes.get(&path).copied(),
+                ),
+                _ => continue,
             };
-
-            log::debug!("checking if workspace is behind: {path:?} -> {entry}");
-            let file_path = entry.node.maybe_path()?;
-            log::debug!("checking if branch tree has file: {file_path:?}");
-            let Some(branch_node) =
-                CommitMerkleTree::read_file(&workspace.base_repo, &branch_dir_hashes, &file_path)?
-            else {
-                log::debug!("branch node not found: {file_path:?}");
-                continue;
-            };
-            let Some(workspace_node) = CommitMerkleTree::read_file(
-                &workspace.base_repo,
-                &workspace_dir_hashes,
-                &file_path,
-            )?
-            else {
-                log::debug!("workspace node not found: {file_path:?}");
-                continue;
-            };
-            log::debug!("comparing hashes: {path:?} -> {entry}");
-            log::debug!("branch node hash: {:?}", branch_node.hash);
-            log::debug!("workspace node hash: {:?}", workspace_node.hash);
-            if branch_node.hash == workspace_node.hash {
-                log::debug!("branch node hashes match: {path:?} -> {entry}");
+            if branch_hash == base_hash {
                 continue;
             }
-            log::debug!("got conflict: {file_path:?}");
-            conflicts.push(file_path.to_path_buf());
+            let staged_hash =
+                (entry.status != StagedEntryStatus::Removed).then_some(entry.node.hash);
+            if branch_hash == staged_hash {
+                log::debug!("branch already holds what the workspace stages: {path:?}");
+                continue;
+            }
+            log::debug!("got conflict: {path:?}");
+            conflicts.push(path);
         }
     }
 
@@ -299,6 +373,7 @@ fn list_conflicts(
 async fn export_tabular_data_frames(
     workspace: &Workspace,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
+    commit_guard: &Arc<CommitGuard>,
 ) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
     // Export all the workspace data frames and add them to the commit
     let mut new_dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
@@ -323,10 +398,23 @@ async fn export_tabular_data_frames(
                     // Recompute the metadata for tabular data frames that carry
                     // a staged DuckDB index (editable df and eval).
                     let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
-                    let mut should_export = is_tabular
-                        && repositories::workspaces::data_frames::is_indexed(
-                            workspace, &node_path,
-                        )?;
+                    let (indexed, staged_table) = if is_tabular {
+                        let (workspace, node_path) = (workspace.clone(), node_path.clone());
+                        tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+                            let indexed = repositories::workspaces::data_frames::is_indexed(
+                                &workspace, &node_path,
+                            )?;
+                            let staged_table = !indexed
+                                && repositories::workspaces::data_frames::has_staged_table(
+                                    &workspace, &node_path,
+                                )?;
+                            Ok((indexed, staged_table))
+                        })
+                        .await??
+                    } else {
+                        (false, false)
+                    };
+                    let mut should_export = indexed;
 
                     // A staged table that exists but fails the indexed gate was
                     // written by an older version of oxen (or left by an
@@ -337,12 +425,7 @@ async fn export_tabular_data_frames(
                     // any indexed table. reindex_preserving_rows only errors
                     // (WorkspaceStaleStagedIndex) when there is no user data to
                     // recover.
-                    if is_tabular
-                        && !should_export
-                        && repositories::workspaces::data_frames::has_staged_table(
-                            workspace, &node_path,
-                        )?
-                    {
+                    if staged_table {
                         log::warn!(
                             "workspace commit recovering stale staged data frame {node_path:?} before export"
                         );
@@ -360,10 +443,21 @@ async fn export_tabular_data_frames(
                             file_node.name()
                         );
 
-                        let exported_path =
-                            workspaces::data_frames::extract_file_node_to_working_dir(
-                                workspace, &dir_path, file_node,
-                            )?;
+                        let exported_path = {
+                            let (workspace, dir_path, file_node, commit_guard) = (
+                                workspace.clone(),
+                                dir_path.clone(),
+                                file_node.clone(),
+                                Arc::clone(commit_guard),
+                            );
+                            tokio::task::spawn_blocking(move || {
+                                let _commit_guard = commit_guard;
+                                workspaces::data_frames::extract_file_node_to_working_dir(
+                                    &workspace, &dir_path, &file_node,
+                                )
+                            })
+                            .await??
+                        };
 
                         log::debug!("exported path: {exported_path:?}");
 
@@ -393,11 +487,12 @@ async fn export_tabular_data_frames(
                         // the base-node lookup (a merkle traversal) only then —
                         // not for every Added/Removed export.
                         if entry_status == StagedEntryStatus::Modified
-                            && let Some(base_node) = repositories::tree::get_file_by_path(
+                            && let Some(base_node) = repositories::tree::get_file_by_path_async(
                                 &workspace.base_repo,
                                 &workspace.commit,
                                 &node_path,
-                            )?
+                            )
+                            .await?
                             && new_staged_merkle_tree_node.node.file()?.combined_hash()
                                 == base_node.combined_hash()
                         {
@@ -534,17 +629,23 @@ async fn compute_staged_merkle_tree_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::v_latest::add::stage_file_with_hash;
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::util::hasher;
+    use parking_lot::Mutex;
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn test_commit_lock_registry_shares_and_cleans_up() -> Result<(), OxenError> {
         let key = PathBuf::from("test-commit-lock-registry");
 
         // Two lookups for the same key must return the same underlying mutex.
-        let lock_a = commit_lock_for(&key);
-        let lock_b = commit_lock_for(&key);
+        let lock_a = lock_for(&COMMIT_LOCKS, &key);
+        let lock_b = lock_for(&COMMIT_LOCKS, &key);
         let guard = lock_a.lock().await;
         assert!(
             lock_b.try_lock().is_err(),
@@ -554,7 +655,10 @@ mod tests {
         assert!(lock_b.try_lock().is_ok());
 
         // A different key gets an independent mutex.
-        let other = commit_lock_for(Path::new("test-commit-lock-registry-other"));
+        let other = lock_for(
+            &COMMIT_LOCKS,
+            &PathBuf::from("test-commit-lock-registry-other"),
+        );
         let _guard = lock_a.lock().await;
         assert!(other.try_lock().is_ok());
 
@@ -562,7 +666,7 @@ mod tests {
         drop(_guard);
         drop(lock_a);
         drop(lock_b);
-        cleanup_commit_lock(&key);
+        cleanup_lock(&COMMIT_LOCKS, &key);
         let registry = COMMIT_LOCKS.lock().unwrap();
         assert!(!registry.contains_key(&key));
 
@@ -583,9 +687,12 @@ mod tests {
             .await?;
 
             // Stage two files in the same workspace.
-            for name in ["file1.txt", "file2.txt"] {
+            for (name, content) in [
+                ("file1.txt", "content of file1.txt"),
+                ("file2.txt", "content of file2.txt"),
+            ] {
                 let path = workspace.workspace_repo.path.join(name);
-                util::fs::write_to_path(&path, format!("content of {name}"))?;
+                util::fs::write_to_path(&path, content)?;
                 repositories::workspaces::files::add(&workspace, &path).await?;
             }
 
@@ -600,9 +707,9 @@ mod tests {
                 message: "concurrent commit two".to_string(),
             };
 
-            // Without the per-workspace lock these interleave: one commit
-            // wipes the staged db (or rewrites the data-frame exports) while
-            // the other is mid-commit. With the lock they serialize: the
+            // Without the per-workspace lock these interleave: both commit
+            // the same staged entries (or rewrite each other's data-frame
+            // exports). With the lock they serialize: the
             // first to acquire commits everything staged, the second finds a
             // clean staged db and reports "No changes to commit".
             let (result_one, result_two) = tokio::join!(
@@ -630,8 +737,385 @@ mod tests {
                 );
             }
 
+            // A file staged, or a staged file uploaded again, after a commit has read the staged
+            // entries is not part of that commit and stays staged for the next one. That next
+            // commit is requested while the first is in flight, with the workspace as loaded
+            // before the first commit moved its base, and must not report the file the first
+            // commit changed and that was uploaded again since as a conflict.
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            let stage = |name: &'static str, content: &'static str| {
+                let workspace = &workspace;
+                async move {
+                    let path = workspace.workspace_repo.path.join(name);
+                    util::fs::write_to_path(&path, content)?;
+                    repositories::workspaces::files::add(workspace, &path).await
+                }
+            };
+            let reuploaded = Path::new("file2.txt");
+            let staged_mid_commit = Path::new("uploads/staged_mid_commit.txt");
+            stage("file2.txt", "first upload").await?;
+
+            let workspace_path = &workspace.workspace_repo.path;
+            let (reached, resume) = pause_commit_at(PausePoint::AfterStagedRead, workspace_path);
+            let (start_next, next_started) = oneshot::channel();
+            let paused_commit =
+                commit_then_clear_pause(PausePoint::AfterStagedRead, &workspace, &body_one);
+            let stage_mid_commit = async {
+                if reached.await.is_err() {
+                    return Ok(());
+                }
+                stage("uploads/staged_mid_commit.txt", "staged mid-commit").await?;
+                stage("file2.txt", "second upload").await?;
+                start_next
+                    .send(())
+                    .expect("the next commit should be waiting to start");
+                // Resume only once the next commit waits on the lock the paused one holds: the
+                // registry's handle, plus two per commit (its handle, and the one its guard or
+                // pending lock call holds).
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while COMMIT_LOCKS
+                    .lock()
+                    .expect("no test should panic while holding the commit lock registry")
+                    .get(workspace_path)
+                    .map_or(0, Arc::strong_count)
+                    < 5
+                {
+                    assert!(
+                        Instant::now() < deadline,
+                        "the next commit should be waiting on the paused commit's lock"
+                    );
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let next_commit = async {
+                match next_started.await {
+                    Ok(()) => commit(&workspace, &body_two, "main").await.map(Some),
+                    Err(_) => Ok(None),
+                }
+            };
+            let (paused_commit, staged, next_commit) =
+                tokio::join!(paused_commit, stage_mid_commit, next_commit);
+            let paused_commit = paused_commit?;
+            staged?;
+            let next_commit = next_commit?
+                .expect("the paused commit should reach its pause after reading staged entries");
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &paused_commit, staged_mid_commit)?
+                    .is_none(),
+                "a file staged after the commit's read should not be in it, or this test no \
+                 longer stages inside the window between the commit's read and its unstaging"
+            );
+            let first_upload =
+                repositories::tree::get_file_by_path(&repo, &paused_commit, reuploaded)?
+                    .expect("the paused commit should carry the upload it read");
+
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &next_commit, staged_mid_commit)?
+                    .is_some(),
+                "the next commit should carry the file staged mid-commit"
+            );
+            let second_upload =
+                repositories::tree::get_file_by_path(&repo, &next_commit, reuploaded)?
+                    .expect("the next commit should carry the reuploaded file");
+            assert_eq!(
+                second_upload.hash().to_u128(),
+                util::hasher::u128_hash_file_contents(
+                    &workspace.workspace_repo.path.join(reuploaded)
+                )?,
+                "the next commit should carry the second upload"
+            );
+            assert_ne!(
+                first_upload.hash(),
+                second_upload.hash(),
+                "the paused commit should carry the first upload"
+            );
+
+            // A batch upload stages each directory entry once per batch, so a commit landing
+            // partway through it leaves the batch's later files staged without the directory
+            // entries that commit unstaged. The next commit keeps the branch and carries them.
+            let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
+            stage_in_batch(&workspace, &seen_dirs, "uploads/batch_first.txt").await?;
+            commit(&workspace, &body_one, "main").await?;
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            stage_in_batch(&workspace, &seen_dirs, "uploads/batch_second.txt").await?;
+            assert!(
+                !get_staged_db_manager(&workspace.workspace_repo)?.exists("")?,
+                "the batch's later files should be staged without a root entry, or this test no \
+                 longer reaches the state a commit mid-batch leaves"
+            );
+            let after_batch = commit(&workspace, &body_two, "main").await?;
+            for name in [
+                "file1.txt",
+                "uploads/batch_first.txt",
+                "uploads/batch_second.txt",
+            ] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &after_batch, Path::new(name))?
+                        .is_some(),
+                    "{name} should be on main after committing files staged without their \
+                     directory entries"
+                );
+            }
+
+            // A commit can also read a file in a new directory after its entry is written and
+            // before its directory entries are.
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("named workspace should survive its commit");
+            let in_new_dir = Path::new("new_dir/new.txt");
+            let path = workspace.workspace_repo.path.join(in_new_dir);
+            util::fs::write_to_path(&path, "staged without its directory entries")?;
+            repositories::workspaces::files::add(&workspace, &path).await?;
+            {
+                let staged = get_staged_db_manager(&workspace.workspace_repo)?;
+                for dir in in_new_dir.ancestors().skip(1) {
+                    staged.delete_entry(dir)?;
+                }
+            }
+            let after_window = commit(&workspace, &body_one, "main").await?;
+            for name in [Path::new("file1.txt"), in_new_dir] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &after_window, name)?.is_some(),
+                    "{name:?} should be on main after committing a file in a new directory staged \
+                     without its directory entries"
+                );
+            }
+
             Ok(())
         })
         .await
+    }
+
+    /// Stages `name` as one file of a batch upload sharing `seen_dirs`, as the workspace upload
+    /// endpoint does.
+    async fn stage_in_batch(
+        workspace: &Workspace,
+        seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+        name: &str,
+    ) -> Result<(), OxenError> {
+        let path = workspace.workspace_repo.path.join(name);
+        util::fs::write_to_path(&path, name)?;
+        let hash = hasher::hash_file_contents(&path)?;
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        stage_file_with_hash(
+            workspace,
+            &path,
+            Path::new(name),
+            &hash,
+            &staged_db_manager,
+            seen_dirs,
+        )
+        .await
+    }
+
+    // Commits of different workspaces to the same branch take turns, so the later one checks for
+    // conflicts against and builds on the head the earlier one moved the branch to.
+    #[tokio::test]
+    async fn test_concurrent_commits_from_different_workspaces_both_land() -> Result<(), OxenError>
+    {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let stage = |base: Commit, name: &'static str| {
+                let repo = &repo;
+                async move {
+                    let workspace = repositories::workspaces::create(
+                        repo,
+                        &base,
+                        uuid::Uuid::new_v4().to_string(),
+                        true,
+                    )?;
+                    let path = workspace.workspace_repo.path.join(name);
+                    util::fs::write_to_path(&path, format!("content of {name}"))?;
+                    repositories::workspaces::files::add(&workspace, &path).await?;
+                    Ok::<_, OxenError>(workspace)
+                }
+            };
+            let body = |name: &str| NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: format!("commit {name}"),
+            };
+            let first = stage(head.clone(), "first.txt").await?;
+            let second = stage(head.clone(), "second.txt").await?;
+            let (first_body, second_body, third_body) =
+                (body("first.txt"), body("second.txt"), body("third.txt"));
+
+            let (reached, resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &first.workspace_repo.path);
+            let (start_second, second_started) = oneshot::channel();
+            let branch_key = (repo.path.clone(), "main".to_string());
+            let release_once_second_waits = async {
+                if reached.await.is_err() {
+                    return;
+                }
+                start_second
+                    .send(())
+                    .expect("the second commit should be waiting to start");
+                // Resume only once the second commit waits on the branch lock the paused one
+                // holds: the registry's handle, plus two per commit (its handle, and the one its
+                // guard or pending lock call holds).
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while BRANCH_LOCKS
+                    .lock()
+                    .expect("no test should panic while holding the branch lock registry")
+                    .get(&branch_key)
+                    .map_or(0, Arc::strong_count)
+                    < 5
+                {
+                    assert!(
+                        Instant::now() < deadline,
+                        "the second commit should be waiting on the branch lock the paused \
+                         commit holds"
+                    );
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+            };
+            let second_commit = async {
+                match second_started.await {
+                    Ok(()) => commit(&second, &second_body, "main").await.map(Some),
+                    Err(_) => Ok(None),
+                }
+            };
+            let (first_commit, second_commit, ()) = tokio::join!(
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, &first, &first_body),
+                second_commit,
+                release_once_second_waits,
+            );
+            let first_commit = first_commit?;
+            let second_commit =
+                second_commit?.expect("the first commit should pause before moving the branch");
+            assert_eq!(
+                second_commit.parent_ids,
+                vec![first_commit.id.clone()],
+                "the second commit should be built on the first, which held the branch while the \
+                 second waited"
+            );
+            assert_eq!(
+                repositories::branches::get_by_name(&repo, "main")?.commit_id,
+                second_commit.id,
+                "main should end on the commit that waited for the branch"
+            );
+            for name in ["first.txt", "second.txt"] {
+                assert!(
+                    repositories::tree::get_file_by_path(&repo, &second_commit, Path::new(name))?
+                        .is_some(),
+                    "{name} was in a commit that returned Ok, so it should be on main"
+                );
+            }
+
+            // A write outside workspace commits that moves the branch while a commit is paused
+            // before its own move refuses that commit, and leaves the branch where the write put
+            // it and the commit's entries staged.
+            let third = stage(second_commit.clone(), "third.txt").await?;
+            let (reached, resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &third.workspace_repo.path);
+            let move_branch = async {
+                if reached.await.is_err() {
+                    return Ok(());
+                }
+                repositories::branches::update(&repo, "main", &head.id)?;
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let (refused, moved) = tokio::join!(
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, &third, &third_body),
+                move_branch,
+            );
+            moved?;
+            assert!(
+                matches!(refused, Err(OxenError::BranchHeadMismatch { .. })),
+                "a commit whose branch moved after it was built should be refused, got {refused:?}"
+            );
+            assert_eq!(
+                repositories::branches::get_by_name(&repo, "main")?.commit_id,
+                head.id,
+                "the refused commit should leave the branch where the other write moved it"
+            );
+            assert!(
+                get_staged_db_manager(&third.workspace_repo)?.exists("third.txt")?,
+                "the refused commit's entries should stay staged"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Where in `commit_inner` a test can pause a commit.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+    pub(super) enum PausePoint {
+        /// Once the staged entries have been read.
+        AfterStagedRead,
+        /// Once the commit has been built on the branch head, before the branch moves to it.
+        BeforeRefUpdate,
+    }
+
+    type PauseHandles = (oneshot::Sender<()>, oneshot::Receiver<()>);
+
+    // Pauses installed by `pause_commit_at`, keyed by point and workspace repo path so a pause
+    // only ever stops the commit of the workspace that installed it, at the point it named.
+    static PAUSES: LazyLock<StdMutex<HashMap<(PausePoint, PathBuf), PauseHandles>>> =
+        LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+    /// Called by `commit_inner` at `point`, on a blocking thread. If a pause is installed there for
+    /// this workspace, signals that the commit reached it and blocks until resumed. One-shot: the
+    /// pause is removed when first reached.
+    pub(super) fn pause_at(point: PausePoint, workspace_path: &Path) {
+        let pause = PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .remove(&(point, workspace_path.to_path_buf()));
+        if let Some((reached, resume)) = pause {
+            reached
+                .send(())
+                .expect("the test waiting on the pause should still be listening");
+            resume
+                .blocking_recv()
+                .expect("the test should resume the paused commit");
+        }
+    }
+
+    /// Commits `workspace` to `main`, then removes any pause at `point` the commit returned
+    /// without reaching. That ends the wait on the pause's receiver, so a commit that fails before
+    /// its pause makes the test fail with its error instead of hanging.
+    async fn commit_then_clear_pause(
+        point: PausePoint,
+        workspace: &Workspace,
+        body: &NewCommitBody,
+    ) -> Result<Commit, OxenError> {
+        let result = commit(workspace, body, "main").await;
+        PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .remove(&(point, workspace.workspace_repo.path.clone()));
+        result
+    }
+
+    /// Makes the next commit of the workspace at `workspace_path` pause at `point`. Returns a
+    /// receiver that fires once it pauses and a sender that resumes it.
+    fn pause_commit_at(
+        point: PausePoint,
+        workspace_path: &Path,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (resume_tx, resume_rx) = oneshot::channel();
+        PAUSES
+            .lock()
+            .expect("no test should panic while holding the pause registry")
+            .insert(
+                (point, workspace_path.to_path_buf()),
+                (reached_tx, resume_rx),
+            );
+        (reached_rx, resume_tx)
     }
 }

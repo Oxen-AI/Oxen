@@ -2,7 +2,7 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: test-rust [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
+# Usage: bin/test [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
 #
 #   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
 #   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
@@ -17,16 +17,73 @@
 #   All remaining arguments are forwarded after `--` to the libtest binaries (or `pytest` under -p).
 #
 # Examples:
-#   test-rust                       # Run all Rust tests
-#   test-rust test_name             # Run Rust tests matching test_name
-#   test-rust --timings test_name   # Report each matching test's duration
-#   test-rust -p                    # Run all Python tests
-#   test-rust -p -k test_init      # Run Python tests matching test_init
+#   bin/test                        # Run all Rust tests
+#   bin/test test_name              # Run Rust tests matching test_name
+#   bin/test --timings test_name    # Report each matching test's duration
+#   bin/test -p                     # Run all Python tests
+#   bin/test -p -k test_init        # Run Python tests matching test_init
 #
 # Logs (Rust runs — overwritten each invocation):
 #   ./data/test/oxen-server.log     # oxen-server subprocess stdout+stderr
 #   ./data/test/cargo-test.log      # cargo test's stderr (indicatif progress bars, any
 #                                     tracing that leaks around libtest's per-thread capture)
+#
+# On exit, prints the oxen-server binary the tests ran against and its version (with the commit it
+# was built from, unless that is a clean release tag), then how long each section (setup, build,
+# server start, tests, teardown) took.
+
+# Wall-clock time in microseconds. EPOCHREALTIME needs bash 5, and macOS ships bash 3.2.
+now_usec() {
+    if [ -n "${EPOCHREALTIME:-}" ]; then
+        echo "${EPOCHREALTIME/[.,]/}"
+    else
+        perl -MTime::HiRes=time -e 'printf "%d\n", time * 1e6'
+    fi
+}
+
+SCRIPT_START=$(now_usec)
+PHASE_NAMES=()
+PHASE_USECS=()
+PHASE_NAME=""
+PHASE_START=$SCRIPT_START
+
+# Ends the running section and starts the one named, or none when called without a name.
+phase() {
+    local now
+    now=$(now_usec)
+    if [ -n "$PHASE_NAME" ]; then
+        PHASE_NAMES+=("$PHASE_NAME")
+        PHASE_USECS+=("$(( now - PHASE_START ))")
+    fi
+    PHASE_NAME="${1:-}"
+    PHASE_START=$now
+}
+
+# Formats microseconds as tenths of a second, with minutes once past 60s.
+format_usec() {
+    local tenths=$(( ($1 + 50000) / 100000 ))
+    local secs=$(( tenths / 10 ))
+    if [ "$secs" -ge 60 ]; then
+        printf '%dm%02d.%ds' $(( secs / 60 )) $(( secs % 60 )) $(( tenths % 10 ))
+    else
+        printf '%d.%ds' "$secs" $(( tenths % 10 ))
+    fi
+}
+
+print_summary() {
+    local i
+    echo "==> Summary:"
+    if [ -n "$SERVER_PID" ]; then
+        printf '    %-14s %s\n' "Server binary" "$SERVER_BIN"
+        printf '    %-14s %s\n' "Server version" "$SERVER_VERSION"
+    fi
+    for i in "${!PHASE_NAMES[@]}"; do
+        printf '    %-14s %10s\n' "${PHASE_NAMES[$i]}" "$(format_usec "${PHASE_USECS[$i]}")"
+    done
+    printf '    %-14s %10s\n' "Total" "$(format_usec $(( $(now_usec) - SCRIPT_START )))"
+}
+
+phase "Setup"
 
 # Check for flags
 FEATURE_ARGS=""
@@ -88,6 +145,7 @@ cd "$SCRIPT_DIR/.."
 SERVER_PID=""
 RAMDISK_DEV=""
 PYTHON_CONFIG_DIR=""
+CLEANED_UP=false
 
 # Create a ramdisk for test data. On macOS this creates an APFS RAM disk via hdiutil; on Linux it
 # uses /dev/shm (tmpfs). Falls back to the regular filesystem if ramdisk creation fails.
@@ -123,6 +181,12 @@ cleanup_ramdisk() {
 }
 
 cleanup() {
+    # A Ctrl-C runs the trap twice, once for INT and again for the EXIT that follows it.
+    if [ "$CLEANED_UP" = true ]; then
+        return
+    fi
+    CLEANED_UP=true
+    phase "Teardown"
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         echo "Stopping oxen-server (pid $SERVER_PID)..."
         kill "$SERVER_PID"
@@ -145,6 +209,8 @@ cleanup() {
     else
         echo "==> Keeping test data in data/ox and data/test/runs"
     fi
+    phase
+    print_summary
 }
 
 trap cleanup EXIT INT TERM
@@ -163,10 +229,14 @@ if [ "$INSTALL_DEPS" = true ]; then
     "$SCRIPT_DIR/install-prereqs"
 fi
 
-# Build
-echo "==> Building oxen (cargo build $FEATURE_ARGS)..."
+# Build the binaries and the tests in one invocation, so dev-dependency features resolve once and
+# the `cargo test` below reuses this build instead of compiling the dependencies a second time.
+phase "Build"
+echo "==> Building oxen (cargo build --workspace --bins --tests $FEATURE_ARGS)..."
 # shellcheck disable=SC2086
-cargo build $FEATURE_ARGS
+cargo build --workspace --bins --tests $FEATURE_ARGS
+
+phase "Server start"
 
 # Verify ulimit
 CURRENT_ULIMIT=$(ulimit -n)
@@ -215,7 +285,26 @@ export OXEN_TEST_HOST="localhost:${OXEN_PORT}"
 SERVER_LOG="./data/test/oxen-server.log"
 mkdir -p "$(dirname "$SERVER_LOG")"
 echo "==> Starting oxen-server on port ${OXEN_PORT} (logs at ${SERVER_LOG})..."
-./target/debug/oxen-server start -p "${OXEN_PORT}" --test >"$SERVER_LOG" 2>&1 &
+SERVER_BIN="$PWD/target/debug/oxen-server"
+SERVER_VERSION=$("$SERVER_BIN" --version)
+# The binary reports only its crate version, so name the commit this run built it from whenever
+# that is not a clean release tag.
+GIT_DESCRIBE=$(git describe --tags --match 'v[0-9]*' --long --dirty --always 2>/dev/null || true)
+GIT_DIRTY=""
+if [[ "$GIT_DESCRIBE" == *-dirty ]]; then
+    GIT_DIRTY=", plus uncommitted changes"
+    GIT_DESCRIBE="${GIT_DESCRIBE%-dirty}"
+fi
+if [[ "$GIT_DESCRIBE" =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+    if [ "${BASH_REMATCH[2]}" != 0 ] || [ -n "$GIT_DIRTY" ]; then
+        COMMITS="commits"
+        [ "${BASH_REMATCH[2]}" = 1 ] && COMMITS="commit"
+        SERVER_VERSION+=" (${BASH_REMATCH[2]} $COMMITS after ${BASH_REMATCH[1]}, at ${BASH_REMATCH[3]}$GIT_DIRTY)"
+    fi
+elif [ -n "$GIT_DESCRIBE" ]; then
+    SERVER_VERSION+=" (at $GIT_DESCRIBE$GIT_DIRTY)"
+fi
+"$SERVER_BIN" start -p "${OXEN_PORT}" --test >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 wait_for_server() {
@@ -231,6 +320,8 @@ echo "==> Waiting for oxen-server health check to pass..."
 wait_for_server
 
 if [ "$RUN_PYTHON" = true ]; then
+    phase "Python build"
+
     # Configure oxen CLI user for the Python tests. The Python extension resolves the
     # config dir through `oxen_config_dir()` with no override installed, so both the write
     # below and the extension's reads follow $OXEN_CONFIG_DIR. Point it at a throwaway dir:
@@ -251,12 +342,20 @@ if [ "$RUN_PYTHON" = true ]; then
         source .venv/bin/activate
         echo "==> Building Python extension with maturin..."
         maturin develop
+    )
+
+    phase "Tests"
+    (
+        cd oxen-python
+        # shellcheck disable=SC1091
+        source .venv/bin/activate
 
         # Run tests
         echo "==> Running pytest $* ..."
         pytest -s tests "$@"
     )
 else
+    phase "Tests"
     # Run Rust tests. Redirect stderr to a log file: libtest's per-test progress and summary
     # write to stdout, so the terminal still shows those. The noisy things that libtest can't
     # capture — `indicatif` progress bars (direct TTY drawing), any `tracing` output emitted on

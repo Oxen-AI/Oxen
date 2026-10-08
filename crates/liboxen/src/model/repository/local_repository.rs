@@ -1,9 +1,7 @@
 use crate::config::RepositoryConfig;
 use crate::constants::SHALLOW_FLAG;
 use crate::constants::{self, DEFAULT_VNODE_SIZE};
-use crate::core::db::merkle_node::{
-    DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store,
-};
+use crate::core::db::merkle_node::{MerkleNodeBackend, MerkleNodeStore, create_merkle_node_store};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{MerkleHash, Remote, RemoteRepository, RepoIdentity};
@@ -52,12 +50,8 @@ pub struct LocalRepository {
     /// Built from `storage_config` + `server_s3_opts` at construction. Never replaced.
     version_store: Arc<dyn VersionStore>,
     /// Where Merkle tree nodes are read from and written to. Built from the repo path at
-    /// construction and never replaced, mirroring `version_store`. The backend (file vs. another
-    /// engine) is a property of the repo chosen once in `create_merkle_node_store`.
+    /// construction and never replaced, mirroring `version_store`.
     merkle_node_store: Arc<dyn MerkleNodeStore>,
-    /// The backend `merkle_node_store` resolved to. Persisted as `merkle_node_backend` in
-    /// `config.toml` by [`save`](Self::save) so the choice is the authoritative record on the next load.
-    merkle_node_backend: MerkleNodeBackend,
     /// Who this repo is: the UUIDs it is addressed by, plus name hints. `None` for a repo whose
     /// config predates identity, and for every client-side repo — identity is recorded
     /// server-side. The config is the authoritative record; any server-level index over it is
@@ -67,9 +61,10 @@ pub struct LocalRepository {
 
 impl LocalRepository {
     /// Load a repo from disk without any server-side S3 opts. Use this from the CLI and any code
-    /// path that doesn't talk to the server's storage config — an on-disk `[storage] kind = "s3"`
-    /// will surface as [`OxenError::S3BackendMissingServerOpts`]. Server code should call
-    /// [`Self::from_dir_with_server_opts`] instead.
+    /// path that doesn't talk to the server's storage config. An on-disk `[storage] kind = "s3"`
+    /// repo loads, and its version store fails every operation with
+    /// [`OxenError::S3BackendMissingServerOpts`]. Server code that reaches version files should
+    /// call [`Self::from_dir_with_server_opts`] instead.
     pub fn from_dir(path: impl AsRef<Path>) -> Result<Self, OxenError> {
         Self::from_dir_with_server_opts(path, None)
     }
@@ -133,11 +128,6 @@ impl LocalRepository {
         Arc::clone(&self.merkle_node_store)
     }
 
-    /// The backend this repo's Merkle node store resolved to (see `create_merkle_node_store`).
-    pub fn merkle_node_backend(&self) -> MerkleNodeBackend {
-        self.merkle_node_backend
-    }
-
     /// The immutable UUID this repo's storage is addressed by.
     pub fn repo_uuid(&self) -> Option<Uuid> {
         self.identity.as_ref().map(|identity| identity.repo_uuid)
@@ -182,8 +172,7 @@ impl LocalRepository {
         let repo_uuid = config.identity.as_ref().map(|identity| identity.repo_uuid);
         let version_store =
             create_version_store(&path, &storage_config, repo_uuid, server_s3_opts)?;
-        let (merkle_node_store, merkle_node_backend) =
-            create_merkle_node_store(&path, config.merkle_node_backend)?;
+        let merkle_node_store = create_merkle_node_store(&path, config.merkle_node_backend)?;
         Ok(LocalRepository {
             path,
             remote_name: config.remote_name,
@@ -200,7 +189,6 @@ impl LocalRepository {
             server_s3_opts: server_s3_opts.cloned(),
             version_store,
             merkle_node_store,
-            merkle_node_backend,
             identity: config.identity,
         })
     }
@@ -221,26 +209,11 @@ impl LocalRepository {
         }
     }
 
-    /// Test-only constructor: clone an existing repo but back it with a caller-supplied Merkle node
-    /// store. Lets a test point a repo at a specific backend (e.g. an LMDB store on the repo's own
-    /// path) and exercise real commits/reads through it.
-    #[cfg(test)]
-    pub(crate) fn new_with_merkle_node_store_for_testing(
-        base: &LocalRepository,
-        merkle_node_store: Arc<dyn MerkleNodeStore>,
-    ) -> Self {
-        LocalRepository {
-            merkle_node_store,
-            ..base.clone()
-        }
-    }
-
     pub fn from_view(view: RepositoryView) -> Result<LocalRepository, OxenError> {
         let path = std::env::current_dir()?.join(view.name);
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None, None)?;
-        let (merkle_node_store, merkle_node_backend) =
-            create_merkle_node_store(&path, Some(DEFAULT_MERKLE_NODE_BACKEND))?;
+        let merkle_node_store = create_merkle_node_store(&path, Some(MerkleNodeBackend::Lmdb))?;
         Ok(LocalRepository {
             path,
             remotes: vec![],
@@ -257,31 +230,16 @@ impl LocalRepository {
             server_s3_opts: None,
             version_store,
             merkle_node_store,
-            merkle_node_backend,
             identity: None,
         })
     }
 
-    /// Builds the local repo a clone writes to, on the LMDB Merkle node backend. A local repo's
-    /// backend is independent of the remote's, and the filesystem backend is deprecated (see
-    /// docs/deprecations.md), so a clone never takes the remote's.
+    /// Builds the local repo a clone writes to, on the LMDB Merkle node backend.
     pub fn from_remote(repo: RemoteRepository, path: &Path) -> Result<LocalRepository, OxenError> {
-        Self::from_remote_with_backend(repo, path, None)
-    }
-
-    /// [`Self::from_remote`] with an explicit backend, for a clone that asks for a specific local
-    /// backend.
-    pub fn from_remote_with_backend(
-        repo: RemoteRepository,
-        path: &Path,
-        backend: Option<MerkleNodeBackend>,
-    ) -> Result<LocalRepository, OxenError> {
         let path = path.to_owned();
         let storage_config = StorageConfig::default();
         let version_store = create_version_store(&path, &storage_config, None, None)?;
-        let resolved_backend = backend.unwrap_or(MerkleNodeBackend::Lmdb);
-        let (merkle_node_store, merkle_node_backend) =
-            create_merkle_node_store(&path, Some(resolved_backend))?;
+        let merkle_node_store = create_merkle_node_store(&path, Some(MerkleNodeBackend::Lmdb))?;
         Ok(LocalRepository {
             path,
             remotes: vec![repo.remote],
@@ -298,7 +256,6 @@ impl LocalRepository {
             server_s3_opts: None,
             version_store,
             merkle_node_store,
-            merkle_node_backend,
             identity: None,
         })
     }
@@ -382,7 +339,7 @@ impl LocalRepository {
             remote_mode: self.remote_mode,
             workspace_name: self.workspace_name.clone(),
             workspaces: self.workspaces.clone(),
-            merkle_node_backend: Some(self.merkle_node_backend),
+            merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
             identity: self.identity.clone(),
         };
 
@@ -711,7 +668,7 @@ mod tests {
     use crate::api::requests::RepoNew;
     use crate::config::RepositoryConfig;
     use crate::constants::DEFAULT_REMOTE_NAME;
-    use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
+    use crate::core::db::merkle_node::MerkleNodeBackend;
     use crate::error::OxenError;
     use crate::model::{LocalRepository, Remote, RemoteRepository, RepoIdentity};
     use crate::repositories;
@@ -898,12 +855,17 @@ mod tests {
     /// across or a save on any unrelated path silently erases it.
     #[test]
     fn test_identity_survives_a_save() -> Result<(), OxenError> {
+        use crate::storage::{StorageConfig, StorageKind};
         let temp_dir = TempDir::new()?;
         let identity = Some(RepoIdentity::minted("ox", "cats"));
         let repo = LocalRepository::new(
             temp_dir.path(),
             RepositoryConfig {
                 identity: identity.clone(),
+                storage: Some(StorageConfig {
+                    kind: StorageKind::S3,
+                    versions_path: None,
+                }),
                 ..Default::default()
             },
         )?;
@@ -911,6 +873,11 @@ mod tests {
 
         let reloaded = LocalRepository::from_dir(temp_dir.path())?;
         assert_eq!(reloaded.identity, identity);
+        assert_eq!(
+            reloaded.version_store().storage_kind(),
+            StorageKind::S3,
+            "an S3 repo opens without the server's S3 opts"
+        );
 
         // A second save, of a repo that only ever loaded its identity, must preserve it too.
         reloaded.save()?;
@@ -922,62 +889,34 @@ mod tests {
         Ok(())
     }
 
-    /// Changing the backend new repos default to must not change how an existing repo loads: a
-    /// config recording the filesystem backend still resolves to filesystem.
+    /// A repo whose config records the filesystem backend is refused on load.
     #[test]
-    fn test_existing_filesystem_repo_still_loads_as_filesystem() -> Result<(), OxenError> {
-        use crate::core::db::merkle_node::MerkleNodeBackend;
+    fn test_filesystem_backed_repo_is_refused() -> Result<(), OxenError> {
+        use crate::util::fs::{config_filepath, create_dir_all, oxen_hidden_dir};
 
         let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::new(
-            temp_dir.path(),
-            RepositoryConfig {
-                merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
-                ..Default::default()
-            },
-        )?;
-        repo.save()?;
+        let config = RepositoryConfig {
+            merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
+            ..Default::default()
+        };
+        create_dir_all(oxen_hidden_dir(temp_dir.path()))?;
+        config.save(config_filepath(temp_dir.path()))?;
 
-        let reloaded = LocalRepository::from_dir(temp_dir.path())?;
-        assert_eq!(
-            reloaded.merkle_node_backend(),
-            MerkleNodeBackend::Filesystem
-        );
-        assert_ne!(
-            MerkleNodeBackend::Filesystem,
-            DEFAULT_MERKLE_NODE_BACKEND,
-            "this test only proves anything while filesystem is not the create default"
-        );
+        assert!(matches!(
+            LocalRepository::from_dir(temp_dir.path()),
+            Err(OxenError::MerkleNodesOnFilesystem(_))
+        ));
 
         Ok(())
     }
 
+    /// Save records LMDB in `config.toml`, so an older Oxen reading the repo does not fall back
+    /// to the filesystem backend.
     #[test]
     fn test_merkle_node_backend_persists_to_config() -> Result<(), OxenError> {
-        use crate::core::db::merkle_node::MerkleNodeBackend;
-
-        // A repo with no explicit backend still records the resolved one in config.toml on save,
-        // so the choice is the authoritative record on the next load.
         let temp_dir = TempDir::new()?;
         let repo_path = temp_dir.path().to_path_buf();
         let repo = LocalRepository::new(&repo_path, RepositoryConfig::default())?;
-        repo.save()?;
-        let on_disk = RepositoryConfig::from_file(crate::util::fs::config_filepath(&repo_path))?;
-        assert!(
-            on_disk.merkle_node_backend.is_some(),
-            "save must persist the resolved backend to config.toml"
-        );
-
-        // An explicit backend round-trips verbatim through save → config.toml.
-        let temp_dir = TempDir::new()?;
-        let repo_path = temp_dir.path().to_path_buf();
-        let repo = LocalRepository::new(
-            &repo_path,
-            RepositoryConfig {
-                merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
-                ..Default::default()
-            },
-        )?;
         repo.save()?;
         let on_disk = RepositoryConfig::from_file(crate::util::fs::config_filepath(&repo_path))?;
         assert_eq!(on_disk.merkle_node_backend, Some(MerkleNodeBackend::Lmdb));
@@ -1032,7 +971,7 @@ mod tests {
             );
 
             let repo_uuid = Uuid::new_v4();
-            let mut remote_repo = remote_repo_reporting(None);
+            let mut remote_repo = remote_ns_repo();
             remote_repo.remote.repo_uuid = Some(repo_uuid);
             let recorded = repo.set_remote_repo("origin", &remote_repo);
 
@@ -1046,7 +985,7 @@ mod tests {
             );
 
             // A repository reporting no identity is still attachable.
-            let plain = repo.set_remote_repo("origin", &remote_repo_reporting(None));
+            let plain = repo.set_remote_repo("origin", &remote_ns_repo());
             assert_eq!(plain.repo_uuid, None);
             Ok(())
         })
@@ -1077,7 +1016,7 @@ mod tests {
         .await
     }
 
-    fn remote_repo_reporting(backend: Option<MerkleNodeBackend>) -> RemoteRepository {
+    fn remote_ns_repo() -> RemoteRepository {
         RemoteRepository {
             namespace: String::from("ns"),
             name: String::from("repo"),
@@ -1085,77 +1024,7 @@ mod tests {
             min_version: None,
             is_empty: true,
             storage_kind: StorageKind::Local,
-            merkle_node_backend: backend,
         }
-    }
-
-    #[test]
-    fn test_from_remote_ignores_the_remotes_merkle_backend() -> Result<(), OxenError> {
-        // Whatever the remote is on, the clone lands on LMDB. Cloning a filesystem-backed
-        // remote must not produce a filesystem-backed local repo.
-        for backend in [MerkleNodeBackend::Lmdb, MerkleNodeBackend::Filesystem] {
-            let temp_dir = TempDir::new()?;
-            let repo = LocalRepository::from_remote(
-                remote_repo_reporting(Some(backend)),
-                temp_dir.path(),
-            )?;
-
-            assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_from_remote_backend_override_beats_the_remote() -> Result<(), OxenError> {
-        // Both directions, so the test can't pass by coincidence with LMDB.
-        for (remote_backend, requested) in [
-            (MerkleNodeBackend::Filesystem, MerkleNodeBackend::Lmdb),
-            (MerkleNodeBackend::Lmdb, MerkleNodeBackend::Filesystem),
-        ] {
-            let temp_dir = TempDir::new()?;
-            let repo = LocalRepository::from_remote_with_backend(
-                remote_repo_reporting(Some(remote_backend)),
-                temp_dir.path(),
-                Some(requested),
-            )?;
-
-            assert_eq!(repo.merkle_node_backend(), requested);
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_from_remote_falls_back_when_the_remote_reports_no_backend() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::from_remote(remote_repo_reporting(None), temp_dir.path())?;
-
-        assert_eq!(repo.merkle_node_backend(), MerkleNodeBackend::Lmdb);
-
-        Ok(())
-    }
-
-    /// The resolved backend has to reach `config.toml`, since that is what a later load resolves
-    /// from — clone saves the repo right after building it. Asserted against an explicitly
-    /// requested backend that differs from the default, so the round trip can't pass by accident.
-    #[test]
-    fn test_from_remote_persists_the_resolved_backend() -> Result<(), OxenError> {
-        let temp_dir = TempDir::new()?;
-        let repo = LocalRepository::from_remote_with_backend(
-            remote_repo_reporting(Some(MerkleNodeBackend::Lmdb)),
-            temp_dir.path(),
-            Some(MerkleNodeBackend::Filesystem),
-        )?;
-        repo.save()?;
-
-        let reloaded = LocalRepository::from_dir(temp_dir.path())?;
-        assert_eq!(
-            reloaded.merkle_node_backend(),
-            MerkleNodeBackend::Filesystem
-        );
-
-        Ok(())
     }
 
     #[tokio::test]

@@ -18,9 +18,9 @@ use std::sync::{Arc, OnceLock};
 use bytesize::ByteSize;
 use heed::{RoTxn, RwTxn, WithoutTls};
 
-use super::env_registry::open_shared_env;
-use super::lmdb_db::{LmdbDb, open_db};
-use super::lmdb_env::{LmdbEnv, copy_lmdb_env_to_dir};
+use super::env_registry::{SharedEnv, open_shared_env};
+use super::lmdb_db::LmdbDb;
+use super::lmdb_env::copy_lmdb_env_to_dir;
 use super::lmdb_error::LmdbLayerError;
 use super::txn::{with_read_txn, with_write_txn};
 
@@ -32,7 +32,7 @@ pub(crate) struct LmdbSlot {
 }
 
 struct LmdbHandles {
-    env: Arc<LmdbEnv>,
+    shared: Arc<SharedEnv>,
     db: LmdbDb,
 }
 
@@ -61,11 +61,11 @@ fn opened<S: LmdbStore + ?Sized>(store: &S) -> Result<&LmdbHandles, LmdbLayerErr
     if let Some(handles) = slot.handles.get() {
         return Ok(handles);
     }
-    let env = open_shared_env(&slot.env_dir, S::LMDB_MAP_SIZE)?;
-    let db = open_db(&env, S::LMDB_DB_NAME)?;
+    let shared = open_shared_env(&slot.env_dir, S::LMDB_MAP_SIZE)?;
+    let db = shared.db(S::LMDB_DB_NAME)?;
     // A racing caller may have filled the slot first. `get_or_init` keeps whichever handles landed
     // and drops ours, which reference the same shared env.
-    Ok(slot.handles.get_or_init(|| LmdbHandles { env, db }))
+    Ok(slot.handles.get_or_init(|| LmdbHandles { shared, db }))
 }
 
 /// Shared lifecycle for an LMDB-backed store: one env opened on first use holding one database,
@@ -96,7 +96,7 @@ pub(crate) trait LmdbStore {
         E: From<LmdbLayerError>,
     {
         let handles = opened(self)?;
-        with_read_txn(&handles.env, |txn| f(&handles.db, txn))
+        with_read_txn(&handles.shared.env, |txn| f(&handles.db, txn))
     }
 
     /// Run `f` inside a write transaction with the store's database pre-bound, committing iff `f`
@@ -106,19 +106,23 @@ pub(crate) trait LmdbStore {
         E: From<LmdbLayerError>,
     {
         let handles = opened(self)?;
-        with_write_txn(&handles.env, |txn| f(&handles.db, txn))
+        with_write_txn(&handles.shared.env, |txn| f(&handles.db, txn))
     }
 
     /// Snapshot the store's env into `dst_dir` (point-in-time consistent), returning the copied
     /// data file's path. See `copy_lmdb_env_to_dir` for the snapshot/compaction semantics.
     fn snapshot_to(&self, dst_dir: &Path) -> Result<PathBuf, LmdbLayerError> {
         let handles = opened(self)?;
-        copy_lmdb_env_to_dir(&handles.env, dst_dir)
+        copy_lmdb_env_to_dir(&handles.shared.env, dst_dir)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -165,6 +169,34 @@ mod tests {
             .expect("read")
             .expect("value present");
         assert_eq!(value.as_ref(), b"value");
+
+        // A second handle on the live env reuses the database the first one opened, so its first
+        // read proceeds while another thread holds the env's one write txn.
+        let second = TestStore {
+            lmdb: LmdbSlot::new(store.lmdb.env_dir.clone()),
+        };
+        let (holding, held) = mpsc::channel();
+        let (release, released) = mpsc::channel::<()>();
+        let (read_done, read_result) = mpsc::channel();
+        let (first, second) = (&store, &second);
+        thread::scope(|scope| {
+            scope.spawn(move || {
+                first.write(|_, _| {
+                    let _ = holding.send(());
+                    let _ = released.recv();
+                    Ok::<_, LmdbLayerError>(())
+                })
+            });
+            held.recv().expect("the writer holds the write txn");
+            scope.spawn(move || read_done.send(second.read(|db, txn| db.get(txn, b"key"))));
+            let read = read_result.recv_timeout(Duration::from_secs(10));
+            let _ = release.send(());
+            let value = read
+                .expect("a second handle's first read does not wait on the env's writer")
+                .expect("read")
+                .expect("value present");
+            assert_eq!(value.as_ref(), b"value");
+        });
     }
 
     /// `snapshot_to` copies committed state; reopening the snapshot yields the same data.

@@ -70,6 +70,10 @@ pub enum OxenError {
     #[error("Repository '{0}' already exists")]
     RepoAlreadyExists(Box<RepoNew>),
 
+    /// Error during repository creation: a repository is already placed by the UUID.
+    #[error("Repository UUID {0} is already in use")]
+    RepoUuidTaken(Uuid),
+
     /// Error when creating a repository: repo names are restricted.
     #[error("Invalid repository name '{0}'. Must match [a-zA-Z0-9][a-zA-Z0-9_.-]+")]
     InvalidRepoName(StringError),
@@ -265,6 +269,23 @@ pub enum OxenError {
     #[error("Not a single file: {0}")]
     NotAFile(PathBufError),
 
+    /// A commit's tree names a path that would land outside the working tree or inside a `.oxen`
+    /// directory, so it is not written there.
+    #[error("Path cannot be written to the working tree: {0}")]
+    InvalidTreePath(PathBufError),
+
+    /// A path a request or an archive supplied names a location outside the repository's working
+    /// tree, so nothing is written there.
+    #[error("{path} is outside the working tree: {reason}")]
+    PathOutsideWorkingTree {
+        path: PathBufError,
+        reason: &'static str,
+    },
+
+    /// A path a request supplied normalizes to the repository root where a file path is expected.
+    #[error("Expected a file path, but the path is empty")]
+    EmptyPath,
+
     /// A move or rename targeted a path that already has a staged entry.
     #[error("Destination already staged: {0}")]
     DestinationAlreadyStaged(PathBufError),
@@ -316,6 +337,13 @@ pub enum OxenError {
     #[error("This repository was created by Oxen v{0}, which is no longer supported by this CLI.")]
     UnsupportedRepoVersion(StringError),
 
+    /// The repository at this path stores its Merkle nodes on the filesystem backend, which this
+    /// build no longer reads.
+    #[error(
+        "The repository at {0:?} stores its Merkle nodes on the filesystem backend, which this version of Oxen no longer reads."
+    )]
+    MerkleNodesOnFilesystem(PathBuf),
+
     #[error("Unknown migration: {0}")]
     UnknownMigration(String),
 
@@ -352,15 +380,10 @@ pub enum OxenError {
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
 
-    /// A caller supplied a Merkle node backend that isn't recognized.
-    #[error("Unsupported Merkle node backend: {0}. Expected 'filesystem' or 'lmdb'.")]
-    UnsupportedMerkleNodeBackend(String),
-
-    /// An S3-backed repo was requested but the server has no S3 opts configured (the
-    /// `s3_bucket` is unset in the server's TOML). On the repo-create path this normally surfaces
-    /// as a 400 from `StoragePolicy::resolve()` before construction; this variant catches the
-    /// repo-load path or any other caller that built a `StorageConfig { kind: S3, .. }` without
-    /// going through the policy.
+    /// An S3-backed repo's version files were reached without S3 opts (the `s3_bucket` is unset
+    /// in the server's TOML, or the repo was opened without the server's opts). On the
+    /// repo-create path a missing bucket normally surfaces as a 400 from
+    /// `StoragePolicy::resolve()` before construction.
     #[error(
         "S3 storage requested but the server has no S3 opts configured \
          (see `s3_bucket` under [storage] in the server config)"
@@ -372,6 +395,15 @@ pub enum OxenError {
         "S3-backed repository {0} is missing the repository UUID its S3 object prefix is built from"
     )]
     S3RepoWithoutIdentity(PathBufError),
+
+    /// A storage move found the repository's storage changed after the move loaded it, as when
+    /// another move switched it first, so it stopped without switching.
+    #[error("The storage of repository {0} changed while its version files were moving")]
+    StorageChangedDuringMove(PathBufError),
+
+    /// A storage move was refused because another move of the same repository is still running.
+    #[error("Repository {0} is already moving to other storage")]
+    StorageMoveInProgress(PathBufError),
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
@@ -400,6 +432,13 @@ pub enum OxenError {
     // Attempting to make a commit with no changes from its parent is an error.
     #[error("No changes to commit")]
     NoChanges,
+
+    /// The repository already holds, or is writing, a commit with this id, so a second commit
+    /// was refused rather than written under it. Its parents, message, author, email, and second
+    /// decide the id, so a retry in a later second gets another one. oxen-server maps this to
+    /// HTTP 429 with `Retry-After`.
+    #[error("A commit with id {0} already exists or is being written")]
+    CommitIdTaken(MerkleHash),
 
     #[error("No such commit, dir, or vnode Merkle tree node with hash (hex): {0}")]
     MerkleNodeNotFound(HexHash),
@@ -501,7 +540,8 @@ pub enum OxenError {
 
     /// `compare_and_swap_branch_commit_id` saw a branch head that did not match the expected
     /// previous value. `expected = None` means the caller expected the branch to be absent;
-    /// `actual = None` means the branch was absent at the time of the swap attempt.
+    /// `actual = None` means the branch was absent at the time of the swap attempt. oxen-server
+    /// maps this to HTTP 429 with `Retry-After`.
     #[error("Branch '{branch}' head mismatch: expected {expected:?}, found {actual:?}")]
     BranchHeadMismatch {
         branch: String,
@@ -815,6 +855,12 @@ impl OxenError {
             LockTimeout(_) => {
                 "A maintenance operation holds the repository's exclusive lock. Wait a few seconds and retry."
             }
+            CommitIdTaken(_) => {
+                "Another commit with the same parent, message, author, and email was made in the same second. Retry the commit."
+            }
+            BranchHeadMismatch { .. } => {
+                "Another write moved the branch while this commit was being written. Retry the commit."
+            }
             RevisionNotFound(_) => {
                 "Check available branches with `oxen branch --all` or commits with `oxen log`."
             }
@@ -828,6 +874,9 @@ impl OxenError {
             | ResourceNotFound(_)
             | ParsedResourceNotFound(_)
             | CommitEntryNotFound(_) => "Check the path and current branch with `oxen status`.",
+            InvalidTreePath(_) => {
+                "The commit contains this path, so it cannot be checked out. Ask the repository's owner to rename or remove it."
+            }
             NotADataFrame(_) => {
                 "Schema operations need a tabular file (csv, tsv, jsonl, parquet, arrow)."
             }
@@ -890,8 +939,17 @@ impl OxenError {
             UnsupportedRepoVersion(_) => {
                 "Use an older Oxen release to migrate this repository up to the current format, then retry with this CLI."
             }
+            MerkleNodesOnFilesystem(_) => {
+                "Run `oxen migrate up merkle_nodes_to_lmdb <path>` with Oxen 0.61.1 to move the repository onto LMDB, then retry with this version."
+            }
             S3BackendMissingServerOpts => {
                 "Set `[storage] s3_bucket = \"<your-bucket>\"` in the server's config TOML and restart oxen-server."
+            }
+            StorageChangedDuringMove(_) => {
+                "Run the move again. It finishes the move, or does nothing if the repository is already on the requested storage."
+            }
+            StorageMoveInProgress(_) => {
+                "Wait for the move already running to finish, then run this one again if it is still needed."
             }
             TabularExportMissingMetadata(_) => {
                 "The data frame has no rows to commit. Add at least one row, or discard the workspace edits, then retry."
@@ -991,10 +1049,14 @@ impl OxenError {
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
             OxenError::RemotePointsAtDifferentRepo { .. } => true,
+            OxenError::RepoUuidTaken(_) => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,
+            OxenError::MerkleNodesOnFilesystem(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
             OxenError::InvalidFileType(_) => true,
+            OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
+            OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.

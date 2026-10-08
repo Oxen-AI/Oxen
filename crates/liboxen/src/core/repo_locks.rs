@@ -145,7 +145,9 @@ pub fn begin_write(repo: &LocalRepository) -> Result<WriteInFlight, OxenError> {
     begin_write_at(&repo.path)
 }
 
-/// [`begin_write`] for the repository at `repo_dir`, which need not open.
+/// [`begin_write`] for the repository at `repo_dir`, which need not open. Also `LockTimeout` when
+/// nothing is at `repo_dir` any more, as for a repository an exclusive operation moved, so the
+/// caller looks it up again.
 pub fn begin_write_at(repo_dir: &Path) -> Result<WriteInFlight, OxenError> {
     let gate = gate_for(repo_dir);
     let mut state = gate.state.lock();
@@ -154,7 +156,13 @@ pub fn begin_write_at(repo_dir: &Path) -> Result<WriteInFlight, OxenError> {
     }
     state.active_writes += 1;
     drop(state);
-    Ok(WriteInFlight { gate })
+    let write = WriteInFlight { gate };
+    // Checked once the write is registered, so an exclusive operation that moves the directory
+    // either waits for this write or has already moved it.
+    if !repo_dir.is_dir() {
+        return Err(lock_timeout());
+    }
+    Ok(write)
 }
 
 /// Sets the exclusive marker on construction and clears it on drop, so an early return or panic in

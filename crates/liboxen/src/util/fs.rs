@@ -12,6 +12,7 @@ use jwalk::WalkDir;
 
 use simdutf8::compat::from_utf8;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
@@ -1628,49 +1629,80 @@ pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds:
     FileTime::from_system_time(node_modified_nanoseconds)
 }
 
-/// Validates and normalizes a user-provided path to ensure it is safe.
-/// Returns the normalized path if valid, or an OxenError describing the issue.
+/// Normalizes an untrusted path relative to a repository root: `.` components collapse, and a path
+/// that is absolute, has a `..` or drive component, or passes through a `.oxen` directory (see
+/// [`is_oxen_hidden_dir_name`]) is refused. The result may be empty.
 ///
-/// Validation rules:
-/// - Must be a relative path (no absolute paths or root components)
-/// - Cannot contain parent directory references (..)
-/// - Cannot contain empty segments
-/// - Current directory references (.) are skipped
-pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref();
-
+/// # Errors
+/// [`OxenError::PathOutsideWorkingTree`] when the path is refused.
+pub fn normalize_relative_path(path: &Path) -> Result<PathBuf, OxenError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
-        match component {
+        let reason = match component {
+            Component::CurDir => continue,
+            Component::Normal(segment) if is_oxen_hidden_dir_name(segment) => {
+                "it is inside a .oxen directory"
+            }
             Component::Normal(segment) => {
-                let segment_str = segment.to_string_lossy();
-                // Reject empty segments (e.g., from "foo//bar")
-                if segment_str.is_empty() {
-                    return Err(OxenError::basic_str("path contains empty segments"));
-                }
                 normalized.push(segment);
+                continue;
             }
-            Component::ParentDir => {
-                return Err(OxenError::basic_str(
-                    "path cannot contain parent directory references (..)",
-                ));
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(OxenError::basic_str("path must be relative, not absolute"));
-            }
-            Component::CurDir => {
-                // Skip "." components (current directory)
-            }
-        }
+            Component::ParentDir => "it has a `..` component",
+            Component::RootDir | Component::Prefix(_) => "it is absolute",
+        };
+        return Err(OxenError::PathOutsideWorkingTree {
+            path: path.into(),
+            reason,
+        });
     }
+    Ok(normalized)
+}
 
-    // Ensure we have a valid path after normalization
+/// Whether a path component names the `.oxen` directory on any filesystem Oxen runs on: compared
+/// without regard to ASCII case, ignoring the `:stream` suffix and trailing dots and spaces Windows
+/// discards, and counting the NTFS short name `OXEN~<n>`.
+pub fn is_oxen_hidden_dir_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let name = name
+        .split_once(':')
+        .map_or(name, |(before_stream, _)| before_stream)
+        .trim_end_matches(['.', ' ']);
+    let is_short_name = name
+        .get(..5)
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("oxen~"))
+        && name
+            .get(5..)
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    name.eq_ignore_ascii_case(OXEN_HIDDEN_DIR) || is_short_name
+}
+
+/// The on-disk location under `root` of a path taken from a commit's tree. `path` may be relative
+/// to `root` or already joined onto it.
+///
+/// # Errors
+/// [`OxenError::InvalidTreePath`] when the path is outside `root` or [`normalize_relative_path`]
+/// refuses what it names under `root`.
+pub(crate) fn working_tree_path(root: &Path, path: &Path) -> Result<PathBuf, OxenError> {
+    let joined = root.join(path);
+    match joined.strip_prefix(root) {
+        Ok(relative) if normalize_relative_path(relative).is_ok() => Ok(joined),
+        _ => Err(OxenError::InvalidTreePath(path.into())),
+    }
+}
+
+/// [`normalize_relative_path`], refusing a path that normalizes to empty as well.
+///
+/// # Errors
+/// [`OxenError::PathOutsideWorkingTree`] when [`normalize_relative_path`] refuses the path, and
+/// [`OxenError::EmptyPath`] when it normalizes to empty.
+pub fn validate_and_normalize_path(path: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
+    let path = path.as_ref();
+    let normalized = normalize_relative_path(path)?;
     if normalized.as_os_str().is_empty() {
-        return Err(OxenError::basic_str(
-            "path resolves to empty after normalization",
-        ));
+        return Err(OxenError::EmptyPath);
     }
-
     Ok(normalized)
 }
 
@@ -1750,6 +1782,63 @@ mod tests {
     use crate::util;
 
     use std::path::Path;
+
+    #[test]
+    fn test_working_tree_path_stays_in_the_working_tree() {
+        let root = &std::env::temp_dir().join("repo");
+        assert_eq!(
+            util::fs::working_tree_path(root, Path::new("a/b.txt")).unwrap(),
+            root.join("a/b.txt")
+        );
+        assert_eq!(
+            util::fs::working_tree_path(root, &root.join("a/b.txt")).unwrap(),
+            root.join("a/b.txt"),
+            "a path already joined onto the root is accepted"
+        );
+        for refused in ["a/../../outside.txt", "/outside.txt", "a/.OXEN/HEAD"] {
+            assert!(
+                matches!(
+                    util::fs::working_tree_path(root, Path::new(refused)),
+                    Err(OxenError::InvalidTreePath(_))
+                ),
+                "{refused} is refused"
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_relative_path() {
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("./pages/./home")).unwrap(),
+            Path::new("pages/home")
+        );
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("")).unwrap(),
+            Path::new("")
+        );
+        assert_eq!(
+            util::fs::normalize_relative_path(Path::new("data/.oxenignore")).unwrap(),
+            Path::new("data/.oxenignore")
+        );
+        for refused in [
+            "../../outside.txt",
+            "a/../b",
+            "/tmp/outside.txt",
+            ".oxen/config.toml",
+            "data/.OXEN/HEAD",
+            ".Oxen./config.toml",
+            ".oxen::$INDEX_ALLOCATION/config.toml",
+            "OXEN~1/config.toml",
+        ] {
+            assert!(
+                matches!(
+                    util::fs::normalize_relative_path(Path::new(refused)),
+                    Err(OxenError::PathOutsideWorkingTree { .. })
+                ),
+                "{refused} is refused"
+            );
+        }
+    }
 
     #[test]
     fn file_path_relative_to_dir() -> Result<(), OxenError> {

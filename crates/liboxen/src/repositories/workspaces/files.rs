@@ -281,7 +281,7 @@ mod tests {
             let second = Path::new("second.txt");
             let third = Path::new("third.txt");
             let (moved, yielded) =
-                test::run_and_report_yield(workspaces::files::mv(&workspace, first, second)).await;
+                test::run_and_report_yield(workspaces::files::mv(&workspace, first, second));
             moved?;
             assert!(yielded, "mv held the thread it was called on");
             workspaces::files::mv(&workspace, second, third).await?;

@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::error::OxenError;
+use crate::util::fs::{AtomicFile, create_dir_all};
 
 /// Directory at the top of the sync dir holding the name table's env.
 pub(crate) const NAME_TABLE_DIR: &str = "name_table";
@@ -49,11 +50,49 @@ pub(crate) fn placed_repo_dir(sync_dir: &Path, repo_uuid: Uuid) -> PathBuf {
         .join(uuid)
 }
 
+/// The directory the repository `repo_uuid` is placed in under `sync_dir`, with the repos dir, its
+/// marker, and the directory's parent made where they are missing. The directory itself is not
+/// made.
+pub(crate) fn prepare_placed_repo_dir(
+    sync_dir: &Path,
+    repo_uuid: Uuid,
+) -> Result<PathBuf, OxenError> {
+    let marker = sync_dir.join(REPOS_DIR).join(REPOS_DIR_MARKER);
+    if !marker.is_file() {
+        AtomicFile::new(&marker).write(b"")?;
+    }
+    let dir = placed_repo_dir(sync_dir, repo_uuid);
+    if let Some(parent) = dir.parent() {
+        create_dir_all(parent)?;
+    }
+    Ok(dir)
+}
+
+/// Create the directory the repository `repo_uuid` is placed in under `sync_dir`, returning it,
+/// and making the repos dir and its marker first where they are missing.
+///
+/// # Errors
+/// [`OxenError::RepoUuidTaken`] when a repository is already placed by `repo_uuid`.
+pub(crate) fn create_placed_repo_dir(
+    sync_dir: &Path,
+    repo_uuid: Uuid,
+) -> Result<PathBuf, OxenError> {
+    let dir = prepare_placed_repo_dir(sync_dir, repo_uuid)?;
+    match std::fs::create_dir(&dir) {
+        Ok(()) => Ok(dir),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            Err(OxenError::RepoUuidTaken(repo_uuid))
+        }
+        Err(err) => Err(OxenError::file_error(&dir, err)),
+    }
+}
+
 /// The directory where `sync_dir` holds a namespace called `repo` rather than the repos dir,
-/// if it does.
+/// if it does. An empty `repo` directory is neither, since the marker is its first entry.
 pub fn namespace_called_repo(sync_dir: &Path) -> Option<PathBuf> {
     let dir = sync_dir.join(REPOS_DIR);
-    (dir.is_dir() && !dir.join(REPOS_DIR_MARKER).is_file()).then_some(dir)
+    let occupied = std::fs::read_dir(&dir).is_ok_and(|mut entries| entries.next().is_some());
+    (occupied && !dir.join(REPOS_DIR_MARKER).is_file()).then_some(dir)
 }
 
 /// The namespace directories at the top of `sync_dir`, in path order.
@@ -87,12 +126,16 @@ pub fn repo_dirs(namespace_dir: &Path) -> io::Result<Vec<PathBuf>> {
     sorted_dirs(namespace_dir, |path| path.join(OXEN_HIDDEN_DIR).is_dir())
 }
 
-/// The entries of `dir` that `keep` accepts, in path order.
+/// The entries of `dir` that `keep` accepts, in path order. An entry that cannot be read fails the
+/// whole listing.
 fn sorted_dirs(dir: &Path, keep: impl Fn(&Path) -> bool) -> io::Result<Vec<PathBuf>> {
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(dir)?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| keep(path))
-        .collect();
+    let mut dirs = vec![];
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if keep(&path) {
+            dirs.push(path);
+        }
+    }
     dirs.sort();
     Ok(dirs)
 }

@@ -1,12 +1,12 @@
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
 use liboxen::error::OxenError;
 use liboxen::model::{Branch, Commit, LocalRepository, ParsedResource};
 use liboxen::resource::{parse_resource_from_path, parse_resource_from_path_async};
-use liboxen::{constants, repositories};
+use liboxen::{constants, repositories, util};
 
 use actix_web::HttpRequest;
 use liboxen::util::oxen_version::OxenVersion;
@@ -141,27 +141,37 @@ pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     value
 }
 
-fn decode_resource_path(resource_path_str: &str) -> String {
-    percent_decode(resource_path_str.as_bytes())
-        .decode_utf8_lossy()
-        .into_owned()
+/// A path from a request, run through [`util::fs::normalize_relative_path`]. `path_label` names
+/// the path in the 400 that refuses it.
+pub(crate) fn request_relative_path(
+    path: &Path,
+    allow_empty: bool,
+    path_label: &str,
+) -> Result<PathBuf, OxenHttpError> {
+    let normalized = util::fs::normalize_relative_path(path)
+        .map_err(|e| OxenHttpError::BadRequest(format!("Invalid {path_label}: {e}").into()))?;
+    if !allow_empty && normalized.as_os_str().is_empty() {
+        return Err(OxenHttpError::BadRequest(
+            format!("Invalid {path_label}: path cannot be empty").into(),
+        ));
+    }
+    Ok(normalized)
+}
+
+/// The request's `resource` path parameter, percent-decoded and run through
+/// [`request_relative_path`].
+pub(crate) fn resource_param(req: &HttpRequest) -> Result<PathBuf, OxenHttpError> {
+    let decoded = percent_decode(query_param(req, "resource").as_bytes()).decode_utf8_lossy();
+    request_relative_path(Path::new(decoded.as_ref()), true, "resource")
 }
 
 pub fn parse_resource(
     req: &HttpRequest,
     repo: &LocalRepository,
 ) -> Result<ParsedResource, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
-    let resource_path_str = resource.to_string_lossy();
-
-    // Decode the URL, handling both %20 and + as spaces
-    let decoded_path = decode_resource_path(&resource_path_str);
-
-    let decoded_resource = PathBuf::from(decoded_path);
-    log::debug!(
-        "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
-    );
-    parse_resource_from_path(repo, &decoded_resource)?
+    let resource = resource_param(req)?;
+    log::debug!("parse_resource_from_path looking for resource: {resource:?}");
+    parse_resource_from_path(repo, &resource)?
         .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
 }
 
@@ -170,17 +180,9 @@ pub async fn parse_resource_async(
     req: &HttpRequest,
     repo: &LocalRepository,
 ) -> Result<ParsedResource, OxenHttpError> {
-    let resource: PathBuf = PathBuf::from(query_param(req, "resource"));
-    let resource_path_str = resource.to_string_lossy();
-
-    // Decode the URL, handling both %20 and + as spaces
-    let decoded_path = decode_resource_path(&resource_path_str);
-
-    let decoded_resource = PathBuf::from(decoded_path);
-    log::debug!(
-        "parse_resource_from_path looking for resource: {resource:?} decoded_resource: {decoded_resource:?}"
-    );
-    parse_resource_from_path_async(repo, &decoded_resource)
+    let resource = resource_param(req)?;
+    log::debug!("parse_resource_from_path looking for resource: {resource:?}");
+    parse_resource_from_path_async(repo, &resource)
         .await?
         .ok_or_else(|| OxenError::path_does_not_exist(resource).into())
 }

@@ -1,5 +1,5 @@
 use crate::errors::{OxenHttpError, WorkspaceBranch};
-use crate::helpers::get_repo;
+use crate::helpers::get_repo_async;
 use crate::middleware::with_repo_exclusive_for_client;
 use crate::params::{NameParam, app_data, path_param};
 use crate::tasks;
@@ -54,7 +54,7 @@ pub async fn get_or_create(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let data: Result<NewWorkspace, serde_json::Error> = serde_json::from_str(&body);
@@ -67,11 +67,14 @@ pub async fn get_or_create(
     };
 
     // Try to get the branch, or create it if the repo is empty
-    let branch = match repositories::branches::get_by_name(&repo, &data.branch_name) {
+    let branch = match repositories::branches::get_by_name_async(&repo, &data.branch_name).await {
         Ok(branch) => branch,
         Err(OxenError::BranchNotFound(_)) => {
             // Branch doesn't exist - check if repo is empty
-            if repositories::commits::head_commit_maybe(&repo)?.is_some() {
+            if repositories::commits::head_commit_maybe_async(&repo)
+                .await?
+                .is_some()
+            {
                 // Repo has commits but branch doesn't exist - this is an error
                 return Ok(
                     HttpResponse::BadRequest().json(StatusMessage::error(format!(
@@ -95,10 +98,11 @@ pub async fn get_or_create(
                 &data.branch_name,
                 &user,
                 INITIAL_COMMIT_MSG,
-            )?;
+            )
+            .await?;
 
             // Now get the newly created branch
-            repositories::branches::get_by_name(&repo, &data.branch_name)?
+            repositories::branches::get_by_name_async(&repo, &data.branch_name).await?
         }
         Err(e) => return Err(e.into()),
     };
@@ -113,7 +117,9 @@ pub async fn get_or_create(
         workspace_identifier = workspace_id.clone();
     }
     log::debug!("get_or_create workspace_id {workspace_id:?}");
-    if let Ok(Some(workspace)) = repositories::workspaces::get(&repo, &workspace_identifier) {
+    if let Ok(Some(workspace)) =
+        repositories::workspaces::get_async(&repo, &workspace_identifier).await
+    {
         return Ok(HttpResponse::Ok().json(WorkspaceResponseView {
             status: StatusMessage::resource_found(),
             workspace: WorkspaceResponse {
@@ -125,7 +131,9 @@ pub async fn get_or_create(
         }));
     }
 
-    let commit = repositories::commits::get_by_id(&repo, &branch.commit_id)?.unwrap();
+    let commit = repositories::commits::get_by_id_async(&repo, &branch.commit_id)
+        .await?
+        .ok_or_else(|| OxenError::RevisionNotFound(branch.commit_id.as_str().into()))?;
 
     // Create the workspace
     let workspace = repositories::workspaces::create_with_name(
@@ -170,8 +178,8 @@ pub async fn get(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpEr
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -224,12 +232,12 @@ pub async fn list(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     log::debug!("workspaces::list got repo: {:?}", repo.path);
 
     // When filtering by name, use the indexed O(1) lookup instead of loading all workspaces
     let workspace_views: Vec<WorkspaceResponse> = if let Some(name) = &params.name {
-        match repositories::workspaces::get_by_name(&repo, name)? {
+        match repositories::workspaces::get_by_name_async(&repo, name).await? {
             Some(workspace) => vec![WorkspaceResponse {
                 id: workspace.id,
                 name: workspace.name,
@@ -239,7 +247,8 @@ pub async fn list(
             None => vec![],
         }
     } else {
-        repositories::workspaces::list(&repo)?
+        repositories::workspaces::list(&repo)
+            .await?
             .into_iter()
             .map(|workspace| WorkspaceResponse {
                 id: workspace.id,
@@ -275,7 +284,7 @@ pub async fn clear(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     // Clearing all workspaces is a destructive write; hold the whole-repo exclusive lock so no
     // write lands mid-clear. The sweep is synchronous IO, so it runs off the actix worker thread.
     let clear_repo = repo.clone();
@@ -310,14 +319,14 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    repositories::workspaces::delete(&workspace)?;
+    repositories::workspaces::delete_async(&workspace).await?;
 
     Ok(HttpResponse::Ok().json(WorkspaceResponseView {
         status: StatusMessage::resource_created(),
@@ -352,10 +361,10 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let branch_name = path_param(&req, "branch")?.to_string();
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
@@ -400,7 +409,8 @@ pub async fn mergeability(req: HttpRequest) -> Result<HttpResponse, OxenHttpErro
         (status = 400, description = "Invalid request body"),
         (status = 404, description = "Workspace or branch not found"),
         (status = 409, description = "Conflict — a staged file also changed on the target branch since the workspace's base commit"),
-        (status = 422, description = "Unprocessable Entity — the commit failed for another reason")
+        (status = 422, description = "Unprocessable Entity — the commit failed for another reason"),
+        (status = 429, description = "Too Many Requests: another commit already holds this commit's id, or another write moved the branch while this commit was being written, so retry after the Retry-After delay")
     )
 )]
 pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
@@ -409,7 +419,7 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let branch_name = path_param(&req, "branch")?.to_string();
 
@@ -427,20 +437,20 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
         }
     };
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let branch = match repositories::branches::get_by_name(&repo, &branch_name) {
-        Ok(branch) => branch,
+    match repositories::branches::get_by_name_async(&repo, &branch_name).await {
+        Ok(_) => {}
         Err(OxenError::BranchNotFound(_)) => {
             return Ok(
                 HttpResponse::NotFound().json(StatusMessageDescription::not_found(branch_name))
             );
         }
         Err(e) => return Err(e.into()),
-    };
+    }
 
     match repositories::workspaces::commit(&workspace, &data, &branch_name).await {
         Ok(commit) => {
@@ -450,11 +460,18 @@ pub async fn commit(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
                 commit,
             }))
         }
+        Err(OxenError::WorkspaceNotFound(_)) => Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id))),
         Err(OxenError::WorkspaceBehind(workspace)) => {
+            // The 409 reports the branch head as of the conflict, not as of the request.
+            let branch = repositories::branches::get_by_name_async(&repo, &branch_name).await?;
             Err(OxenHttpError::WorkspaceBehind(Box::new(WorkspaceBranch {
                 workspace: *workspace.clone(),
                 branch,
             })))
+        }
+        Err(err @ (OxenError::CommitIdTaken(_) | OxenError::BranchHeadMismatch { .. })) => {
+            Err(err.into())
         }
         Err(err) => {
             // The 422 below already tells the caller they got this wrong, so `warn!` rather than

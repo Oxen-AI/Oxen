@@ -1,14 +1,18 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{create_user_from_options, file_stream_response, get_repo, get_repo_async};
-use crate::params::{app_data, parse_resource, parse_resource_async, path_param, query_param};
+use crate::params::{
+    app_data, parse_resource, parse_resource_async, path_param, query_param, request_relative_path,
+};
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
 use actix_multipart::{Field, MultipartError};
+use actix_web::http::Method;
 use actix_web::{HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use futures_util::TryStreamExt as _;
 use futures_util::future::LocalBoxFuture;
+use futures_util::stream;
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
@@ -24,7 +28,7 @@ use liboxen::util;
 use liboxen::util::fs::AtomicFile;
 use liboxen::view::{CommitResponse, StatusMessage};
 use serde::Deserialize;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::slice;
 use std::sync::Arc;
 use tokio::task::spawn_blocking;
@@ -239,6 +243,20 @@ pub async fn get(
     }
 
     log::debug!("did not hit the resize or thumbnail cache");
+
+    // HTTP/1 actix still polls a HEAD response's body to the end and discards it, so streaming
+    // the blob here would read the whole file (a full object download on S3) for nothing. Check
+    // the blob exists instead, so a missing one is the same error GET returns, and answer with
+    // GET's headers over an empty body.
+    if req.method() == Method::HEAD {
+        if !version_store.version_exists(&hash_str).await? {
+            return Err(OxenError::VersionStoreBlobMissing { hash: hash_str }.into());
+        }
+        return Ok(
+            file_stream_response(mime_type, &last_commit_id, Some(num_bytes))
+                .streaming(stream::empty::<Result<Bytes, std::io::Error>>()),
+        );
+    }
 
     // Stream the file
     let stream = version_store.get_version_stream(&hash_str).await?;
@@ -650,7 +668,7 @@ fn build_files_from_upload_parts(
 
             let temp_file = take_single_file_part(file_parts)?;
             Ok(vec![FileNew {
-                path: normalize_relative_upload_path(target_path, false, "target path")?,
+                path: request_relative_path(target_path, false, "target path")?,
                 contents: temp_file.contents.clone(),
                 user: user.clone(),
             }])
@@ -658,9 +676,9 @@ fn build_files_from_upload_parts(
         MultipartUploadMode::DirectoryFromFile => {
             let temp_file = take_single_file_part(file_parts)?;
             let normalized_target_dir =
-                normalize_relative_upload_path(target_path, true, "target directory")?;
+                request_relative_path(target_path, true, "target directory")?;
             let normalized_file_path =
-                normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
+                request_relative_path(&temp_file.path, false, "uploaded file")?;
             Ok(vec![FileNew {
                 path: normalized_target_dir.join(normalized_file_path),
                 contents: temp_file.contents.clone(),
@@ -669,12 +687,12 @@ fn build_files_from_upload_parts(
         }
         MultipartUploadMode::DirectoryFromFilesArray => {
             let normalized_target_dir =
-                normalize_relative_upload_path(target_path, true, "target directory")?;
+                request_relative_path(target_path, true, "target directory")?;
             files_array_parts
                 .iter()
                 .map(|temp_file| {
                     let normalized_file_path =
-                        normalize_relative_upload_path(&temp_file.path, false, "uploaded file")?;
+                        request_relative_path(&temp_file.path, false, "uploaded file")?;
                     Ok(FileNew {
                         path: normalized_target_dir.join(normalized_file_path),
                         contents: temp_file.contents.clone(),
@@ -690,43 +708,6 @@ fn take_single_file_part(file_part: Option<&TempFileNew>) -> Result<&TempFileNew
     file_part.ok_or_else(|| {
         OxenHttpError::BadRequest("Missing file data: expected one `file` part".into())
     })
-}
-
-fn normalize_relative_upload_path(
-    path: &Path,
-    allow_empty: bool,
-    path_label: &str,
-) -> Result<PathBuf, OxenHttpError> {
-    if path.is_absolute() {
-        return Err(OxenHttpError::BadRequest(
-            format!("Invalid {path_label}: absolute paths are not allowed").into(),
-        ));
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(part) => normalized.push(part),
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(OxenHttpError::BadRequest(
-                    format!(
-                        "Invalid {path_label}: path traversal is not allowed: {}",
-                        path.display()
-                    )
-                    .into(),
-                ));
-            }
-        }
-    }
-
-    if !allow_empty && normalized.as_os_str().is_empty() {
-        return Err(OxenHttpError::BadRequest(
-            format!("Invalid {path_label}: path cannot be empty").into(),
-        ));
-    }
-
-    Ok(normalized)
 }
 
 fn ensure_no_file_ancestors_in_tree(
@@ -799,7 +780,6 @@ async fn process_and_add_files(
 mod tests {
     use super::{
         MultipartUploadMode, build_files_from_upload_parts, ensure_no_file_ancestors_in_tree,
-        normalize_relative_upload_path,
     };
     use crate::errors::OxenHttpError;
     use crate::test;
@@ -808,7 +788,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use actix_multipart_test::MultiPartFormDataBuilder;
-    use actix_web::http::header;
+    use actix_web::http::header::{self, HeaderMap, HeaderName};
+    use actix_web::http::{Method, StatusCode};
     use actix_web::{App, body, web};
     use liboxen::view::CommitResponse;
 
@@ -1026,6 +1007,116 @@ mod tests {
 
         let resp = actix_web::test::call_service(&app, req).await;
         assert_eq!(resp.status(), actix_web::http::StatusCode::NOT_FOUND);
+
+        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
+        Ok(())
+    }
+
+    /// Send `method` to `uri` through the GET and HEAD routes `services::file` registers, and
+    /// return the status, headers and the whole body the handler produced.
+    async fn call_file_route(
+        sync_dir: &Path,
+        method: Method,
+        uri: &str,
+    ) -> (StatusCode, HeaderMap, web::Bytes) {
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::get().to(controllers::file::get),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::head().to(controllers::file::get),
+                ),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::default()
+            .method(method)
+            .uri(uri)
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = actix_http::body::to_bytes(resp.into_body())
+            .await
+            .expect("the handler's response body should collect");
+        (status, headers, body)
+    }
+
+    // HEAD answers with GET's status and headers for a file, a missing path and a directory, and
+    // never streams the blob: its body is empty where GET's carries the file. It still checks the
+    // blob is present, so a tree entry whose blob is gone is the same 5xx GET reports.
+    #[actix_web::test]
+    async fn test_controllers_file_head_matches_get_without_body() -> Result<(), OxenError> {
+        liboxen::test::init_test_env();
+        let sync_dir = test::get_sync_dir()?;
+        let namespace = "Testing-Namespace";
+        let repo_name = "Testing-Head-Matches-Get";
+        let repo = test::create_local_repo(&sync_dir, namespace, repo_name)?;
+
+        util::fs::create_dir_all(repo.path.join("data"))?;
+        let hello_file = repo.path.join("data/hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(&repo, &hello_file).await?;
+        let commit = repositories::commit(&repo, "First commit")?;
+
+        let revision_header = HeaderName::from_static("oxen-revision-id");
+        for (path, expected) in [
+            ("data/hello.txt", StatusCode::OK),
+            ("data/missing.txt", StatusCode::NOT_FOUND),
+            ("data", StatusCode::NOT_FOUND),
+        ] {
+            let uri = format!("/oxen/{namespace}/{repo_name}/file/main/{path}");
+            let (get_status, get_headers, get_body) =
+                call_file_route(&sync_dir, Method::GET, &uri).await;
+            let (head_status, head_headers, head_body) =
+                call_file_route(&sync_dir, Method::HEAD, &uri).await;
+
+            assert_eq!(get_status, expected, "GET {path}");
+            assert_eq!(head_status, get_status, "HEAD {path}");
+            for name in [
+                header::CONTENT_TYPE,
+                header::CONTENT_LENGTH,
+                header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                revision_header.clone(),
+            ] {
+                assert_eq!(
+                    head_headers.get(&name),
+                    get_headers.get(&name),
+                    "{name} {path}"
+                );
+            }
+            if expected == StatusCode::OK {
+                assert_eq!(
+                    get_headers
+                        .get(header::CONTENT_LENGTH)
+                        .expect("GET of a file should send its content length"),
+                    "5"
+                );
+                assert!(get_headers.contains_key(&revision_header));
+                assert_eq!(get_body, "Hello");
+                assert!(head_body.is_empty(), "HEAD streamed {head_body:?}");
+            }
+        }
+
+        let entry =
+            repositories::entries::get_file(&repo, &commit, PathBuf::from("data/hello.txt"))?
+                .expect("committed file should be in the tree");
+        let hash = entry.hash().to_string();
+        repo.version_store().delete_version(&hash).await?;
+        let uri = format!("/oxen/{namespace}/{repo_name}/file/main/data/hello.txt");
+        let (status, _, body) = call_file_route(&sync_dir, Method::HEAD, &uri).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "HEAD after blob loss"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&body).expect("an error response should carry a JSON body");
+        assert_eq!(body["error"]["type"], "version_blob_missing");
+        assert_eq!(body["error"]["hash"], hash);
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
@@ -1418,33 +1509,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_normalize_relative_upload_path_collapses_current_dir_components() {
-        let normalized =
-            normalize_relative_upload_path(Path::new("./pages/./home"), true, "target directory")
-                .unwrap();
-
-        assert_eq!(normalized, PathBuf::from("pages/home"));
-    }
-
-    #[test]
-    fn test_normalize_relative_upload_path_rejects_parent_dir_components() {
-        let err =
-            normalize_relative_upload_path(Path::new("../../outside.txt"), false, "uploaded file")
-                .unwrap_err();
-
-        assert!(matches!(err, OxenHttpError::BadRequest(_)));
-    }
-
-    #[test]
-    fn test_normalize_relative_upload_path_rejects_absolute_paths() {
-        let err =
-            normalize_relative_upload_path(Path::new("/tmp/outside.txt"), false, "uploaded file")
-                .unwrap_err();
-
-        assert!(matches!(err, OxenHttpError::BadRequest(_)));
-    }
-
     #[actix_web::test]
     async fn test_controllers_file_put_empty_repo_rejects_target_outside_repo()
     -> Result<(), OxenError> {
@@ -1488,6 +1552,31 @@ mod tests {
         let put_resp = actix_web::test::call_service(&app, put_req).await;
         assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
         assert!(!sync_dir.join("escaped.txt").exists());
+
+        let config_path = repo.path.join(".oxen").join("config.toml");
+        let config_before = std::fs::read(&config_path)?;
+        let mut multipart_form_data_builder = MultiPartFormDataBuilder::new();
+        multipart_form_data_builder.with_file(
+            repo.path.join("payload.txt"),
+            "file",
+            "text/plain",
+            "payload.txt",
+        );
+        let (header, body) = multipart_form_data_builder.build();
+        let put_req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/file/main/.OXEN/config.toml"
+            ))
+            .insert_header(header)
+            .set_payload(body)
+            .to_request();
+        let put_resp = actix_web::test::call_service(&app, put_req).await;
+        assert_eq!(put_resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            std::fs::read(&config_path)?,
+            config_before,
+            "a target inside .oxen leaves the repository's metadata alone"
+        );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())

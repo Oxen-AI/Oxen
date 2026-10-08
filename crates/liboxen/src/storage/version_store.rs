@@ -154,7 +154,7 @@ impl std::str::FromStr for StorageKind {
 /// value is promoted into `versions_path` on load. Any path — new or legacy — is
 /// re-emitted as `versions_path` in `[storage]`; `[storage.settings]` goes away on
 /// the first save after upgrade.
-#[derive(Serialize, Debug, Clone, Default)]
+#[derive(Serialize, Debug, Clone, Default, PartialEq, Eq)]
 pub struct StorageConfig {
     pub kind: StorageKind,
     /// For the "local" backend, the directory where version files are stored. If `None`,
@@ -503,14 +503,15 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
 
 /// Build a `VersionStore` for the given repo according to its persisted `StorageConfig`.
 ///
-/// `server_s3_opts` is the server-wide S3 configuration (bucket name). It must be `Some`
-/// whenever `config.kind == StorageKind::S3`; CLI and test paths pass `None` because they never
-/// run with the S3 backend enabled. The S3 prefix is `repo/<repo_uuid>`, built from the repo's UUID
-/// in its identity and never written to per-repo config, so the server can rotate buckets
-/// without rewriting every repo, and the prefix stays put when the repo's directory moves.
+/// `server_s3_opts` is the server-wide S3 configuration (bucket name). Without it, an S3 repo's
+/// store fails every operation with [`OxenError::S3BackendMissingServerOpts`], so the repo can
+/// still be opened for its config and tree. The S3 prefix is `repo/<repo_uuid>`, built from the
+/// repo's UUID in its identity and never written to per-repo config, so the server can rotate
+/// buckets without rewriting every repo, and the prefix stays put when the repo's directory moves.
 ///
 /// # Errors
-/// [`OxenError::S3RepoWithoutIdentity`] when an S3-backed repo has no `repo_uuid`.
+/// [`OxenError::S3RepoWithoutIdentity`] when an S3-backed repo given `server_s3_opts` has no
+/// `repo_uuid`.
 pub fn create_version_store(
     repo_dir: &Path,
     config: &StorageConfig,
@@ -536,13 +537,155 @@ pub fn create_version_store(
             Ok(Arc::new(store))
         }
         StorageKind::S3 => {
-            let opts = server_s3_opts.ok_or(OxenError::S3BackendMissingServerOpts)?;
+            let Some(opts) = server_s3_opts else {
+                return Ok(Arc::new(UnconfiguredS3VersionStore));
+            };
             let repo_uuid =
                 repo_uuid.ok_or_else(|| OxenError::S3RepoWithoutIdentity(repo_dir.into()))?;
             let prefix = format!("repo/{repo_uuid}");
             let store = S3VersionStore::new(opts.bucket.clone(), opts.region.clone(), prefix);
             Ok(Arc::new(store))
         }
+    }
+}
+
+/// The version store of an S3 repo opened without the server's S3 opts. Every operation fails with
+/// [`OxenError::S3BackendMissingServerOpts`].
+#[derive(Debug)]
+struct UnconfiguredS3VersionStore;
+
+#[async_trait]
+impl VersionStore for UnconfiguredS3VersionStore {
+    async fn init(&self) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn store_version_from_reader(
+        &self,
+        _hash: &str,
+        _reader: Box<dyn AsyncRead + Send + Unpin>,
+        _size: u64,
+    ) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn store_version(&self, _hash: &str, _data: Bytes) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn store_version_chunk(
+        &self,
+        _hash: &str,
+        _offset: u64,
+        _data: Bytes,
+    ) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn store_version_derived(
+        &self,
+        _orig_hash: &str,
+        _derived_filename: &str,
+        _derived_data: Bytes,
+    ) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_chunk(
+        &self,
+        _hash: &str,
+        _offset: u64,
+        _size: u64,
+    ) -> Result<Vec<u8>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn list_version_chunks(&self, _hash: &str) -> Result<Vec<u64>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn combine_version_chunks(&self, _hash: &str) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_size(&self, _hash: &str) -> Result<u64, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version(&self, _hash: &str) -> Result<Vec<u8>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_stream(&self, _hash: &str) -> Result<BoxedByteStream, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_derived_size(
+        &self,
+        _orig_hash: &str,
+        _derived_filename: &str,
+    ) -> Result<u64, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_derived_stream(
+        &self,
+        _orig_hash: &str,
+        _derived_filename: &str,
+    ) -> Result<BoxedByteStream, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn derived_version_exists(
+        &self,
+        _orig_hash: &str,
+        _derived_filename: &str,
+    ) -> Result<bool, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn version_location(&self, _hash: &str) -> Result<VersionLocation, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn copy_version_to_path(
+        &self,
+        _hash: &str,
+        _dest_path: &Path,
+        _mtime: SystemTime,
+    ) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn version_exists(&self, _hash: &str) -> Result<bool, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn find_missing_versions(&self, _hashes: &[String]) -> Result<Vec<String>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn delete_version(&self, _hash: &str) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn destroy(&self) -> Result<(), OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn clean_corrupted_versions(
+        &self,
+        _dry_run: bool,
+    ) -> Result<CleanCorruptedVersionsResult, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    fn storage_kind(&self) -> StorageKind {
+        StorageKind::S3
     }
 }
 
@@ -558,15 +701,21 @@ mod tests {
         }
     }
 
-    /// The S3 branch requires server opts. `None` is the runtime tripwire for callers that
-    /// somehow built an S3-shaped `StorageConfig` without going through `StoragePolicy::resolve()`.
-    #[test]
-    fn create_version_store_s3_without_server_opts_errors() {
+    #[tokio::test]
+    async fn create_version_store_s3_without_server_opts_fails_its_operations() {
         let repo_dir = PathBuf::from("/srv/oxen/test-ns/test-repo");
-        let result = create_version_store(&repo_dir, &s3_config(), Some(Uuid::new_v4()), None);
+        let store = create_version_store(&repo_dir, &s3_config(), None, None)
+            .expect("an S3 store builds without server opts, and without an identity");
+        assert_eq!(store.storage_kind(), StorageKind::S3);
+        let result = store.version_exists("abc").await;
         assert!(
             matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
             "expected S3BackendMissingServerOpts, got {result:?}",
+        );
+        let result = store.find_missing_versions(&[]).await;
+        assert!(
+            matches!(result, Err(OxenError::S3BackendMissingServerOpts)),
+            "even a probe of no versions fails, got {result:?}",
         );
     }
 

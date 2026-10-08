@@ -43,6 +43,7 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::size())
                 .service(services::schemas())
                 .service(services::stats())
+                .service(services::storage())
                 .service(services::tabular())
                 .service(services::transfer())
                 .service(services::tree())

@@ -1,14 +1,16 @@
 use bytes::BytesMut;
+use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::Mutex;
 use reqwest::Client;
 use reqwest::header::HeaderValue;
 use reqwest::redirect;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::IpAddr;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
@@ -610,6 +612,11 @@ async fn fetch_file(
             "Could not determine a valid filename for {url}"
         )));
     }
+    if util::fs::is_oxen_hidden_dir_name(OsStr::new(&filename)) {
+        return Err(OxenError::file_import_error(format!(
+            "Cannot import {url} as {filename}, which names a .oxen directory"
+        )));
+    }
 
     let is_zip = content_type.contains("zip");
 
@@ -759,7 +766,18 @@ pub async fn save_stream(
     Ok(full_dir)
 }
 
+/// Extracts the archive into the directory that holds it, then removes the archive whether or not
+/// extraction succeeded.
 pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError> {
+    let extracted = extract_zip(zip_filepath);
+    log::debug!("files::decompress_zip removing zip file: {zip_filepath:?}");
+    let removed = std::fs::remove_file(zip_filepath);
+    let files = extracted?;
+    removed?;
+    Ok(files)
+}
+
+fn extract_zip(zip_filepath: &Path) -> Result<Vec<PathBuf>, OxenError> {
     // File unzipped into the same directory
     let mut files: Vec<PathBuf> = vec![];
     let file = File::open(zip_filepath)?;
@@ -772,6 +790,9 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         let zip_file = archive.by_index(i).map_err(|e| {
             OxenError::basic_str(format!("Failed to access zip file at index {i}: {e}"))
         })?;
+
+        // Refuse the whole archive before anything is written if any entry would be refused.
+        util::fs::normalize_relative_path(&zip_file.mangled_name())?;
 
         let uncompressed_size = zip_file.size();
         let compressed_size = zip_file.compressed_size();
@@ -829,7 +850,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         }
 
         // Validate path components to prevent directory traversal
-        let safe_path = sanitize_path(&zipfile_name)?;
+        let safe_path = util::fs::normalize_relative_path(&zipfile_name)?;
         let outpath = parent.join(&safe_path);
 
         // Verify the final path is within the parent directory
@@ -863,32 +884,7 @@ pub fn decompress_zip(zip_filepath: &PathBuf) -> Result<Vec<PathBuf>, OxenError>
         files.push(outpath.clone());
     }
 
-    log::debug!("files::decompress_zip removing zip file: {zip_filepath:?}");
-
-    // remove the zip file after decompress
-    std::fs::remove_file(zip_filepath)?;
-
     Ok(files)
-}
-
-// Helper function to sanitize path and prevent directory traversal
-fn sanitize_path(path: &PathBuf) -> Result<PathBuf, OxenError> {
-    let mut components = Vec::new();
-
-    for component in path.components() {
-        match component {
-            Component::Normal(c) => components.push(c),
-            Component::CurDir => {} // Skip current directory components (.)
-            Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
-                return Err(OxenError::basic_str(format!(
-                    "Invalid path component in zip file: {path:?}"
-                )));
-            }
-        }
-    }
-
-    let safe_path = components.iter().collect::<PathBuf>();
-    Ok(safe_path)
 }
 
 async fn p_add_file(
@@ -1044,6 +1040,10 @@ fn p_modify_file(
         return Err(OxenError::basic_str("file not found in head commit"));
     };
     file_node.set_name(path.to_str().unwrap());
+    // Stamping each edit's time changes the staged node, so a commit that read it before this edit
+    // leaves the path staged for the next commit.
+    let edited_at = FileTime::now();
+    file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
     log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;

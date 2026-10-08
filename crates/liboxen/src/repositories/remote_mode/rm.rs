@@ -423,7 +423,7 @@ mod tests {
                 let files_in_tree =
                     repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?;
                 let prev_files = files_in_tree.len();
-                let dirs_in_tree = repositories::tree::list_all_dirs(&commit_root)?;
+                let (_, dirs_in_tree) = repositories::tree::list_files_and_dirs(&commit_root)?;
                 let prev_dirs = dirs_in_tree.len();
 
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
@@ -468,7 +468,7 @@ mod tests {
 
                 let files_in_tree =
                     repositories::tree::list_all_files(&commit_root, &PathBuf::from("."))?;
-                let dirs_in_tree = repositories::tree::list_all_dirs(&commit_root)?;
+                let (_, dirs_in_tree) = repositories::tree::list_files_and_dirs(&commit_root)?;
 
                 // 6 files were removed
                 assert_eq!(files_in_tree.len(), prev_files - 6);

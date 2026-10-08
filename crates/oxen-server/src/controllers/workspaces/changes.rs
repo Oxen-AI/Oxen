@@ -1,11 +1,12 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::get_repo_async;
 use crate::params::{PageNumQuery, app_data, path_param};
+use crate::tasks;
 
 use liboxen::constants;
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
-use liboxen::model::LocalRepository;
+use liboxen::error::OxenError;
 use liboxen::model::Workspace;
 use liboxen::repositories;
 use liboxen::util;
@@ -16,7 +17,7 @@ use liboxen::view::{
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// List staged changes in a workspace
 #[utoipa::path(
@@ -47,7 +48,7 @@ pub async fn list_root(
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let page_num = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
     if page_size == 0 {
@@ -57,26 +58,12 @@ pub async fn list_root(
     }
 
     log::debug!("/changes looking up workspace_id: {workspace_id}");
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         log::debug!("/changes could not find workspace_id: {workspace_id}");
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    let path = PathBuf::from(".");
-    let staged = repositories::workspaces::status::status_from_dir(&workspace, &path)?;
-
-    staged.print();
-
-    let response = RemoteStagedStatusResponse {
-        status: StatusMessage::resource_found(),
-        staged: RemoteStagedStatus::from_staged(
-            &workspace.workspace_repo,
-            &staged,
-            page_num,
-            page_size,
-        ),
-    };
-    Ok(HttpResponse::Ok().json(response))
+    staged_status_response(workspace, Path::new("."), page_num, page_size).await
 }
 
 /// List staged changes under a directory in a workspace
@@ -109,7 +96,7 @@ pub async fn list(
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
     log::debug!("/changes looking up repo: {namespace}/{repo_name}");
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let path = PathBuf::from(path_param(&req, "path")?);
     let page_num = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
@@ -120,23 +107,33 @@ pub async fn list(
     }
 
     log::debug!("/changes looking up workspace_id: {workspace_id}");
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         log::debug!("/changes could not find workspace_id: {workspace_id}");
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
-    let staged = repositories::workspaces::status::status_from_dir(&workspace, &path)?;
+    staged_status_response(workspace, &path, page_num, page_size).await
+}
+
+/// The page of `workspace`'s staged changes under `path`, as the changes endpoints answer it.
+async fn staged_status_response(
+    workspace: Workspace,
+    path: &Path,
+    page_num: usize,
+    page_size: usize,
+) -> actix_web::Result<HttpResponse, OxenHttpError> {
+    let staged = repositories::workspaces::status::status_from_dir_async(&workspace, path).await?;
 
     staged.print();
 
+    let staged = tasks::spawn_blocking(move || {
+        RemoteStagedStatus::from_staged(&workspace.workspace_repo, &staged, page_num, page_size)
+    })
+    .await
+    .map_err(OxenError::from)?;
     let response = RemoteStagedStatusResponse {
         status: StatusMessage::resource_found(),
-        staged: RemoteStagedStatus::from_staged(
-            &workspace.workspace_repo,
-            &staged,
-            page_num,
-            page_size,
-        ),
+        staged,
     };
     Ok(HttpResponse::Ok().json(response))
 }
@@ -163,16 +160,28 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     let path = PathBuf::from(path_param(&req, "path")?);
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    unstage_from_workspace(&repo, &workspace, &path).await
+    // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
+    if util::fs::is_tabular(&path) {
+        repositories::workspaces::data_frames::restore(&repo, &workspace, &path).await?;
+        return Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()));
+    }
+    let unstaged = tasks::spawn_blocking(move || unstage_file(&workspace, &path))
+        .await
+        .map_err(OxenError::from)??;
+    if unstaged {
+        Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
+    } else {
+        Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
+    }
 }
 
 /// Unstage files
@@ -205,37 +214,61 @@ pub async fn unstage_many(
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
-    let repo = get_repo(app_data, namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
     log::debug!("unstage_many found repo {repo_name}, workspace_id {workspace_id}");
 
-    let Some(workspace) = repositories::workspaces::get(&repo, &workspace_id)? else {
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
     let paths_to_remove: Vec<PathBuf> = payload.into_inner();
 
-    let mut err_paths = vec![];
-
-    for path in paths_to_remove {
-        let is_staged = get_staged_db_manager(&workspace.workspace_repo)?
-            .read_from_staged_db(&path)?
-            .is_some();
-
-        if !is_staged {
-            continue;
-        }
-
-        match unstage_from_workspace(&repo, &workspace, &path).await {
-            // Note: we can't delete the version file here because it may be
-            // referenced elsewhere. In order to cleanup eagerly here we would
-            // need the staged DB to track whether the version was newly added
-            // or already existed.
-            Ok(_) => {}
-            Err(e) => {
+    // Note: we can't delete the version file here because it may be
+    // referenced elsewhere. In order to cleanup eagerly here we would
+    // need the staged DB to track whether the version was newly added
+    // or already existed.
+    let pass_workspace = workspace.clone();
+    let leftovers = tasks::spawn_blocking(move || -> Result<Vec<Leftover>, OxenError> {
+        // One handle for the whole pass, which the unstages below share rather than reopen.
+        let staged_db = get_staged_db_manager(&pass_workspace.workspace_repo)?;
+        let mut leftovers = vec![];
+        for path in paths_to_remove {
+            match staged_db.read_from_staged_db(&path) {
+                Ok(Some(_)) => {}
+                Ok(None) => continue,
+                Err(e) => {
+                    tracing::error!(path = ?path, error = ?e, "Failed to read a staged entry");
+                    leftovers.push(Leftover::Failed(path));
+                    continue;
+                }
+            }
+            // This may not be in the commit if it's added, so have to parse tabular-ness from
+            // the path.
+            if util::fs::is_tabular(&path) {
+                leftovers.push(Leftover::DataFrame(path));
+            } else if let Err(e) = unstage_file(&pass_workspace, &path) {
                 log::debug!("Failed to unstage file {path:?}: {e:?}");
-                err_paths.push(path);
+                leftovers.push(Leftover::Failed(path));
+            }
+        }
+        Ok(leftovers)
+    })
+    .await
+    .map_err(OxenError::from)??;
+
+    let mut err_paths = vec![];
+    for leftover in leftovers {
+        match leftover {
+            Leftover::Failed(path) => err_paths.push(path),
+            Leftover::DataFrame(path) => {
+                if let Err(e) =
+                    repositories::workspaces::data_frames::restore(&repo, &workspace, &path).await
+                {
+                    log::debug!("Failed to unstage file {path:?}: {e:?}");
+                    err_paths.push(path);
+                }
             }
         }
     }
@@ -250,19 +283,19 @@ pub async fn unstage_many(
     }
 }
 
-async fn unstage_from_workspace(
-    repo: &LocalRepository,
-    workspace: &Workspace,
-    path: &PathBuf,
-) -> Result<HttpResponse, OxenHttpError> {
-    // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
-    if util::fs::is_tabular(path) {
-        repositories::workspaces::data_frames::restore(repo, workspace, path).await?;
-        Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
-    } else if repositories::workspaces::files::exists(workspace, path)? {
-        repositories::workspaces::files::unstage(workspace, path)?;
-        Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
-    } else {
-        Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
+/// A staged path the blocking pass of `unstage_many` left unfinished, in request order.
+enum Leftover {
+    /// A file whose staged entry could not be read, or whose unstage failed.
+    Failed(PathBuf),
+    /// A data frame, restored on the async side.
+    DataFrame(PathBuf),
+}
+
+/// Unstage the non-tabular file at `path`, or `false` if the workspace has nothing staged there.
+fn unstage_file(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
+    if !repositories::workspaces::files::exists(workspace, path)? {
+        return Ok(false);
     }
+    repositories::workspaces::files::unstage(workspace, path)?;
+    Ok(true)
 }

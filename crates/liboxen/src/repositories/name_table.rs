@@ -6,6 +6,7 @@
 //! entry and is reachable by UUID alone.
 
 use std::path::{Path, PathBuf};
+use std::str;
 
 use bytesize::ByteSize;
 use uuid::Uuid;
@@ -58,6 +59,48 @@ impl NameTable {
         self.read(|db, txn| match db.get(txn, &key(namespace, name))? {
             Some(recorded) => Ok(Some(parse_uuid(&recorded, namespace, name)?)),
             None => Ok(None),
+        })
+    }
+
+    /// The namespaces the table records a repository under, lowercased, in name order.
+    pub(crate) fn namespaces(&self) -> Result<Vec<String>, OxenError> {
+        self.read(|db, txn| {
+            let mut namespaces: Vec<String> = vec![];
+            for key in db.iter_keys(txn)? {
+                let key = key?;
+                // The table's own entries start with NUL, which no recorded name can.
+                if key.first() == Some(&0) {
+                    continue;
+                }
+                let Some(separator) = key.iter().position(|&byte| byte == b'/') else {
+                    return Err(OxenError::internal_error(format!(
+                        "Name table key {:?} holds no namespace and name",
+                        String::from_utf8_lossy(key)
+                    )));
+                };
+                let namespace = str::from_utf8(&key[..separator]).map_err(|err| {
+                    OxenError::internal_error(format!("A name table key's namespace: {err}"))
+                })?;
+                // Keys sort by namespace first, so one namespace's entries are adjacent.
+                if namespaces.last().map(String::as_str) != Some(namespace) {
+                    namespaces.push(namespace.to_string());
+                }
+            }
+            Ok(namespaces)
+        })
+    }
+
+    /// The UUIDs of the repositories recorded under `namespace`, in name order.
+    pub(crate) fn uuids_in_namespace(&self, namespace: &str) -> Result<Vec<Uuid>, OxenError> {
+        let prefix = key(namespace, "");
+        self.read(|db, txn| {
+            db.prefix_iter(txn, &prefix)?
+                .map(|entry| {
+                    let (key, recorded) = entry?;
+                    let name = String::from_utf8_lossy(&key[prefix.len()..]);
+                    parse_uuid(recorded, namespace, &name)
+                })
+                .collect()
         })
     }
 
@@ -276,6 +319,12 @@ mod tests {
             // move below a conflict rather than a rename.
             let impostor = Uuid::new_v4();
             table.claim("cow", "cats", impostor)?;
+            assert_eq!(table.uuids_in_namespace("COW")?, vec![impostor]);
+            assert_eq!(table.uuids_in_namespace("ox")?, vec![cats]);
+            assert!(
+                table.uuids_in_namespace("co")?.is_empty(),
+                "a namespace whose name begins another's holds none of that one's repositories"
+            );
             let err = table
                 .move_to_namespace("ox", "cats", "cow", cats)
                 .expect_err("a name the destination holds refuses the move");

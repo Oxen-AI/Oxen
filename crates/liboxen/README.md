@@ -217,7 +217,7 @@ docker load -i result
 
 # Unit & Integration Tests
 
-`bin/test-rust` is the standard, supported way to run the tests — see [Automatic Test Setup](#automatic-test-setup). It builds the workspace, raises the file-handle limit, provisions a ramdisk, starts an `oxen-server`, exports the environment the tests expect, runs `cargo test`, and tears everything down. Prefer it. Running `cargo test` directly (the [Manual Test Setup](#manual-test-setup) below) is supported only once you have reproduced that same setup by hand; `bin/test-rust` remains the source of truth for the full environment, so without it some tests fail or behave differently.
+`bin/test` is the standard, supported way to run the tests — see [Automatic Test Setup](#automatic-test-setup). It builds the workspace, raises the file-handle limit, provisions a ramdisk, starts an `oxen-server`, exports the environment the tests expect, runs `cargo test`, and tears everything down. Prefer it. Running `cargo test` directly (the [Manual Test Setup](#manual-test-setup) below) is supported only once you have reproduced that same setup by hand; `bin/test` remains the source of truth for the full environment, so without it some tests fail or behave differently.
 
 ## Manual Test Setup
 
@@ -246,34 +246,34 @@ cargo test --workspace -- --test-threads=$(getconf _NPROCESSORS_ONLN)
 
 ## Automatic Test Setup
 
-You can use [bin/test-rust](../../bin/test-rust) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Arguments after `test-rust`'s own flags are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
+You can use [bin/test](../../bin/test) to run tests. It will set up config files, build and run an oxen-server, run the tests against it, and shutdown the server. Arguments after `bin/test`'s own flags are forwarded after `--` to the libtest binaries, so you can use it to run specific tests or set test threads.
 
 ```bash
-bin/test-rust
+bin/test
 ```
 
 It can be faster (in terms of compilation and runtime) to run a specific test. To run a specific library test:
 
 ```bash
-bin/test-rust --lib test_get_metadata_text_readme
+bin/test --lib test_get_metadata_text_readme
 ```
 
 To run with all debug output and run a specific test
 
 ```bash
-env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test-rust --no-capture test_command_push_clone_pull_push
+env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test --no-capture test_command_push_clone_pull_push
 ```
 
 To see how long each test takes, pass `--timings`. Plain `cargo test` reports only one total per test binary. Doctests are skipped.
 
 ```bash
-bin/test-rust --timings repositories::rm
+bin/test --timings repositories::rm
 ```
 
 To explicitly set the port for the `oxen-server` used in tests, set `OXEN_PORT`:
 
 ```bash
-env OXEN_PORT=4000 bin/test-rust
+env OXEN_PORT=4000 bin/test
 ```
 
 
@@ -308,13 +308,13 @@ curl -X POST -d '{"name": "MyRepo"}' "http://$SERVER/api/repos"
 Create the docker image
 
 ```bash
-docker build -t oxen/server:0.59.0 .
+docker build -t oxen/server:0.62.0 .
 ```
 
 Run a container on port 3000 with a local filesystem mounted from /var/oxen/data on the host to /var/oxen/data in the container.
 
 ```bash
-docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.59.0
+docker run -d -v /var/oxen/data:/var/oxen/data -p 3000:3001 --name oxen oxen/server:0.62.0
 ```
 
 Or use docker compose
@@ -356,7 +356,7 @@ cargo build --workspace --all-features
 ```
 
 On Linux, run `bin/install-prereqs` — apt ships an older FFmpeg, so it installs a pinned FFmpeg 9
-build under `/opt/ffmpeg`. Build the feature through `bin/test-rust --ffmpeg` (which points
+build under `/opt/ffmpeg`. Build the feature through `bin/test --ffmpeg` (which points
 pkg-config at that prefix), or set `PKG_CONFIG_PATH` yourself:
 
 ```bash
