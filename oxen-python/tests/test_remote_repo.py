@@ -3,7 +3,9 @@ import pytest
 import uuid
 from pathlib import PurePath
 from typing import Tuple
+from urllib.parse import urlparse
 from oxen import Repo, RemoteRepo
+from oxen.remote_repo import create_repo
 
 
 def test_remote_repo_exists(empty_remote_repo):
@@ -144,3 +146,21 @@ def test_remote_repo_identity_needs_the_repo_to_exist(uncreated_remote_repo):
         uncreated_remote_repo.repo_uuid
     with pytest.raises(ValueError, match=r"does not exist"):
         uncreated_remote_repo.storage_backend
+
+    url = urlparse(uncreated_remote_repo.url)
+    created = create_repo(
+        uncreated_remote_repo.identifier,
+        host=url.netloc,
+        scheme=url.scheme,
+        files=[("README.md", "seeded\n")],
+    )
+    try:
+        found = RemoteRepo(
+            uncreated_remote_repo.identifier, host=url.netloc, scheme=url.scheme
+        )
+        assert found.repo_uuid == created.repo_uuid, (
+            "a repository created with seed files exists on the host it was created for"
+        )
+        assert found.get_file("README.md") == b"seeded\n"
+    finally:
+        created.delete()

@@ -1341,7 +1341,8 @@ mod tests {
             let name: &str = "test-repo-name";
 
             // A client can send `"files": []`, which must behave like sending no files at all.
-            let repo_new = RepoNew::from_files(namespace, name, vec![], None);
+            let repo_new =
+                RepoNew::from_files(namespace, name, constants::DEFAULT_HOST, vec![], None);
             let repo =
                 repositories::create(&sync_dir, repo_new, server_identity(namespace, name), None)
                     .await?;
@@ -1380,6 +1381,7 @@ mod tests {
             let repo_new = RepoNew::from_files(
                 namespace,
                 name,
+                constants::DEFAULT_HOST,
                 vec![file("README"), file("README/inner")],
                 None,
             );
@@ -1399,7 +1401,7 @@ mod tests {
             );
 
             // The same name and UUID again, both of which the failed create has freed.
-            let repo_new = RepoNew::from_files(namespace, name, vec![file("README")], None);
+            let repo_new = RepoNew::from_files(namespace, name, constants::DEFAULT_HOST, vec![file("README")], None);
             let _repo = repositories::create(&sync_dir, repo_new, identity, None).await?;
             assert!(repo_path.exists());
 

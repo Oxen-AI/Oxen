@@ -174,8 +174,7 @@ Happy Mooooooving of data 🐂
                 contents: FileContents::Text(format!("# {name}\n{readme_body}")),
                 user,
             }];
-            let mut repo = RepoNew::from_files(namespace, name, files, storage_kind);
-            repo.host = Some(host);
+            let mut repo = RepoNew::from_files(namespace, name, &host, files, storage_kind);
             repo.is_public = Some(is_public);
             repo.scheme = Some(scheme);
 

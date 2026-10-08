@@ -623,8 +623,8 @@ mod tests {
                 contents: FileContents::Text(String::from("Hello world!")),
                 user,
             }];
-            let mut repo_new = RepoNew::from_files(namespace, &name, files, None);
-            repo_new.host = Some(test::test_host());
+            let mut repo_new =
+                RepoNew::from_files(namespace, &name, &test::test_host(), files, None);
             repo_new.scheme = Some("http".to_string());
             let repository = api::client::repositories::create(repo_new).await?;
             println!("got repository: {repository:?}");

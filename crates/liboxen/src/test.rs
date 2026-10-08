@@ -919,8 +919,7 @@ where
         contents: FileContents::Text(format!("# {}\n", name)),
         user: user.clone(),
     }];
-    let mut repo = RepoNew::from_files(namespace, &name, files, None);
-    repo.host = Some(test_host());
+    let mut repo = RepoNew::from_files(namespace, &name, &test_host(), files, None);
     repo.is_public = Some(true);
     repo.scheme = Some("http".to_string());
     let remote_repo = api::client::repositories::create(repo).await?;

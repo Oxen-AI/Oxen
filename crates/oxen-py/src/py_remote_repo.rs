@@ -205,9 +205,13 @@ impl PyRemoteRepo {
                         contents: FileContents::Text(format!("# {}\n", self.name)),
                         user: user.clone(),
                     }];
-                    let mut repo =
-                        RepoNew::from_files(&self.namespace, &self.name, files, storage_kind);
-                    repo.host = Some(self.host.clone());
+                    let mut repo = RepoNew::from_files(
+                        &self.namespace,
+                        &self.name,
+                        &self.host,
+                        files,
+                        storage_kind,
+                    );
                     repo.is_public = Some(is_public);
                     repo.scheme = Some(self.scheme.clone());
                     let repo = api::client::repositories::create(repo).await?;
