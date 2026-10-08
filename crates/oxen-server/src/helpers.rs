@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::pin::Pin;
+use std::panic;
 use std::time::Duration;
 
 use actix_web::http::header;
@@ -12,7 +12,8 @@ use liboxen::model::{LocalRepository, User};
 use liboxen::repositories;
 use liboxen::view::StatusMessage;
 use serde::Serialize;
-use tokio::time::{Interval, interval};
+use tokio::task::JoinHandle;
+use tokio::time::{Instant, Interval, interval_at};
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
@@ -113,6 +114,8 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
 /// captures (`'static`); resolve the repo and read the request body before calling this so those
 /// failures still return a real error status.
 ///
+/// `work` runs to completion even when the client goes away before reading the body.
+///
 /// Call from the request handler, not from another task — `work` inherits the calling thread's
 /// crash-reporting context, and a panic inside it reports under that request.
 pub fn stream_with_heartbeat<F, T>(work: F) -> HttpResponse
@@ -129,15 +132,18 @@ where
     F: Future<Output = Result<T, OxenError>> + 'static,
     T: Serialize + 'static,
 {
-    enum State<F> {
-        Running { work: Pin<Box<F>>, ticker: Interval },
+    enum State<T> {
+        Running {
+            work: JoinHandle<Result<T, OxenError>>,
+            ticker: Interval,
+        },
         Done,
     }
 
     let body = stream::unfold(
         State::Running {
-            work: Box::pin(tasks::inherit_hub(work)),
-            ticker: interval(heartbeat_interval),
+            work: actix_web::rt::spawn(tasks::inherit_hub(work)),
+            ticker: interval_at(Instant::now() + heartbeat_interval, heartbeat_interval),
         },
         |state| async move {
             let State::Running {
@@ -147,11 +153,13 @@ where
             else {
                 return None;
             };
-            // Poll the work first: a fast (or already-failed) operation returns its result on the
-            // first step with no heartbeat; otherwise emit a newline and keep waiting.
+            // An operation that finishes (or fails) within the first interval returns its result
+            // with no heartbeat; otherwise emit a newline each interval and keep waiting.
             tokio::select! {
                 biased;
-                result = work.as_mut() => {
+                result = &mut work => {
+                    // Re-raise a panic inside the work here, where the body reads it.
+                    let result = result.unwrap_or_else(|err| panic::resume_unwind(err.into_panic()));
                     Some((Ok(result_to_json_bytes(result)), State::Done))
                 }
                 _ = ticker.tick() => {
@@ -265,6 +273,22 @@ mod tests {
         let parsed: StatusMessage = serde_json::from_slice(&body).expect("error body parses");
         assert_eq!(parsed.status, "error");
         assert!(parsed.status_message.contains("boom"));
+    }
+
+    // The work behind a body the client never reads still runs to completion.
+    #[actix_web::test]
+    async fn test_stream_with_heartbeat_finishes_work_whose_body_was_dropped() {
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let work = async move {
+            finished_tx.send(()).expect("the test awaits the finish");
+            Ok(StatusMessage::success("done"))
+        };
+        drop(stream_with_heartbeat_every(work, Duration::from_millis(15)));
+
+        assert!(
+            finished_rx.await.is_ok(),
+            "the work ran to completion after its body was dropped"
+        );
     }
 
     // A fast operation finishes before the first tick, so it emits its result with no heartbeat.

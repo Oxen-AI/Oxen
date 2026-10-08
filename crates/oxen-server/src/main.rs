@@ -16,13 +16,13 @@ use oxen_server::{app_data, config, controllers, crash_diagnostics, metrics, rou
 extern crate liboxen;
 extern crate log;
 
-use actix_web::middleware::{DefaultHeaders, Logger};
+use actix_web::middleware::{DefaultHeaders, Logger, from_fn};
 use actix_web::{App, HttpServer, web};
 use thiserror::Error;
 
 use oxen_server::middleware::{
     MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
-    request_id,
+    request_id, run_request_as_task,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -929,13 +929,16 @@ async fn start(
             // it tags.
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
-            // Outermost: a per-request Sentry hub so a captured panic carries request context.
-            // Server-error auto-capture is disabled here.
+            // A per-request Sentry hub so a captured panic carries request context. Server-error
+            // auto-capture is disabled here.
             .wrap(
                 sentry_actix::Sentry::builder()
                     .capture_server_errors(false)
                     .finish(),
             )
+            // Outermost, so the whole request, its Sentry hub and root span included, runs to
+            // completion when the client goes away mid-request.
+            .wrap(from_fn(run_request_as_task))
     })
     .keep_alive(Duration::from_secs(ACTIX_KEEP_ALIVE_SECS))
     .bind((host.to_owned(), port))?
