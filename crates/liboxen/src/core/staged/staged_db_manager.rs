@@ -154,7 +154,7 @@ fn staged_db_open_failed(source: rocksdb::Error) -> OxenError {
 
 /// Normalizes a path to use forward slashes for use as a DB key.
 /// This ensures cross-platform consistency since DB keys should be platform-agnostic.
-fn normalize_key(path: impl AsRef<Path>) -> String {
+pub(crate) fn normalize_key(path: impl AsRef<Path>) -> String {
     path.as_ref().to_string_lossy().replace('\\', "/")
 }
 
