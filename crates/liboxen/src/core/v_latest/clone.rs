@@ -28,11 +28,7 @@ pub async fn clone_repo(
     util::fs::create_dir_all(&oxen_hidden_path)?;
 
     // save LocalRepository in .oxen directory
-    let mut local_repo = LocalRepository::from_remote_with_backend(
-        remote_repo.clone(),
-        repo_path,
-        opts.merkle_node_backend,
-    )?;
+    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_subtree_paths(opts.fetch_opts.subtree_paths.clone());
@@ -93,11 +89,7 @@ pub async fn clone_repo_remote_mode(
     let name = format!("{}: {workspace_id}", branch_name.clone());
 
     // Save LocalRepository in .oxen directory
-    let mut local_repo = LocalRepository::from_remote_with_backend(
-        remote_repo.clone(),
-        repo_path,
-        opts.merkle_node_backend,
-    )?;
+    let mut local_repo = LocalRepository::from_remote(remote_repo.clone(), repo_path)?;
     local_repo.version_store().init().await?;
     repo_path.clone_into(&mut local_repo.path);
     local_repo.set_remote_mode(Some(true));

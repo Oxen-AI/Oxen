@@ -51,7 +51,8 @@ pub const DIRS_DIR: &str = "dirs";
 pub const DIR_HASHES_DIR: &str = "dir_hashes";
 /// prefix for the commit merkle tree db
 pub const TREE_DIR: &str = "tree";
-/// prefix for the commit merkle tree node dbs (filesystem backend)
+/// Directory under `.oxen/tree` holding per-node files: node sync status, and the retired
+/// filesystem merkle node backend's nodes
 pub const NODES_DIR: &str = "nodes";
 /// directory holding the LMDB env for the LMDB merkle node backend
 pub const NODES_LMDB_DIR: &str = "nodes_lmdb";
@@ -255,7 +256,7 @@ pub fn max_retries() -> usize {
 ///
 /// Reads `OXEN_STREAM_SEGMENT_SIZE` once at first call and caches the result for the
 /// remainder of the process. The env var must be set before this function is first
-/// invoked — that's why `bin/test-rust` exports it before launching `oxen-server` and
+/// invoked — that's why `bin/test` exports it before launching `oxen-server` and
 /// the test runner.
 pub fn stream_segment_size() -> u64 {
     static CACHED: LazyLock<u64> = LazyLock::new(|| {

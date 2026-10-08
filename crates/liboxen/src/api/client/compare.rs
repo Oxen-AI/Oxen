@@ -426,6 +426,19 @@ mod tests {
             assert_eq!(first.name, PathBuf::from(""));
             assert_eq!(first.status, DiffEntryStatus::Modified);
             assert_eq!(first.children.len(), 2);
+
+            let reversed =
+                api::client::compare::dir_tree(&remote_repo, &head_commit_id, &base_commit_id)
+                    .await?;
+            let root = reversed.first().unwrap();
+            assert_eq!(root.status, DiffEntryStatus::Modified);
+            assert!(
+                root.children
+                    .iter()
+                    .all(|dir| dir.status == DiffEntryStatus::Removed),
+                "dir_2 and dir_3 exist only in the base: {reversed:?}"
+            );
+            assert_eq!(root.children.len(), 2);
             Ok(remote_repo)
         })
         .await

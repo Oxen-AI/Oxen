@@ -7,7 +7,6 @@ use liboxen::core::workspaces::workspace_name_index;
 use liboxen::core::{refs, staged};
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::repositories;
 use liboxen::util;
 
 use serde::Serialize;
@@ -46,16 +45,7 @@ pub fn cleanup_repo_and_sync_dir(repo: LocalRepository, sync_dir: &Path) -> Resu
     cleanup_sync_dir(sync_dir)
 }
 
-pub fn create_local_repo(
-    sync_dir: &Path,
-    namespace: &str,
-    name: &str,
-) -> Result<LocalRepository, OxenError> {
-    let repo_dir = sync_dir.join(namespace).join(name);
-    util::fs::create_dir_all(&repo_dir)?;
-    let repo = repositories::init(&repo_dir)?;
-    Ok(repo)
-}
+pub use liboxen::test::create_legacy_repo as create_local_repo;
 
 #[allow(unused)]
 pub fn request(sync_dir: &Path, uri: &str) -> actix_web::HttpRequest {

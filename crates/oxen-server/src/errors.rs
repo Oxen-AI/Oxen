@@ -284,6 +284,16 @@ impl error::ResponseError for OxenHttpError {
                             "A namespace and a repository name must each be a single path segment",
                         ))
                     }
+                    OxenError::InvalidTreePath(_) => {
+                        log::warn!("Refused a ref advance onto an invalid tree path: {error}");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
+                    OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => {
+                        log::warn!("Rejected request path: {error}");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
                     OxenError::ResourceNotFound(resource) => {
                         log::debug!("Resource not found: {resource}");
                         let error_json = json!({
@@ -335,6 +345,45 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::TooManyRequests()
                             .insert_header(("Retry-After", "5"))
+                            .json(error_json)
+                    }
+                    OxenError::CommitIdTaken(commit_id) => {
+                        tracing::warn!(%commit_id, "Refused a commit whose id is already taken");
+                        let error_json = json!({
+                            "error": {
+                                "type": "commit_id_taken",
+                                "title": "Commit id already taken",
+                                "detail": error.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "1"))
+                            .json(error_json)
+                    }
+                    OxenError::BranchHeadMismatch {
+                        branch,
+                        expected,
+                        actual,
+                    } => {
+                        tracing::warn!(
+                            %branch,
+                            ?expected,
+                            ?actual,
+                            "Refused to move a branch another write moved first"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "branch_head_mismatch",
+                                "title": "Branch moved during the write",
+                                "detail": error.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "1"))
                             .json(error_json)
                     }
                     OxenError::NoMergeBase { base, head } => {
@@ -509,6 +558,32 @@ impl error::ResponseError for OxenHttpError {
                                 "type": MSG_CONFLICT,
                                 "title": "Repository already exists",
                                 "detail": format!("'{repo}' already names a repository. Choose another name."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    OxenError::StorageChangedDuringMove(repo) => {
+                        tracing::warn!(repo = %repo, "Storage move refused, the repository's storage changed during it");
+                        let error_json = json!({
+                            "error": {
+                                "type": "storage_changed_during_move",
+                                "title": "Storage changed during the move",
+                                "detail": "Another operation changed this repository's storage while its version files were moving. Run the move again.",
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    OxenError::StorageMoveInProgress(repo) => {
+                        tracing::warn!(repo = %repo, "Storage move refused, another move of the repository is running");
+                        let error_json = json!({
+                            "error": {
+                                "type": "storage_move_in_progress",
+                                "title": "Storage move in progress",
+                                "detail": "This repository is already moving to other storage. Wait for that move to finish, then run this one again if it is still needed.",
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_CONFLICT,
@@ -709,6 +784,19 @@ impl error::ResponseError for OxenHttpError {
                                     "Unsupported Repository Version",
                                 "detail":
                                     format!("This repository is stored in the Oxen v{version} on-disk format, which this server can no longer read. Migrate it up to the current format with an older Oxen release."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_BAD_REQUEST,
+                        });
+                        HttpResponse::BadRequest().json(error_json)
+                    }
+                    OxenError::MerkleNodesOnFilesystem(_) => {
+                        log::warn!("Repository still on the filesystem merkle node backend");
+                        let error_json = json!({
+                            "error": {
+                                "type": "merkle_nodes_on_filesystem",
+                                "title": "Retired Repository Storage Format",
+                                "detail": "This repository stores its Merkle nodes on the filesystem backend, which this server can no longer read. Migrate it to LMDB with Oxen 0.61.1.",
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_BAD_REQUEST,

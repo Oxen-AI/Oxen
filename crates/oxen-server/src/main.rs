@@ -77,7 +77,8 @@ use std::time::Duration;
 
 use liboxen::model::LocalRepository;
 use liboxen::repositories;
-use liboxen::repositories::name_table::seed;
+use liboxen::repositories::name_table::{NameTable, seed};
+use liboxen::repositories::placement;
 use liboxen::sync_dir;
 
 use crate::config::Config;
@@ -358,10 +359,18 @@ enum ServerCommand {
     #[command(name = "seed-name-table")]
     SeedNameTable,
 
+    /// Move every repository still at `{namespace}/{name}` to the directory its UUID places it in,
+    /// reporting each one left where it is. Run with the server stopped
+    #[command(name = "place-repositories-by-uuid")]
+    PlaceRepositoriesByUuid,
+
     /// Report which repositories hold Merkle nodes predating the v0.25.0 on-disk format
     #[command(name = "scan-node-format")]
     ScanNodeFormat {
-        #[arg(long = "namespace", help = "Limit the scan to a single namespace")]
+        #[arg(
+            long = "namespace",
+            help = "Limit the scan to one namespace's directory, leaving out repositories placed by UUID"
+        )]
         namespace: Option<String>,
 
         #[arg(
@@ -521,6 +530,8 @@ async fn server() -> Result<(), ServerError> {
             println!("🐂 v{VERSION}");
             println!("{SUPPORT}");
 
+            refuse_a_namespace_called_repo(&sync_dir)?;
+
             // Fail fast if the configured S3 bucket is unreachable, rather than letting the first
             // request 500. Local-only servers carry no S3 opts and skip the probe.
             if let Some(s3_opts) = server_config.storage.s3() {
@@ -541,10 +552,46 @@ async fn server() -> Result<(), ServerError> {
 
         ServerCommand::SeedNameTable => seed_name_table(&sync_dir),
 
+        ServerCommand::PlaceRepositoriesByUuid => place_repositories_by_uuid(&sync_dir),
+
         ServerCommand::ScanNodeFormat { namespace, limit } => {
             scan_node_format(&sync_dir, namespace.as_deref(), limit)
         }
     }
+}
+
+/// Refuse a sync dir holding a namespace called `repo`, which would share its directory with the
+/// repositories placed by UUID.
+fn refuse_a_namespace_called_repo(sync_dir: &Path) -> Result<(), ServerError> {
+    match sync_dir::namespace_called_repo(sync_dir) {
+        Some(dir) => Err(OxenError::internal_error(format!(
+            "{dir:?} holds a namespace called `repo`, a name this release keeps for its own use. \
+             With the server stopped, rename it to a namespace name nothing in the sync dir uses, \
+             change `namespace = \"repo\"` to that name in the `[identity]` section of each \
+             moved repository's `.oxen/config.toml`, delete the `name_table` directory beside it, \
+             and start the server again"
+        ))
+        .into()),
+        None => Ok(()),
+    }
+}
+
+/// Move every repository in the legacy layout under `sync_dir` to the directory its UUID places it
+/// in, reporting each one left where it is and why.
+fn place_repositories_by_uuid(sync_dir: &Path) -> Result<(), ServerError> {
+    refuse_a_namespace_called_repo(sync_dir)?;
+    let placed = placement::place_all_by_uuid(sync_dir)?;
+    // KEEP as println! -- do not log!
+    for (dir, reason) in &placed.refused {
+        println!("left {}: {reason}", dir.display());
+    }
+    println!(
+        "moved={} refused={} every_repository_moved={}",
+        placed.moved,
+        placed.refused.len(),
+        placed.refused.is_empty()
+    );
+    Ok(())
 }
 
 /// Record the name every repository under `sync_dir` holds in the server's name table, reporting
@@ -591,29 +638,45 @@ fn scan_node_format(
         None => sync_dir::namespace_dirs(sync_dir)?,
     };
 
+    // Repositories placed by UUID sit in no namespace's directory, so only a scan of the whole
+    // server reaches them.
+    let groups = namespaces
+        .into_iter()
+        .map(|namespace_dir| {
+            let label = namespace_dir
+                .strip_prefix(sync_dir)
+                .unwrap_or(&namespace_dir)
+                .display()
+                .to_string();
+            (label, sync_dir::repo_dirs(&namespace_dir))
+        })
+        .chain(namespace.is_none().then(|| {
+            (
+                "repositories placed by UUID".to_string(),
+                sync_dir::placed_repo_dirs(sync_dir),
+            )
+        }));
+
     // Outcomes are counted apart because they have different remedies: pre-0.25 repos get
     // migrated, damaged and unscannable ones need a person, and unopenable ones are the
-    // `min_version` population a config sweep already finds. `unlistable` counts namespaces
-    // rather than repos — it is the one that says the totals below are incomplete.
+    // `min_version` population a config sweep already finds. `unlistable` counts namespaces, and
+    // the tree of repositories placed by UUID, rather than repos — it is the one that says the
+    // totals below are incomplete.
     let (mut scanned, mut affected, mut damaged, mut unopenable, mut unscannable, mut unlistable) =
         (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let mut totals: BTreeMap<String, usize> = BTreeMap::new();
 
-    'outer: for namespace_dir in namespaces {
+    'outer: for (group, repo_dirs) in groups {
         // A namespace that cannot be listed hides an unknown number of repositories, so skipping
         // it quietly would understate every total below with nothing to say so. Reported and
         // counted rather than fatal: unlike the explicit-namespace case, which is a caller
         // mistake with nothing left to do, one bad namespace should not cost the whole run.
-        let repo_dirs = match sync_dir::repo_dirs(&namespace_dir) {
+        let repo_dirs = match repo_dirs {
             Ok(repo_dirs) => repo_dirs,
             Err(err) => {
                 unlistable += 1;
-                let label = namespace_dir
-                    .strip_prefix(sync_dir)
-                    .unwrap_or(&namespace_dir)
-                    .display();
                 // KEEP as println! -- do not log!
-                println!("{label}\tcannot list namespace: {err}");
+                println!("{group}\tcannot list: {err}");
                 continue;
             }
         };
@@ -790,6 +853,10 @@ async fn start(
         Ok(None) => {}
         Err(err) => tracing::error!(%err, "Failed to seed the name table"),
     }
+    // Held until the server stops, so a request's repository lookup finds the table's env open.
+    let _name_table = NameTable::open(sync_dir)
+        .inspect_err(|err| tracing::error!(%err, "Failed to open the name table"))
+        .ok();
 
     let data = app_data::OxenAppData {
         path: PathBuf::from(sync_dir),

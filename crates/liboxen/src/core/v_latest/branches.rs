@@ -513,7 +513,10 @@ async fn walk_from_tree<'a>(
             WalkFromItem::Visit(path, node) => match &node.node {
                 EMerkleTreeNode::File(file_node) => {
                     let file_path = path.join(file_node.name());
-                    let full_path = repo.path.join(&file_path);
+                    let Ok(full_path) = util::fs::working_tree_path(&repo.path, &file_path) else {
+                        log::warn!("Leaving an invalid tree path untouched: {file_path:?}");
+                        continue;
+                    };
 
                     // Only consider files whose path is not in the target tree (using
                     // path-based check instead of hash-based, because different files at
@@ -576,7 +579,10 @@ async fn walk_from_tree<'a>(
                 _ => {}
             },
             WalkFromItem::FinalizeDir(dir_path) => {
-                let full_dir_path = repo.path.join(&dir_path);
+                let Ok(full_dir_path) = util::fs::working_tree_path(&repo.path, &dir_path) else {
+                    log::warn!("Leaving an invalid tree path untouched: {dir_path:?}");
+                    continue;
+                };
                 if full_dir_path.exists() {
                     candidates.paths_to_remove.push(full_dir_path);
                 }
@@ -652,7 +658,7 @@ async fn walk_target_tree<'a>(
         match &node.node {
             EMerkleTreeNode::File(file_node) => {
                 let file_path = path.join(file_node.name());
-                let full_path = repo.path.join(&file_path);
+                let full_path = util::fs::working_tree_path(&repo.path, &file_path)?;
 
                 // Collect path for matching in r_remove_if_not_in_target
                 hashes.seen_paths.insert(file_path.clone());
@@ -758,7 +764,7 @@ async fn walk_target_tree<'a>(
             }
             EMerkleTreeNode::Directory(dir_node) => {
                 let dir_path = path.join(dir_node.name());
-                let full_dir_path = repo.path.join(&dir_path);
+                let full_dir_path = util::fs::working_tree_path(&repo.path, &dir_path)?;
                 // Something exists at this path but is not a directory (e.g. the user
                 // replaced a dir with a file). Stage it for replacement instead of removing
                 // eagerly.

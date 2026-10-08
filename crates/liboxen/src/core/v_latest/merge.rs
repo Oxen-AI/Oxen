@@ -322,15 +322,6 @@ async fn server_three_way_merge(
                 status: status.clone(),
                 node: MerkleTreeNode::from_file(named_node),
             });
-        // Ensure all ancestor directories are present in dir_entries
-        let mut ancestor = path.to_path_buf();
-        while let Some(p) = ancestor.parent() {
-            ancestor = p.to_path_buf();
-            dir_entries.entry(ancestor.clone()).or_default();
-            if ancestor == Path::new("") {
-                break;
-            }
-        }
     }
 
     let new_commit = crate::model::NewCommitBody {
@@ -673,6 +664,10 @@ async fn fast_forward_merge(
     // If there are no conflicts, restore the entries
     // Grouping the processing of merge_tree_results and base_tree_results like this ensures no files are modified if the merge doesn't complete
     if base_tree_results.cannot_overwrite_entries.is_empty() {
+        for entry in &merge_tree_results.entries_to_restore {
+            util::fs::working_tree_path(&repo.path, &entry.path)?;
+        }
+
         // All conflict checks have passed; the next lines mutate the working
         // tree. Write the resume marker *now* so a SIGTERM mid-restore is
         // recoverable, but no marker is left behind when the merge errors out
@@ -823,7 +818,10 @@ async fn walk_base_dir<'a>(
                 // Only consider paths in HEAD that aren't also in the merge tree — those are
                 // the deletions to apply.
                 if !merge_files.contains(&file_path) {
-                    let full_path = repo.path.join(&file_path);
+                    let Ok(full_path) = util::fs::working_tree_path(&repo.path, &file_path) else {
+                        log::warn!("Leaving an invalid tree path untouched: {file_path:?}");
+                        continue;
+                    };
                     if full_path.exists() {
                         if is_resume
                             || restore::should_restore_file(repo, None, base_file_node, &file_path)
@@ -1441,6 +1439,10 @@ pub async fn find_merge_conflicts(
 
     // If there are no conflicts, restore the entries
     if cannot_overwrite_entries.is_empty() {
+        for entry in &entries_to_restore {
+            util::fs::working_tree_path(&repo.path, &entry.path)?;
+        }
+
         // Working-tree mutation starts here. Bracket it with the resume marker
         // so a SIGTERM mid-restore can be recovered by a subsequent merge
         // against the same target. Only when write_to_disk=true — the

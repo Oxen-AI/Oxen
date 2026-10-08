@@ -75,7 +75,7 @@ pub async fn update(
         &column_after_name,
     )?;
 
-    repositories::workspaces::files::add(workspace, file_path).await?;
+    workspaces::files::track_modified_data_frame(workspace, file_path)?;
 
     Ok(result)
 }

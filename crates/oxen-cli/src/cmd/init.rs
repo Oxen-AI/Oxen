@@ -1,9 +1,7 @@
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use async_trait::async_trait;
-use clap::{Arg, Command, arg};
-use liboxen::core::db::merkle_node::MerkleNodeBackend;
+use clap::{Command, arg};
 
 use crate::cmd::RunCmd;
 use crate::helpers::{check_remote_version, get_scheme_and_host_or_default};
@@ -33,13 +31,6 @@ impl RunCmd for InitCmd {
         Command::new(INIT)
             .about("Initializes a local repository")
             .arg(arg!([PATH] "The directory to establish the repo in. Defaults to the current directory."))
-            .arg(
-                Arg::new("merkle-backend")
-                    .long("merkle-backend")
-                    .help("Which engine backs the repo's Merkle node store (default: lmdb; filesystem is deprecated and rejected)")
-                    .value_parser(["filesystem", "lmdb"])
-                    .action(clap::ArgAction::Set),
-            )
     }
 
     async fn run(&self, args: &clap::ArgMatches) -> Result<(), anyhow::Error> {
@@ -52,12 +43,6 @@ impl RunCmd for InitCmd {
             .unwrap_or(".");
         log::info!("Repository path: {}", path);
 
-        let merkle_backend = args
-            .get_one::<String>("merkle-backend")
-            .map(|s| MerkleNodeBackend::from_str(s))
-            .transpose()?;
-        crate::helpers::reject_deprecated_merkle_backend(merkle_backend)?;
-
         // Make sure the remote version is compatible
         let (scheme, host) = get_scheme_and_host_or_default()?;
 
@@ -65,8 +50,7 @@ impl RunCmd for InitCmd {
 
         // Initialize the repository
         let directory = util::fs::canonicalize(PathBuf::from(&path))?;
-        repositories::init::init_with_version_and_storage_config(&directory, None, merkle_backend)
-            .await?;
+        repositories::init::init_with_storage_config(&directory, None).await?;
         println!("🐂 repository initialized at: {directory:?}");
         println!("{AFTER_INIT_MSG}");
         Ok(())

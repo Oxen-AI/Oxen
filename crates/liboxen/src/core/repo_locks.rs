@@ -70,7 +70,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -100,10 +100,10 @@ struct RepoGate {
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Arc<RepoGate>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn gate_for(repo: &LocalRepository) -> Arc<RepoGate> {
+fn gate_for(repo_dir: &Path) -> Arc<RepoGate> {
     REGISTRY
         .lock()
-        .entry(repo.path.clone())
+        .entry(repo_dir.to_path_buf())
         .or_insert_with(|| {
             Arc::new(RepoGate {
                 state: Mutex::new(GateState {
@@ -142,14 +142,27 @@ impl Drop for WriteInFlight {
 /// Record a write in progress on `repo`, or `LockTimeout` if an exclusive operation holds it.
 /// Never waits, and never excludes another writer.
 pub fn begin_write(repo: &LocalRepository) -> Result<WriteInFlight, OxenError> {
-    let gate = gate_for(repo);
+    begin_write_at(&repo.path)
+}
+
+/// [`begin_write`] for the repository at `repo_dir`, which need not open. Also `LockTimeout` when
+/// nothing is at `repo_dir` any more, as for a repository an exclusive operation moved, so the
+/// caller looks it up again.
+pub fn begin_write_at(repo_dir: &Path) -> Result<WriteInFlight, OxenError> {
+    let gate = gate_for(repo_dir);
     let mut state = gate.state.lock();
     if state.exclusive {
         return Err(lock_timeout());
     }
     state.active_writes += 1;
     drop(state);
-    Ok(WriteInFlight { gate })
+    let write = WriteInFlight { gate };
+    // Checked once the write is registered, so an exclusive operation that moves the directory
+    // either waits for this write or has already moved it.
+    if !repo_dir.is_dir() {
+        return Err(lock_timeout());
+    }
+    Ok(write)
 }
 
 /// Sets the exclusive marker on construction and clears it on drop, so an early return or panic in
@@ -186,7 +199,7 @@ pub(crate) async fn with_repo_exclusive_with_timeout<T>(
     drain_timeout: Duration,
     work: impl Future<Output = Result<T, OxenError>>,
 ) -> Result<T, OxenError> {
-    let gate = gate_for(repo);
+    let gate = gate_for(&repo.path);
     // At most one exclusive holder per repo at a time.
     let _slot = gate.exclusive_slot.lock().await;
     // Block new writers, then wait for in-flight ones to finish.

@@ -24,11 +24,14 @@ jobs:
           components: clippy, rustfmt
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
+
       # Must precede the tool versions load: rust-cache hashes every CARGO*/RUST* environment
       # variable into its key, so the cargo-tool pins in tool-versions.env would otherwise bust
       # the whole build cache every time one of them is bumped.
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           # Only cache builds from main. Otherwise our caches will be too big and start to churn. (10 GB limit in GitHub Actions)
           # Other branches will still use the cache but won't save it.

@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::opts::FetchOpts;
 
 #[derive(Clone, Debug, Default)]
@@ -15,9 +14,6 @@ pub struct CloneOpts {
     pub is_vfs: bool,
     // Flag for remote mode
     pub is_remote: bool,
-    /// Merkle node backend for the local repo, overriding the one the remote reports. `None`
-    /// inherits from the remote.
-    pub merkle_node_backend: Option<MerkleNodeBackend>,
 }
 
 impl CloneOpts {
@@ -29,7 +25,6 @@ impl CloneOpts {
             fetch_opts: FetchOpts::new(),
             is_vfs: false,
             is_remote: false,
-            merkle_node_backend: None,
         }
     }
 

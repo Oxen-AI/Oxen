@@ -24,14 +24,16 @@ jobs:
       - name: Setup Rust Toolchain
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          components: clippy
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
+
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
 
       # Must precede the tool versions load: rust-cache hashes every CARGO*/RUST* environment
       # variable into its key, so the cargo-tool pins in tool-versions.env would otherwise bust
       # the whole build cache every time one of them is bumped.
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           prefix-key: rust-production
@@ -50,18 +52,16 @@ jobs:
 
       - name: Install FFmpeg 9
         # Install FFmpeg 9 (the `production` feature enables `ffmpeg`) and point pkg-config
-        # at it for the build and clippy steps below.
+        # at it for the build steps below.
         run: |
           sudo apt-get update
           sudo apt-get install -y clang pkg-config
           bash bin/install-ffmpeg
           echo "PKG_CONFIG_PATH=/opt/ffmpeg/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
 
+      # oxen-py is left to the maturin step below, which builds it with the flags the bindings need.
       - name: Build with production features
-        run: cargo build --workspace --features production
-
-      - name: Clippy (production features)
-        run: cargo clippy --workspace --all-targets --features production --no-deps -- -D warnings
+        run: cargo build --workspace --exclude oxen-py --features production
 
       # The Test Suite workflow builds with default features, so tests behind a production-only
       # gate like `#[cfg(feature = "otel")]` never run there. This job is the only one that

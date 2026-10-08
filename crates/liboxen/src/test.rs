@@ -3,15 +3,17 @@
 
 use crate::api;
 use crate::api::requests::RepoNew;
+#[cfg(test)]
 use crate::config::RepositoryConfig;
 use crate::constants;
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::core;
-use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::core::df::duckdb_setup;
 use crate::core::v_latest::commits::remove_commit_count_db_from_cache_with_children;
 use crate::error::OxenError;
 use crate::lmdb;
+#[cfg(test)]
+use crate::model::RepoIdentity;
 use crate::model::Schema;
 use crate::model::User;
 use crate::model::data_frame::schema::Field;
@@ -20,6 +22,8 @@ use crate::model::file::FileNew;
 use crate::model::{LocalRepository, RemoteRepository};
 use crate::opts::RmOpts;
 use crate::repositories;
+#[cfg(test)]
+use crate::repositories::name_table::NameTable;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
@@ -30,13 +34,17 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::prelude::*;
+use std::panic::resume_unwind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::runtime::Builder;
+use tokio::task;
 use tokio::time::{sleep, timeout};
 use tracing::level_filters::LevelFilter;
 use walkdir::WalkDir;
@@ -137,6 +145,37 @@ fn create_prefixed_dir(
 
 pub fn create_repo_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     create_prefixed_dir(base_dir, "repo")
+}
+
+/// Create a repository at `{namespace}/{name}` under `sync_dir` recording no identity, where every
+/// repository created before placement by UUID sits.
+pub fn create_legacy_repo(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+) -> Result<LocalRepository, OxenError> {
+    repositories::init(sync_dir.join(namespace).join(name))
+}
+
+/// Create a repository at `{namespace}/{name}` under `sync_dir` recording `identity`, with the name
+/// it holds claimed in the name table, the state a repository created before placement by UUID is
+/// in.
+#[cfg(test)]
+pub(crate) fn create_legacy_repo_with_identity(
+    sync_dir: &Path,
+    namespace: &str,
+    name: &str,
+    identity: RepoIdentity,
+) -> Result<LocalRepository, OxenError> {
+    let repo_dir = create_legacy_repo(sync_dir, namespace, name)?.path;
+    let config_path = util::fs::config_filepath(&repo_dir);
+    let mut config = RepositoryConfig::from_file(&config_path)?;
+    if let Some((namespace, name, repo_uuid)) = identity.held_name() {
+        NameTable::new(sync_dir).claim(&namespace, &name, repo_uuid)?;
+    }
+    config.identity = Some(identity);
+    config.save(&config_path)?;
+    LocalRepository::from_dir(&repo_dir)
 }
 
 fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
@@ -479,63 +518,6 @@ where
     maybe_cleanup_repo(&repo_dir)?;
 
     // Assert everything okay after we cleanup the repo dir
-    assert!(result);
-    Ok(())
-}
-
-/// Init a repo pinned to the filesystem Merkle node backend. For tests whose assertions read the
-/// on-disk `tree/nodes` layout — the wire-format byte-compat reference implementations and the
-/// FS→LMDB migration source — which only the filesystem backend produces. Persists
-/// `merkle_node_backend = filesystem` to `config.toml`, the authoritative record
-/// `create_merkle_node_store` resolves from. Pair with [`run_empty_dir_test_async`] for empty
-/// repos, or use [`run_one_commit_local_repo_test_async_fs_backend`] when one committed file is
-/// needed.
-pub fn init_fs_merkle_backend(path: &Path) -> Result<LocalRepository, OxenError> {
-    let hidden_dir = util::fs::oxen_hidden_dir(path);
-    if hidden_dir.try_exists()? {
-        return Err(OxenError::basic_str(format!(
-            "Oxen repository already exists: {path:?}"
-        )));
-    }
-    util::fs::create_dir_all(&hidden_dir)?;
-    let config = RepositoryConfig {
-        min_version: Some("0.36.0".to_string()),
-        merkle_node_backend: Some(MerkleNodeBackend::Filesystem),
-        ..Default::default()
-    };
-    let repo = LocalRepository::new(path, config)?;
-    repo.save()?;
-    Ok(repo)
-}
-
-/// Like [`run_one_commit_local_repo_test_async`], but pins the repo to the filesystem Merkle node
-/// backend (see [`init_fs_merkle_backend`]). For empty repos, use [`run_empty_dir_test_async`] +
-/// [`init_fs_merkle_backend`] directly.
-pub async fn run_one_commit_local_repo_test_async_fs_backend<T, Fut>(
-    test: T,
-) -> Result<(), OxenError>
-where
-    T: FnOnce(LocalRepository) -> Fut,
-    Fut: Future<Output = Result<(), OxenError>>,
-{
-    init_test_env();
-    let repo_dir = create_repo_dir(test_run_dir())?;
-    let repo = init_fs_merkle_backend(&repo_dir)?;
-
-    let txt = generate_random_string(20);
-    let file_path = add_txt_file_to_dir(&repo_dir, &txt)?;
-    repositories::add(&repo, &file_path).await?;
-    repositories::commit(&repo, "Init commit")?;
-
-    let result = match test(repo).await {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!("Error running test. Err: {err}");
-            false
-        }
-    };
-
-    maybe_cleanup_repo(&repo_dir)?;
     assert!(result);
     Ok(())
 }
@@ -1462,10 +1444,9 @@ pub fn assert_no_live_lmdb_envs(dir: &Path) {
         WalkDir::new(dir)
             .into_iter()
             .flatten()
+            .filter(|entry| entry.file_type().is_dir())
             .map(|entry| entry.path().to_path_buf())
-            .filter(|path| {
-                path.ends_with(constants::NODES_LMDB_DIR) && lmdb::shared_env_is_live(path)
-            })
+            .filter(|path| lmdb::shared_env_is_live(path))
             .collect()
     };
 
@@ -1478,7 +1459,8 @@ pub fn assert_no_live_lmdb_envs(dir: &Path) {
     assert!(
         live.is_empty(),
         "LMDB envs under {dir:?} still open after {TIMEOUT:?}: {live:?}. \
-         Drop every LocalRepository under it, including any a background thread holds."
+         Drop every handle on them (a LocalRepository, a NameTable), including any a background \
+         thread holds."
     );
 }
 
@@ -2147,23 +2129,45 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
 
 /// Run `work` to completion and report whether it ever yielded the thread it started on.
 ///
-/// Call it from a `#[tokio::test]`, whose current-thread runtime matches what an oxen-server
-/// actix worker runs on. The task spawned here is ready immediately, so it can only run once
-/// `work` gives the thread up: `false` means `work` held the thread end to end, which for a
-/// server-side operation means it held an actix worker and every connection assigned to it.
+/// `work` runs on a current-thread runtime of its own, the kind an oxen-server actix worker runs
+/// on, whose single blocking thread stays occupied until `work` first yields. Work handed to
+/// `spawn_blocking` therefore cannot finish before `work` yields, however fast it is, so `false`
+/// means `work` held the thread end to end, which for a server-side operation means it held an
+/// actix worker and every connection assigned to it.
 ///
 /// Assert on the operation itself rather than on a caller that awaits other offloaded work
 /// first, since any of those awaits would set the flag on the operation's behalf.
-///
-/// One caveat on `false`: work that finishes before its `JoinHandle` is first polled completes
-/// without ever yielding, and so reports `false` despite having run off the thread. That needs
-/// the offloaded work to finish within the few instructions between dispatching it and awaiting
-/// it, which database and filesystem operations do not come close to.
-pub async fn run_and_report_yield<F: Future>(work: F) -> (F::Output, bool) {
+pub fn run_and_report_yield<F>(work: F) -> (F::Output, bool)
+where
+    F: Future + Send,
+    F::Output: Send,
+{
     let yielded = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&yielded);
-    tokio::task::spawn(async move { flag.store(true, Ordering::SeqCst) });
-    let output = work.await;
+    let (release, gate) = mpsc::channel::<()>();
+    let output = thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = Builder::new_current_thread()
+                    .enable_all()
+                    .max_blocking_threads(1)
+                    .build()
+                    .expect("a current-thread runtime with one blocking thread builds");
+                runtime.block_on(async {
+                    task::spawn_blocking(move || gate.recv());
+                    let flag = Arc::clone(&yielded);
+                    let probe_release = release.clone();
+                    task::spawn(async move {
+                        flag.store(true, Ordering::SeqCst);
+                        let _ = probe_release.send(());
+                    });
+                    let output = work.await;
+                    let _ = release.send(());
+                    output
+                })
+            })
+            .join()
+            .unwrap_or_else(|panic| resume_unwind(panic))
+    });
     (output, yielded.load(Ordering::SeqCst))
 }
 
@@ -2176,7 +2180,30 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories;
 
-    use super::{run_training_data_repo_test_fully_committed_async, write_txt_file_to_path};
+    use tokio::task;
+
+    use super::{
+        run_and_report_yield, run_training_data_repo_test_fully_committed_async,
+        write_txt_file_to_path,
+    };
+
+    #[test]
+    fn test_run_and_report_yield_tells_offloaded_work_from_inline_work() {
+        let ((), offloaded) = run_and_report_yield(async {
+            task::spawn_blocking(|| ())
+                .await
+                .expect("the offloaded closure runs to completion")
+        });
+        assert!(
+            offloaded,
+            "work awaiting spawn_blocking yields, however fast the closure is"
+        );
+        let ((), inline) = run_and_report_yield(async {});
+        assert!(
+            !inline,
+            "work that never awaits anything pending holds the thread"
+        );
+    }
 
     #[tokio::test]
     async fn test_oxen_ignore_file() -> Result<(), OxenError> {

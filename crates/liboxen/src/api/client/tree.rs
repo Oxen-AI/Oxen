@@ -495,13 +495,31 @@ pub async fn mark_nodes_as_synced(
 mod tests {
     use crate::api;
     use crate::error::OxenError;
+    use crate::model::LocalRepository;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
-    use std::fs;
 
     use std::collections::HashSet;
     use std::path::PathBuf;
+
+    /// Distinct three-hex-digit prefixes across the repo's node hashes, the directories its nodes
+    /// would occupy in the `.oxen/tree/nodes` layout.
+    fn node_prefix_count(repo: &LocalRepository) -> Result<usize, OxenError> {
+        let prefixes: HashSet<PathBuf> = repo
+            .merkle_node_store()
+            .list_hashes()?
+            .iter()
+            .filter_map(|hash| {
+                hash.to_hex_hash()
+                    .node_db_prefix()
+                    .iter()
+                    .next()
+                    .map(PathBuf::from)
+            })
+            .collect();
+        Ok(prefixes.len())
+    }
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
@@ -525,10 +543,8 @@ mod tests {
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path_1 = local_repo.path.join("download_repo_test_1");
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");
-            // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout,
-            // which only the filesystem backend produces.
-            let download_local_repo_1 = test::init_fs_merkle_backend(&download_repo_path_1)?;
-            let download_local_repo_2 = test::init_fs_merkle_backend(&download_repo_path_2)?;
+            let download_local_repo_1 = repositories::init(&download_repo_path_1)?;
+            let download_local_repo_2 = repositories::init(&download_repo_path_2)?;
             api::client::tree::download_tree_from_path(
                 &download_local_repo_1,
                 &remote_repo_clone,
@@ -538,21 +554,7 @@ mod tests {
             )
             .await?;
 
-            let dir_path = download_local_repo_1.path.join(".oxen/tree/nodes");
-            let entries = fs::read_dir(&dir_path)?;
-            let dir_count = entries
-                .filter_map(|entry| match entry {
-                    Ok(e) => {
-                        if let Ok(file_type) = e.file_type()
-                            && file_type.is_dir()
-                        {
-                            return Some(1);
-                        }
-                        None
-                    }
-                    Err(_) => None,
-                })
-                .count();
+            let dir_count = node_prefix_count(&download_local_repo_1)?;
 
             assert!(dir_count > 16);
 
@@ -565,21 +567,7 @@ mod tests {
             )
             .await?;
 
-            let dir_path = download_local_repo_2.path.join(".oxen/tree/nodes");
-            let entries = fs::read_dir(&dir_path)?;
-            let dir_count = entries
-                .filter_map(|entry| match entry {
-                    Ok(e) => {
-                        if let Ok(file_type) = e.file_type()
-                            && file_type.is_dir()
-                        {
-                            return Some(1);
-                        }
-                        None
-                    }
-                    Err(_) => None,
-                })
-                .count();
+            let dir_count = node_prefix_count(&download_local_repo_2)?;
 
             // Here we expect very few nodes (but more than on the download_tree_from_path function) because we only download the nodes that actually
             // contain the files in the subtree path, no parents, no siblings.
@@ -597,9 +585,7 @@ mod tests {
             let commit = repositories::commits::head_commit(&local_repo)?;
             let remote_repo_clone = remote_repo.clone();
             let download_repo_path = local_repo.path.join("download_repo_test_1");
-            // FS-pinned: this test counts node directories under the on-disk `tree/nodes` layout,
-            // which only the filesystem backend produces.
-            let download_local_repo = test::init_fs_merkle_backend(&download_repo_path)?;
+            let download_local_repo = repositories::init(&download_repo_path)?;
             let mut fetch_opts = FetchOpts::new();
             fetch_opts.remote = remote_repo_clone.url().to_string();
             api::client::tree::download_trees_from(
@@ -610,27 +596,13 @@ mod tests {
             )
             .await?;
 
-            let dir_path = download_local_repo.path.join(".oxen/tree/nodes");
-            let entries = fs::read_dir(&dir_path)?;
-            let dir_count = entries
-                .filter_map(|entry| match entry {
-                    Ok(e) => {
-                        if let Ok(file_type) = e.file_type()
-                            && file_type.is_dir()
-                        {
-                            return Some(1);
-                        }
-                        None
-                    }
-                    Err(_) => None,
-                })
-                .count();
+            let dir_count = node_prefix_count(&download_local_repo)?;
 
             log::debug!("dir_count: {dir_count}");
             assert!(dir_count > 33);
 
             let download_repo_path_2 = local_repo.path.join("download_repo_test_2");
-            let download_local_repo_2 = test::init_fs_merkle_backend(&download_repo_path_2)?;
+            let download_local_repo_2 = repositories::init(&download_repo_path_2)?;
             let fetch_opts = FetchOpts {
                 subtree_paths: Some(vec![PathBuf::from("annotations/test")]),
                 depth: Some(1),
@@ -648,21 +620,7 @@ mod tests {
             )
             .await?;
 
-            let dir_path = download_local_repo_2.path.join(".oxen/tree/nodes");
-            let entries = fs::read_dir(&dir_path)?;
-            let dir_count = entries
-                .filter_map(|entry| match entry {
-                    Ok(e) => {
-                        if let Ok(file_type) = e.file_type()
-                            && file_type.is_dir()
-                        {
-                            return Some(1);
-                        }
-                        None
-                    }
-                    Err(_) => None,
-                })
-                .count();
+            let dir_count = node_prefix_count(&download_local_repo_2)?;
 
             // Here we expect few nodes (but more than on the download_tree_from_path function) because we download the nodes that
             // contain the files in the subtree path, with the parents. This allows us to keep the remote repo intact when we push

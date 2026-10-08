@@ -110,6 +110,17 @@ s3_region = "us-west-1"
 
 S3 backends require valid AWS credentials in the server's environment, picked up by the AWS SDK in the usual way (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `~/.aws/credentials` / instance role / etc.). The bucket region comes from `s3_region` in the config above.
 
+### Moving a repository between local storage and S3
+
+A repository moves between the local backend and the configured bucket over HTTP, with `kind` set to `"s3"` or `"local"`. The server refuses a kind missing from `backends`:
+
+```bash
+curl -X PUT "http://localhost:3000/api/repos/<namespace>/<repo_name>/storage" \
+  -H "Content-Type: application/json" -d '{"kind": "s3"}'
+```
+
+The server copies the repository's version files to the other backend while pushes continue, then holds writes to that repository only while it copies what arrived since and switches it. It then deletes the copies the backend it left held, with pushes continuing. A move that stops part-way is finished by running it again, since a file the other backend already holds is skipped, and a move to the backend a repository is already on does nothing. A move requested while another move of the same repository is still running is refused with HTTP 409. A move that finds the repository's storage changed by another operation while it copied stops with HTTP 409, and running it again finishes it. Moving to S3 needs the repository to record a `repo_uuid` (see [the `[identity]` section](#the-identity-section)). A move to local storage puts the version files under `<repo>/.oxen/versions/files`.
+
 ### Per-repo `.oxen/config.toml`
 
 Every field the server keeps in `<repo>/.oxen/config.toml` is written by the server: `min_version`, `vnode_size`, `storage`, `merkle_node_backend`, and `identity`. Hand-editing them corrupts the repo. The exception is `vnode_size`, which no command exposes, so editing the file is the only way to change it. Moving a repository to another namespace goes through `PATCH /{namespace}/{repo_name}/transfer` rather than through this file.
@@ -124,7 +135,7 @@ kind = "local"                          # or "s3"
 versions_path = "/mnt/nfs/oxen-data"    # optional, local backend only
 ```
 
-- **`kind`** — `"local"` or `"s3"` (lowercase; these are the only valid values today). Set by the server at repo-creation time according to its policy and what the client requested. Do not change this by hand; the server expects the backend kind to match the data on disk (for `local`) or in the bucket (for `s3`).
+- **`kind`** — `"local"` or `"s3"` (lowercase; these are the only valid values today). Set by the server at repo-creation time according to its policy and what the client requested, and changed afterwards only by [a move between backends](#moving-a-repository-between-local-storage-and-s3). Do not change this by hand; the server expects the backend kind to match the data on disk (for `local`) or in the bucket (for `s3`).
 - **`versions_path`** *(local backend only)* — overrides where the local backend stores version blobs for this repo. By default, version blobs live under `<repo>/.oxen/versions/files`. If `versions_path` starts with `.oxen`, it is interpreted as relative to the repo's root (and so the repo stays portable if the directory is moved); otherwise it is taken as an absolute path. Useful for pointing version storage at an NFS mount or another volume while keeping the rest of the repo's metadata in place.
 
 #### Legacy `[storage.settings]` fallback
@@ -156,6 +167,8 @@ name = "my-repo"
 
 - **`repo_uuid`** — the repository's immutable identity, written when the repo is created and never changed afterwards, including when the repo moves to another namespace. Do not edit it by hand.
 - **`namespace`** / **`name`** — the human-readable names, recorded so a repository directory can be identified without consulting anything else. They track renames and carry no authority: nothing is addressed by them.
+
+A repository the server creates lives at `$SYNC_DIR/repo/{uuid[0:2]}/{uuid[2:4]}/{repo_uuid}`, named for its `repo_uuid`, and stays there when it moves to another namespace.
 
 `oxen-server` refuses to create a repository under a name another repository already holds, matching without regard to case, so `my-namespace/My-Repo` and `my-namespace/my-repo` cannot both be created.
 

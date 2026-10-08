@@ -800,6 +800,27 @@ mod tests {
             assert!(!response.commit.id.is_empty());
             assert_eq!(response.commit.message, "Generated directory listing");
 
+            let outside = FromDirectoryRequest {
+                output_path: Some("../file_listing.parquet".to_string()),
+                extra_columns: None,
+                commit_message: None,
+                user_name: Some("test_user".to_string()),
+                user_email: Some("test@example.com".to_string()),
+                recursive: Some(true),
+            };
+            let err = api::client::data_frames::from_directory(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                "test_files",
+                outside,
+            )
+            .await
+            .expect_err("an output path above the workspace is refused");
+            assert!(
+                err.to_string().contains("outside the working tree"),
+                "{err}"
+            );
+
             Ok(())
         })
         .await

@@ -55,8 +55,11 @@ jobs:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
+
       - name: Rust Cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           prefix-key: rust-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
@@ -78,12 +81,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.11" # Test against the earliest supported Python version
-
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew update
-          brew install pkg-config
 
       # Ramdisk for test data
       - name: Setup ramdisk (Linux)
@@ -125,15 +122,17 @@ jobs:
         run: |
           mkdir .\data\test\runs
 
+      # Building the tests with the binaries resolves dev-dependency features once, so the test step
+      # reuses this build instead of compiling the dependencies a second time.
       - name: Build oxen rust project (Linux/macOS)
         if: matrix.platform != 'windows'
-        run: cargo build --workspace
+        run: cargo build --workspace --bins --tests
 
       - name: Run oxen rust tests (Linux/macOS)
         if: matrix.platform != 'windows'
         run: |
           RUST_LOG=warn,liboxen=debug,oxen_server=debug ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
-          # Wait for the server to be ready before running tests (mirrors bin/test-rust).
+          # Wait for the server to be ready before running tests (mirrors bin/test).
           for i in $(seq 1 100); do
             if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
             if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
@@ -197,8 +196,11 @@ jobs:
           rustflags: ${{ matrix.platform == 'windows' && '-D warnings -C link-arg=/DEBUG:NONE' || '-D warnings' }}
           cache: false # We use Swatinem/rust-cache directly below for save-if control.
 
+      - name: Remove other Rust toolchains
+        uses: ./.github/actions/remove-other-rust-toolchains
+
       - name: Rust Cache
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           prefix-key: python-test
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
@@ -222,12 +224,6 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
           python-version: "3.11" # Test against the earliest supported Python version
-
-      - name: Install dependencies (macOS)
-        if: matrix.platform == 'macos'
-        run: |
-          brew update
-          brew install pkg-config
 
       - name: Setup test directories (Linux/macOS)
         if: matrix.platform != 'windows'

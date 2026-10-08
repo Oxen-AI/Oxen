@@ -16,7 +16,7 @@ use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::file::{FileContents, FileNew};
 use liboxen::model::parsed_resource::ParsedResourceView;
-use liboxen::model::{Branch, ParsedResource, RepoIdentity};
+use liboxen::model::{Branch, LocalRepository, ParsedResource, RepoIdentity};
 use liboxen::repositories;
 use liboxen::repositories::size::RepoSizeFile;
 use liboxen::view::http::{MSG_RESOURCE_FOUND, MSG_RESOURCE_UPDATED, STATUS_SUCCESS};
@@ -55,15 +55,17 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
 
-    let namespace_path = repositories::namespace_dir(&app_data.path, &namespace)?;
-
-    let repos: Vec<RepositoryListView> = repositories::list_repos_in_namespace(&namespace_path)
-        .map(|repo| RepositoryListView {
-            name: repo.dirname(),
-            namespace: namespace.to_string(),
-            min_version: Some("0.36.0".to_string()),
-        })
-        .collect();
+    let sync_dir = app_data.path.clone();
+    let repos: Vec<RepositoryListView> =
+        tasks::spawn_blocking(move || repositories::namespace_listing(&sync_dir, &namespace))
+            .await
+            .map_err(OxenError::from)??
+            .into_iter()
+            .map(|repo| RepositoryListView {
+                min_version: Some("0.36.0".to_string()),
+                ..repo
+            })
+            .collect();
     let view = ListRepositoryResponse {
         status: StatusMessage::resource_found(),
         repositories: repos,
@@ -146,7 +148,6 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
                 min_version: Some("0.36.0".to_string()),
                 is_empty: branch_count == 0,
                 storage_kind: repository.storage_config().kind,
-                merkle_node_backend: Some(repository.merkle_node_backend()),
                 repo_uuid: repository.repo_uuid(),
             },
             size,
@@ -460,9 +461,6 @@ async fn create_repo_response(
             name: data.repo_name.clone(),
         }),
     };
-    if identity.is_none() {
-        log::warn!("Creating {namespace}/{name} with no repository UUID; recording no identity");
-    }
 
     match repositories::create(&app_data.path, data, identity, app_data.config.storage.s3()).await {
         Ok(repo) => {
@@ -485,7 +483,6 @@ async fn create_repo_response(
                     latest_commit,
                     min_version: Some("0.36.0".to_string()),
                     storage_kind: repo.storage_config().kind,
-                    merkle_node_backend: Some(repo.merkle_node_backend()),
                     repo_uuid: repo.repo_uuid(),
                 },
             }))
@@ -505,6 +502,12 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             log::debug!("Repo already exists: {path:?}");
             HttpResponse::Conflict().json(StatusMessage::error("Repo already exists."))
         }
+        OxenError::RepoUuidTaken(repo_uuid) => {
+            tracing::warn!(%repo_uuid, "Refused a create whose repository UUID is already in use");
+            HttpResponse::Conflict().json(StatusMessage::error(format!(
+                "Repository UUID {repo_uuid} is already in use."
+            )))
+        }
         OxenError::InvalidRepoName(name) => {
             log::debug!("Invalid repo name: {name}");
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
@@ -516,12 +519,6 @@ fn map_create_error_to_response(err: OxenError) -> HttpResponse {
             HttpResponse::BadRequest().json(StatusMessage::error(format!(
                 "Invalid namespace name '{name}'. Must match [a-zA-Z0-9][a-zA-Z0-9_-]{{1,49}}"
             )))
-        }
-        OxenError::S3RepoWithoutIdentity(path) => {
-            log::warn!("Refused an S3 repository with no repo_uuid: {path:?}");
-            HttpResponse::BadRequest().json(StatusMessage::error(
-                "An S3-backed repository needs a repo_uuid.",
-            ))
         }
         err => {
             log::error!("Err repositories::create: {err:?}");
@@ -551,26 +548,30 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    // Validates the segments, so it also rejects anything that could name a directory outside the
-    // sync dir. Must come before the removal below, which is why the dir is not taken from the
-    // repository lookup (that lookup fails for exactly the repos this endpoint still has to
-    // delete).
-    let repo_dir = repositories::repo_dir(&app_data.path, &namespace, &name)?;
-
-    // Opened directly rather than through `get_repo_async`, whose identity check and hint refresh
-    // can also fail: the fallback below deletes, so only a failure to open may reach it.
-    let repository = match repositories::get_by_namespace_and_name_async(
-        &app_data.path,
-        &namespace,
-        &name,
-        app_data.config.storage.s3(),
-    )
-    .await
-    {
-        Ok(Some(repository)) => Some(repository),
-        Ok(None) => {
-            return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
-        }
+    // Resolving validates the segments, so it also rejects anything that could name a directory
+    // outside the sync dir. The repository is opened from the directory resolved, so both halves of
+    // the delete act on it, and directly rather than through `get_repo_async`, whose identity check
+    // and hint refresh can also fail: the fallback below deletes, so only a failure to open may
+    // reach it.
+    let resolved = {
+        let (sync_dir, namespace, name) = (app_data.path.clone(), namespace.clone(), name.clone());
+        let s3_opts = app_data.config.storage.s3().cloned();
+        tasks::spawn_blocking(move || {
+            let repo_dir = repositories::resolve_repo_dir(&sync_dir, &namespace, &name)?;
+            Ok::<_, OxenError>(repo_dir.map(|repo_dir| {
+                let opened =
+                    LocalRepository::from_dir_with_server_opts(&repo_dir, s3_opts.as_ref());
+                (repo_dir, opened)
+            }))
+        })
+        .await
+        .map_err(OxenError::from)??
+    };
+    let Some((repo_dir, opened)) = resolved else {
+        return Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()));
+    };
+    let repository = match opened {
+        Ok(repository) => Some(repository),
         // A repository the server cannot open is still deleted. Reporting it as missing would
         // strand the directory on disk with no way for a caller to reclaim it, and version blobs
         // held outside the directory are unreachable without the repository config anyway.
@@ -580,11 +581,9 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
         }
     };
 
-    // Begun only where the repository opened, since an unreadable one has no gate to register on.
-    let write_in_flight = repository
-        .as_ref()
-        .map(repo_locks::begin_write)
-        .transpose()?;
+    // Begun on the directory, so a maintenance operation holds off the delete of a repository that
+    // cannot open as well as one that can.
+    let write_in_flight = repo_locks::begin_write_at(&repo_dir)?;
 
     // Released before the removal is backgrounded, since the handler returns before the
     // repository is gone.
@@ -692,7 +691,6 @@ pub async fn transfer_namespace(
             min_version: Some("0.36.0".to_string()),
             is_empty: repositories::is_empty(&repo).await?,
             storage_kind: repo.storage_config().kind,
-            merkle_node_backend: Some(repo.merkle_node_backend()),
             repo_uuid: repo.repo_uuid(),
         },
     }))
@@ -763,7 +761,6 @@ pub async fn rename(
             min_version: Some("0.36.0".to_string()),
             is_empty,
             storage_kind: repo.storage_config().kind,
-            merkle_node_backend: Some(repo.merkle_node_backend()),
             repo_uuid: repo.repo_uuid(),
         },
     }))
@@ -782,6 +779,7 @@ mod tests {
     use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
     use liboxen::model::RepoIdentity;
+    use liboxen::repositories;
     use liboxen::repositories::name_table::NameTable;
     use liboxen::util;
     use std::path::Path;
@@ -872,6 +870,42 @@ mod tests {
             "a repository recording no name the server can read frees none"
         );
 
+        // Literal segments, since they are the on-disk layout.
+        let placed = "Placed-Repo";
+        let placed_uuid = Uuid::new_v4();
+        let uuid = placed_uuid.to_string();
+        let placed_dir = sync_dir
+            .join("repo")
+            .join(&uuid[0..2])
+            .join(&uuid[2..4])
+            .join(&uuid);
+        repositories::init(&placed_dir)?;
+        let config_path = util::fs::config_filepath(&placed_dir);
+        let mut config = RepositoryConfig::from_file(&config_path)?;
+        config.identity = Some(RepoIdentity {
+            repo_uuid: placed_uuid,
+            namespace: Some(namespace.to_string()),
+            name: Some(placed.to_string()),
+        });
+        config.save(&config_path)?;
+        table.claim(namespace, placed, placed_uuid)?;
+
+        let resp = super::delete(test::repo_request(&sync_dir, "/", namespace, placed))
+            .await
+            .expect("delete handler should succeed");
+
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert!(
+            wait_until_gone(&placed_dir).await,
+            "a repository placed by UUID is deleted where it is placed: {placed_dir:?}"
+        );
+        assert_eq!(
+            table.get(namespace, placed)?,
+            None,
+            "deleting a repository placed by UUID frees the name it records"
+        );
+
+        drop(table);
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }
@@ -956,6 +990,17 @@ mod tests {
                 ),
                 "a delete on a repository held for maintenance must be refused"
             );
+
+            util::fs::write_to_path(util::fs::config_filepath(&repo_dir), "not a config")?;
+            let result =
+                super::delete(test::repo_request(&sync_dir, "/", namespace, repo_name)).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenHttpError::InternalOxenError(OxenError::LockTimeout(_)))
+                ),
+                "a repository held for maintenance refuses the delete even when it cannot open"
+            );
             Ok::<(), OxenError>(())
         })
         .await?;
@@ -994,7 +1039,13 @@ mod tests {
             .expect("create should succeed");
         assert_eq!(resp.status(), http::StatusCode::OK);
 
-        let repo_dir = sync_dir.join(&namespace).join(repo_uuid.to_string());
+        let repo_dir =
+            repositories::resolve_repo_dir(&sync_dir, &namespace, &repo_uuid.to_string())?
+                .expect("the created repository resolves");
+        assert!(
+            repo_dir.starts_with(sync_dir.join("repo")),
+            "a repository with a UUID is placed by it, at {repo_dir:?}"
+        );
         let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?
             .identity
             .expect("create records identity");
@@ -1024,6 +1075,25 @@ mod tests {
             "a refused create leaves the name with the repository that holds it"
         );
 
+        // Names of its own under the first create's UUID.
+        let mut same_uuid = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
+        same_uuid.repo_uuid = Some(repo_uuid);
+        same_uuid.namespace_name = Some("bessie".to_string());
+        same_uuid.repo_name = Some("dogs".to_string());
+        let resp = super::create_repo_response(&app_data, same_uuid)
+            .await
+            .expect("the handler reports the conflict rather than failing");
+        assert_eq!(
+            resp.status(),
+            http::StatusCode::CONFLICT,
+            "a UUID another repository is placed by is refused"
+        );
+        assert_eq!(
+            NameTable::new(&sync_dir).get("bessie", "dogs")?,
+            None,
+            "a create refused for its UUID gives its name back"
+        );
+
         // The first create over again, UUID and names alike, which is what a control plane sends
         // when it repeats one whose outcome it did not see.
         let mut repeated = RepoNew::from_namespace_name(&namespace, repo_uuid.to_string(), None);
@@ -1044,10 +1114,10 @@ mod tests {
         Ok(())
     }
 
-    /// A control plane that states no UUID gets no identity, even where the name position holds
+    /// A control plane that sends no UUID gets no repository, even where the name position holds
     /// one: a repository named like a UUID must not be able to choose its own storage identity.
     #[actix_web::test]
-    async fn test_create_records_no_identity_without_a_stated_repo_uuid() -> Result<(), OxenError> {
+    async fn test_create_refuses_a_create_without_a_repo_uuid() -> Result<(), OxenError> {
         let sync_dir = test::get_sync_dir()?;
         let app_data = OxenAppData {
             path: sync_dir.clone(),
@@ -1065,14 +1135,11 @@ mod tests {
 
         let resp = super::create_repo_response(&app_data, data)
             .await
-            .expect("create should succeed");
-        assert_eq!(resp.status(), http::StatusCode::OK);
-
-        let repo_dir = sync_dir.join(&namespace).join(in_name_position.to_string());
-        let config = RepositoryConfig::from_file(util::fs::config_filepath(&repo_dir))?;
+            .expect("the create is answered");
+        assert_eq!(resp.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
         assert!(
-            config.identity.is_none(),
-            "the name position must not become the repository's identity"
+            std::fs::read_dir(&sync_dir)?.next().is_none(),
+            "the name position must not become the repository's identity, so nothing is created"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;
@@ -1198,6 +1265,7 @@ mod tests {
             "a refused rename leaves the config and the table as they were"
         );
 
+        drop(table);
         test::cleanup_sync_dir(&sync_dir)?;
         Ok(())
     }

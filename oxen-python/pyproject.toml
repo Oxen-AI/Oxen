@@ -1,5 +1,5 @@
 [project]
-version = "0.59.0"
+version = "0.62.0"
 name = "oxenai"
 description = "Data version control for machine learning"
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
     "fsspec>=2025.3.0",
     "maturin>=1.9.3",
     "pandas>=2.3.1",
-    "polars>=1.32.0",
+    "polars>=1.32.0,<2.0",
     "pyarrow>=22.0.0",
     "pytest>=8.4.1",
     "pytest-datadir>=1.8.0",

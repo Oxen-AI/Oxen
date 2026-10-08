@@ -6,17 +6,19 @@ Find the rows whose versions include the release you are upgrading to. `TBD` mea
 
 | Versions | Applies to | Step |
 | --- | --- | --- |
-| 0.51.4 to TBD | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
+| 0.51.4 to 0.61.1 | CLI, server | [Move a repository's Merkle nodes to LMDB](#move-a-repositorys-merkle-nodes-to-lmdb) |
 | 0.58.0 to TBD | Server | [Record identity for repositories that predate it](#record-identity-for-repositories-that-predate-it) |
 | 0.58.0 to TBD | Server | [Re-seed the name table after changing the sync directory by hand](#re-seed-the-name-table-after-changing-the-sync-directory-by-hand) |
 | 0.59.0 to TBD | Server | [Stop starting the server with `-a`](#stop-starting-the-server-with--a) |
 | 0.60.0 to TBD | Server, S3 backend | [Copy an S3-backed repository's objects to its UUID prefix](#copy-an-s3-backed-repositorys-objects-to-its-uuid-prefix) |
+| 0.60.0 to TBD | Server | [Move a namespace called `repo`](#move-a-namespace-called-repo) |
+| 0.61.0 to TBD | Server | [Move repositories to the directory their UUID places them in](#move-repositories-to-the-directory-their-uuid-places-them-in) |
 
 ## Move a repository's Merkle nodes to LMDB
 
-**Versions:** 0.51.4 to TBD. **Applies to:** CLI and server.
+**Versions:** 0.51.4 to 0.61.1. **Applies to:** CLI and server.
 
-The `merkle_nodes_to_lmdb` migration moves a repository's Merkle nodes from the filesystem backend onto LMDB and keeps the filesystem copy as a backup. From 0.54.0 the CLI refuses to work in a local repository still on the filesystem backend, and prints the command to run from the repository's root:
+The `merkle_nodes_to_lmdb` migration moves a repository's Merkle nodes from the filesystem backend onto LMDB and keeps the filesystem copy as a backup. Releases after 0.61.1 refuse to open a repository still on the filesystem backend and no longer carry the migration, so run it with an `oxen` CLI from this range before upgrading past 0.61.1. From 0.54.0 the CLI refuses to work in a local repository still on the filesystem backend, and prints the command to run from the repository's root:
 
 ```bash
 oxen migrate up merkle_nodes_to_lmdb .
@@ -38,12 +40,13 @@ A repository already on LMDB is left unchanged, so the loop is safe to rerun.
 
 **Versions:** 0.58.0 to TBD. **Applies to:** server.
 
-`oxen-server` refuses to create a repository under a name another repository already holds, and it learns the names that exist from the `[identity]` section of each repository's config. A repository created before `oxen-server` recorded identity has no such section, so that refusal does not cover its name until the section is written, and the server walks every config and logs a warning on each start until every repository has one.
+`oxen-server` refuses to create a repository under a name another repository already holds, and it learns the names that exist from the `[identity]` section of each repository's config. A repository created before `oxen-server` recorded identity has no such section, so that refusal does not cover its name until the section is written, and the server walks every config and logs a warning on each start until every repository has one. Until then, moving another repository into its namespace under the same name is not refused either, and afterwards requests for that name reach the moved repository rather than this one.
 
-Stop the server, then run the optional `backfill_repo_identity` migration over every repository in the sync directory, using the `oxen` CLI from the same release:
+Stop the server, then run the optional `backfill_repo_identity` migration over every repository in the sync directory, using the `oxen` CLI from the same release. Repositories under `$SYNC_DIR/repo/` always record their identity, so the loop skips them:
 
 ```bash
 for repo in "$SYNC_DIR"/*/*/; do
+  case "$repo" in "$SYNC_DIR"/repo/*) continue ;; esac
   oxen migrate up backfill_repo_identity --run-optional "$repo"
 done
 ```
@@ -83,6 +86,46 @@ Until it is gone, the `oxen` CLI run from a directory inside the sync directory 
 > **Warning:** the S3 backend is not yet supported in open source, so do not use it yet. If you do, you use it at your own risk.
 
 The server reads an S3-backed repository's objects from `repo/{repo_uuid}/` in its bucket rather than `{namespace}/{name}/`. With the server stopped, add an [`[identity]` section](../SelfHosting.md#the-identity-section) by hand to the config of any S3-backed repository that lacks one, with a new UUID and the namespace and name from its path, since the `backfill_repo_identity` migration cannot open an S3-backed repository. Then copy each S3-backed repository's objects from its old prefix to `repo/{repo_uuid}/`, using the UUID in its config. Start the server, and delete the old prefixes once the repositories read correctly.
+
+## Move a namespace called `repo`
+
+**Versions:** 0.60.0 to TBD. **Applies to:** server.
+
+`oxen-server` keeps the `repo` directory at the top of the sync directory for its own use, so it refuses to start while a namespace called `repo` holds it, and refuses to create a repository in that namespace or move one into it. Before upgrading a server holding one, stop it and move the namespace to a name nothing in the sync directory uses:
+
+```bash
+mv "$SYNC_DIR/repo" "$SYNC_DIR/NEW_NAMESPACE"
+```
+
+Each moved repository records the namespace it is in, so change `namespace = "repo"` to `namespace = "NEW_NAMESPACE"` in the `[identity]` section of its `.oxen/config.toml`. For example:
+
+```bash
+for config in "$SYNC_DIR"/NEW_NAMESPACE/*/.oxen/config.toml; do
+  sed -i.bak 's/^namespace = "repo"$/namespace = "NEW_NAMESPACE"/' "$config" && rm "$config.bak"
+done
+```
+
+Once every moved config names the new namespace, run `oxen-server seed-name-table` to see what deleting the name table releases. Its `unclaimed` count covers the names the table holds that no repository's config records, and its warning lists the first ten of them. Besides the old `repo` names, those belong to a repository removed by hand, a create that did not finish, or a repository whose config cannot be read. Fix any such config first, so the next start records that repository's name again.
+
+Then delete the name table, which the next start rebuilds from every repository's config, and start the server:
+
+```bash
+rm -rf "$SYNC_DIR/name_table"
+```
+
+A workspace reads its repository's config, so it needs no change. If `NEW_NAMESPACE` already exists, `mv` puts `repo` inside it rather than renaming it, so pick a name that does not.
+
+## Move repositories to the directory their UUID places them in
+
+**Versions:** 0.61.0 to TBD. **Applies to:** server.
+
+`oxen-server` creates each repository at `$SYNC_DIR/repo/{uuid[0:2]}/{uuid[2:4]}/{repo_uuid}` and still serves the ones created earlier from `$SYNC_DIR/{namespace}/{name}`. A later release stops looking there, so move them while the server is stopped:
+
+```bash
+oxen-server place-repositories-by-uuid
+```
+
+It moves each repository whose config records its `repo_uuid`, removes a namespace directory once its last repository has moved out, and prints a line for every repository it leaves where it is, saying why and what to do about it. The usual reasons are a repository with no `[identity]` section, which the [identity backfill](#record-identity-for-repositories-that-predate-it) gives one, and a name missing from the name table, which `oxen-server seed-name-table` records. Fix those and run it again until it prints `every_repository_moved=true`. A repository that has moved is left alone, so running it again is safe.
 
 ## Maintaining this page
 

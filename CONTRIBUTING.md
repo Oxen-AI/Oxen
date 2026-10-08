@@ -140,7 +140,7 @@ See [`AGENTS.md`](AGENTS.md) and the [CI workflows](.github/workflows) for proje
 
 - Core functionality goes in `liboxen` first, then is exposed through the CLI and server.
 - Use `cargo fmt --all` and `cargo clippy --all-targets --workspace --no-deps -- -D warnings` before submitting.
-- Run tests with `bin/test-rust` (Rust) and `bin/test-rust -p` (Python).
+- Run tests with `bin/test` (Rust) and `bin/test -p` (Python).
 - Follow the error handling rules: no `.unwrap()` or `.expect()` on `Result`/`Option` outside test code; propagate with `?`; add a new `#[from]` variant to `OxenError` that wraps your locally-defined errors.
 - New or changed I/O code should be async (use `tokio` equivalents, or `spawn_blocking` when a dependency is sync-only).
 - If your change affects Rust code that the Python bindings call into, update the Python side too.

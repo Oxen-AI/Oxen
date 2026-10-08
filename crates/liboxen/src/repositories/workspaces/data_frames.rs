@@ -19,6 +19,7 @@ use crate::{repositories, util};
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
 use std::path::{Path, PathBuf};
+use tokio::task::spawn_blocking;
 
 pub mod columns;
 pub mod embeddings;
@@ -28,6 +29,9 @@ pub mod schemas;
 pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
     log::debug!("checking dataset is indexed for {path:?}");
     let db_path = duckdb_path(workspace, path);
+    if !db_path.exists() {
+        return Ok(false);
+    }
     log::debug!("getting conn at path {db_path:?}");
 
     with_df_db_manager(&db_path, |manager| {
@@ -39,6 +43,13 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameE
             Ok(fully_indexed)
         })
     })
+}
+
+/// [`is_indexed`], off the async worker.
+pub async fn is_indexed_async(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
+    let workspace = workspace.clone();
+    let path = path.to_path_buf();
+    Ok(spawn_blocking(move || is_indexed(&workspace, &path)).await??)
 }
 
 /// Whether a staged DuckDB table exists on disk for this data frame,
@@ -101,7 +112,11 @@ pub async fn restore(
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
     // Unstage and then restage the df
-    unindex(workspace, &path)?;
+    {
+        let workspace = workspace.clone();
+        let path = path.as_ref().to_path_buf();
+        spawn_blocking(move || unindex(&workspace, path)).await??;
+    }
 
     // TODO: we could do this more granularly without a full reset
     index(repo, workspace, path.as_ref()).await?;
@@ -249,6 +264,7 @@ pub async fn from_directory(
     new_commit: &NewCommitBody,
     branch: &Branch,
 ) -> Result<Commit, OxenError> {
+    let output_path = util::fs::validate_and_normalize_path(output_path)?;
     let has_dir = repositories::tree::has_dir(repo, &workspace.commit, path.as_ref())?;
     if !has_dir {
         return Err(OxenError::basic_str(format!(
@@ -320,7 +336,7 @@ pub async fn from_directory(
     })?;
 
     // Write the DataFrame as a parquet file
-    let output_path = workspace.dir().join(output_path);
+    let output_path = workspace.dir().join(&output_path);
 
     // Check if output_path has a ".parquet" extension, if not, add it
     let output_path = if output_path
@@ -488,6 +504,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::SystemTime;
 
+    use indicatif::ProgressBar;
     use serde_json::json;
 
     use super::*;
@@ -656,6 +673,21 @@ mod tests {
             let count = workspaces::data_frames::count(&workspace, &file_path)?;
             assert_eq!(count, 7);
 
+            // A row added while a commit runs leaves the data frame staged once that commit
+            // removes the entries it read.
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            let (_, snapshot) =
+                staged_db_manager.read_staged_entries_for_commit(&ProgressBar::hidden())?;
+            workspaces::data_frames::rows::add(&repo, &workspace, &file_path, &json_data)?;
+            staged_db_manager.remove_unchanged(&snapshot)?;
+            drop(staged_db_manager);
+            let status = workspaces::status::status(&workspace)?;
+            assert_eq!(
+                status.staged_files.len(),
+                1,
+                "a row edit after the snapshot keeps the data frame staged"
+            );
+
             Ok(())
         })
         .await
@@ -716,11 +748,18 @@ mod tests {
                 .join("train")
                 .join("bounding_box.csv");
 
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
+            assert!(!workspaces::data_frames::is_indexed(
+                &workspace, &file_path
+            )?);
+            assert!(
+                !db_path.exists(),
+                "checking a never-indexed frame creates no database for it"
+            );
+
             // A normal index produces a fully-indexed, queryable table.
             workspaces::data_frames::index(&repo, &workspace, &file_path).await?;
             assert!(workspaces::data_frames::is_indexed(&workspace, &file_path)?);
-
-            let db_path = workspaces::data_frames::duckdb_path(&workspace, &file_path);
 
             // Simulate a table written by an older version: no index marker
             // table. Such a table may hold rows tombstoned as 'removed' that
@@ -2019,8 +2058,7 @@ mod tests {
 
             let (removed, yielded) = test::run_and_report_yield(
                 repositories::workspaces::files::rm(&workspace, slice::from_ref(&file_path)),
-            )
-            .await;
+            );
             let err_files = removed?;
             assert!(yielded, "rm held the thread it was called on");
             assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
@@ -2456,11 +2494,19 @@ mod tests {
                 new_name: Some("my col 2".to_string()),
                 new_data_type: None,
             };
+            let (_, snapshot) = get_staged_db_manager(&workspace.workspace_repo)?
+                .read_staged_entries_for_commit(&ProgressBar::hidden())?;
             let df =
                 workspaces::data_frames::columns::update(&repo, &workspace, &file_path, &rename)
                     .await?;
             assert!(df.column("my col 2").is_ok());
             assert!(df.column("my col").is_err());
+            get_staged_db_manager(&workspace.workspace_repo)?.remove_unchanged(&snapshot)?;
+            assert_eq!(
+                workspaces::status::status(&workspace)?.staged_files.len(),
+                1,
+                "a column rename while a commit runs leaves the data frame staged"
+            );
 
             // The renamed column must be usable through the row paths too:
             // append a row with a value in it, then edit that value.

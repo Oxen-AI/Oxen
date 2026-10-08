@@ -201,7 +201,14 @@ async fn restore_dir(
     // but empty dirs (first-class in Oxen — see CLAUDE.md "How Oxen Differs from Git")
     // have no files to drive that, and would be silently skipped (ENG-1003).
     for dir_path in &entries.dirs {
-        let working_dir_path = repo.path.join(dir_path);
+        let working_dir_path = match util::fs::working_tree_path(&repo.path, dir_path) {
+            Ok(working_dir_path) => working_dir_path,
+            Err(e) => {
+                failures.push((dir_path.clone().into(), Box::new(e)));
+                bar.inc(1);
+                continue;
+            }
+        };
         if let Err(e) = tokio::fs::create_dir_all(&working_dir_path).await {
             log::error!(
                 "restore::restore_dir: error creating directory {working_dir_path:?}: {e:?}"
@@ -415,7 +422,7 @@ pub async fn restore_file(
     let last_modified_seconds = file_node.last_modified_seconds();
     let last_modified_nanoseconds = file_node.last_modified_nanoseconds();
 
-    let working_path = repo.path.join(path);
+    let working_path = util::fs::working_tree_path(&repo.path, path)?;
     let expected_mtime = SystemTime::UNIX_EPOCH
         + Duration::from_secs(last_modified_seconds as u64)
         + Duration::from_nanos(last_modified_nanoseconds as u64);

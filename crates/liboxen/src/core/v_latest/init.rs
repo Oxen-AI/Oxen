@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use crate::config::RepositoryConfig;
-use crate::core::db::merkle_node::{DEFAULT_MERKLE_NODE_BACKEND, MerkleNodeBackend};
+use crate::core::db::merkle_node::MerkleNodeBackend;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::storage::StorageConfig;
@@ -44,7 +44,6 @@ pub fn init_with_version_default(path: &Path) -> Result<LocalRepository, OxenErr
 pub async fn init_with_version_and_storage_config(
     path: &Path,
     storage_config: Option<StorageConfig>,
-    merkle_backend: Option<MerkleNodeBackend>,
 ) -> Result<LocalRepository, OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(path);
 
@@ -56,7 +55,7 @@ pub async fn init_with_version_and_storage_config(
 
     let config = RepositoryConfig {
         storage: storage_config,
-        merkle_node_backend: Some(merkle_backend.unwrap_or(DEFAULT_MERKLE_NODE_BACKEND)),
+        merkle_node_backend: Some(MerkleNodeBackend::Lmdb),
         ..Default::default()
     };
     let repo = LocalRepository::new(path, config)?;
