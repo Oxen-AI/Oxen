@@ -155,15 +155,10 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
         .lock()
         .get(&repo.path)
         .map_or((false, false), |state| (state.running, state.last_failed));
-    // Absent when there is no record, and `Some(Err(..))` for a record holding something other
-    // than a figure, which counts the same as nothing recorded.
-    let recorded = util::fs::read_from_path(repo_size_path(repo))
+    // A record holding anything but a figure counts the same as none.
+    let figure = util::fs::read_from_path(repo_size_path(repo))
         .ok()
-        .map(|content| content.trim().parse::<u64>());
-    let figure = recorded
-        .as_ref()
-        .and_then(|parsed| parsed.as_ref().ok())
-        .copied();
+        .and_then(|content| content.trim().parse::<u64>().ok());
 
     let status = if running {
         SizeStatus::Pending
@@ -172,17 +167,7 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
     } else if figure.is_some() {
         SizeStatus::Done
     } else {
-        match &recorded {
-            Some(Err(cause)) => tracing::error!(
-                repo = ?repo.path,
-                ?cause,
-                "Replacing a recorded repository size that is not a figure"
-            ),
-            _ => log::info!(
-                "No size recorded for {:?}, starting a recalculation",
-                repo.path
-            ),
-        }
+        tracing::info!(repo = ?repo.path, "No size figure recorded, starting a recalculation");
         match update_size(repo) {
             Ok(()) => SizeStatus::Pending,
             Err(cause) => {
