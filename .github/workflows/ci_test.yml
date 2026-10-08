@@ -132,7 +132,7 @@ jobs:
         if: matrix.platform != 'windows'
         run: |
           RUST_LOG=warn,liboxen=debug,oxen_server=debug ./target/debug/oxen-server start --test > oxen-server.log 2>&1 &
-          # Wait for the server to be ready before running tests (mirrors bin/test-rust).
+          # Wait for the server to be ready before running tests (mirrors bin/test).
           for i in $(seq 1 100); do
             if curl -sf http://localhost:3000/api/health >/dev/null 2>&1; then break; fi
             if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi

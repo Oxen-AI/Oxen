@@ -574,13 +574,13 @@ mod tests {
     }
 
     /// Open the server-side repository for a pushed remote so a test can mutate its on-disk
-    /// version store. `bin/test-rust` starts oxen-server against `$SYNC_DIR`, inherited by the
+    /// version store. `bin/test` starts oxen-server against `$SYNC_DIR`, inherited by the
     /// test process; repos live under `<SYNC_DIR>/<namespace>/<name>`.
     fn server_repo(name: &str) -> Result<crate::model::LocalRepository, OxenError> {
-        let sync_dir =
-            std::path::PathBuf::from(std::env::var("SYNC_DIR").map_err(|_| {
-                OxenError::basic_str("SYNC_DIR not set; run tests via bin/test-rust")
-            })?);
+        let sync_dir = std::path::PathBuf::from(
+            std::env::var("SYNC_DIR")
+                .map_err(|_| OxenError::basic_str("SYNC_DIR not set; run tests via bin/test"))?,
+        );
         repositories::get_by_namespace_and_name(
             &sync_dir,
             crate::constants::DEFAULT_NAMESPACE,

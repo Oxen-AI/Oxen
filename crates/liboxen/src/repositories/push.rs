@@ -1617,7 +1617,7 @@ A: Checkout Oxen.ai
                 .hash()
                 .to_string();
             let sync_dir =
-                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test-rust"));
+                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test"));
             let server = repositories::get_by_namespace_and_name(
                 &sync_dir,
                 constants::DEFAULT_NAMESPACE,
@@ -1684,7 +1684,7 @@ A: Checkout Oxen.ai
 
             // The server is missing both blobs, so both appear in the missing-files list.
             let sync_dir =
-                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test-rust"));
+                PathBuf::from(std::env::var("SYNC_DIR").expect("SYNC_DIR set by bin/test"));
             let server = repositories::get_by_namespace_and_name(
                 &sync_dir,
                 constants::DEFAULT_NAMESPACE,

@@ -943,7 +943,7 @@ mod tests {
         // Build a gzipped part that inflates to one byte past the decompression cap. Highly
         // compressible zero bytes keep the compressed body tiny while the decompressed size trips
         // the limit — the decompression-bomb shape the endpoint guards against. Size via
-        // stream_segment_size() so the test tracks the active cap (128 KiB under bin/test-rust).
+        // stream_segment_size() so the test tracks the active cap (128 KiB under bin/test).
         let decompressed = vec![0u8; stream_segment_size() as usize + 1];
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(&decompressed)?;
