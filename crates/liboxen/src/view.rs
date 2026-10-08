@@ -56,7 +56,8 @@ pub use crate::view::entries::{
 };
 
 pub use crate::view::commit::{
-    CommitResponse, CommitStatsResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
+    CommitResponse, CommitStatsResponse, ListCommitResponse, PaginatedCommits, PathHistoryPage,
+    RootCommitResponse,
 };
 
 pub use crate::view::branch::{

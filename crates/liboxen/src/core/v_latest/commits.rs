@@ -24,7 +24,7 @@ use crate::model::merkle_tree::node::{CommitNode, DirNode, EMerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, User};
 use crate::opts::PaginateOpts;
 use crate::repositories::commits::commit_writer;
-use crate::view::{PaginatedCommits, StatusMessage};
+use crate::view::{PathHistoryPage, StatusMessage};
 use crate::{repositories, util};
 
 /// Configuration for commit traversal operations
@@ -956,27 +956,68 @@ pub fn search_entries(
     Ok(results)
 }
 
-/// List commits by path (directory or file) recursively
-pub fn list_by_path_recursive(
+fn push_unvisited_parents(
     repo: &LocalRepository,
-    path: &Path,
     commit: &Commit,
-    commits: &mut Vec<Commit>,
+    visited: &HashSet<String>,
+    heap: &mut BinaryHeap<TimestampedCommit>,
 ) -> Result<(), OxenError> {
-    let mut visited = HashSet::new();
-    list_by_path_recursive_impl(repo, path, commit, commits, &mut visited)
+    for parent_id in &commit.parent_ids {
+        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())?
+            && !visited.contains(&parent.id)
+        {
+            heap.push(TimestampedCommit(parent));
+        }
+    }
+    Ok(())
 }
 
-fn list_by_path_recursive_impl(
+/// Get one page of the commits in `commit`'s history that changed `path` (a file or directory),
+/// newest first. The walk stops one commit past the page, so the page reports whether a later one
+/// exists rather than counting the whole history.
+pub fn list_by_path_from_paginated(
     repo: &LocalRepository,
-    path: &Path,
     commit: &Commit,
-    commits: &mut Vec<Commit>,
-    visited: &mut HashSet<String>,
-) -> Result<(), OxenError> {
-    let mut stack = vec![commit.clone()];
+    path: &Path,
+    pagination: PaginateOpts,
+) -> Result<PathHistoryPage, OxenError> {
+    let _perf = crate::perf_guard!("core::commits::list_by_path_from_paginated");
 
-    while let Some(current_commit) = stack.pop() {
+    let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or_else(|| {
+        OxenError::PathNotFoundInRevision {
+            path: path.to_path_buf().into(),
+            revision: commit.id.clone(),
+        }
+    })?;
+    // A path resolves through `dir_hashes` to a directory or through `read_file` to a file, so any
+    // other kind here means the tree disagrees with itself rather than that the caller named
+    // something absent.
+    if !matches!(
+        node.node,
+        EMerkleTreeNode::File(_) | EMerkleTreeNode::Directory(_)
+    ) {
+        return Err(OxenError::InternalError(
+            format!(
+                "Path {path:?} in commit {} resolved to a {:?} node, expected a file or directory",
+                commit.id,
+                node.node.node_type()
+            )
+            .into(),
+        ));
+    }
+
+    let skip = pagination
+        .page_num
+        .saturating_sub(1)
+        .saturating_mul(pagination.page_size);
+    let end = skip.saturating_add(pagination.page_size);
+    let mut commits = Vec::new();
+    let mut changed_count = 0;
+    let mut has_more = false;
+    let mut visited = HashSet::new();
+    let mut heap = BinaryHeap::from([TimestampedCommit(commit.clone())]);
+
+    while let Some(TimestampedCommit(current_commit)) = heap.pop() {
         if !visited.insert(current_commit.id.clone()) {
             continue;
         }
@@ -1008,95 +1049,33 @@ fn list_by_path_recursive_impl(
         )?;
 
         if file_modified {
-            // This commit modified the file — add it and explore parents.
-            commits.push(current_commit.clone());
-            push_unvisited_parents(repo, &current_commit, visited, &mut stack)?;
+            if changed_count == end {
+                has_more = true;
+                break;
+            }
+            push_unvisited_parents(repo, &current_commit, &visited, &mut heap)?;
+            if changed_count >= skip {
+                commits.push(current_commit);
+            }
+            changed_count += 1;
         } else {
             // File not modified here. Use last_commit_id to jump ahead to the
             // next commit that did, skipping intermediate unmodified commits.
             match repositories::revisions::get(repo, last_commit_id.to_string())? {
                 Some(jump_commit) if !visited.contains(&jump_commit.id) => {
-                    stack.push(jump_commit);
+                    heap.push(TimestampedCommit(jump_commit));
                 }
-                _ => push_unvisited_parents(repo, &current_commit, visited, &mut stack)?,
+                _ => push_unvisited_parents(repo, &current_commit, &visited, &mut heap)?,
             }
         }
     }
 
-    Ok(())
-}
-
-fn push_unvisited_parents(
-    repo: &LocalRepository,
-    commit: &Commit,
-    visited: &HashSet<String>,
-    stack: &mut Vec<Commit>,
-) -> Result<(), OxenError> {
-    for parent_id in &commit.parent_ids {
-        if let Some(parent) = repositories::revisions::get(repo, parent_id.clone())?
-            && !visited.contains(&parent.id)
-        {
-            stack.push(parent);
-        }
-    }
-    Ok(())
-}
-
-/// Get paginated list of commits by path (directory or file)
-pub fn list_by_path_from_paginated(
-    repo: &LocalRepository,
-    commit: &Commit,
-    path: &Path,
-    pagination: PaginateOpts,
-) -> Result<PaginatedCommits, OxenError> {
-    let _perf = crate::perf_guard!("core::commits::list_by_path_from_paginated");
-
-    // Check if the path is a directory or file
-    let _perf_node = crate::perf_guard!("core::commits::get_node_by_path");
-    let node = repositories::tree::get_node_by_path(repo, commit, path)?.ok_or_else(|| {
-        OxenError::PathNotFoundInRevision {
-            path: path.to_path_buf().into(),
-            revision: commit.id.clone(),
-        }
-    })?;
-    let last_commit_id = match &node.node {
-        EMerkleTreeNode::File(file_node) => file_node.last_commit_id(),
-        EMerkleTreeNode::Directory(dir_node) => dir_node.last_commit_id(),
-        // A path resolves through `dir_hashes` to a directory or through `read_file` to a file,
-        // so any other kind here means the tree disagrees with itself rather than that the caller
-        // named something absent.
-        node => {
-            return Err(OxenError::InternalError(
-                format!(
-                    "Path {path:?} in commit {} resolved to a {:?} node, expected a file or directory",
-                    commit.id,
-                    node.node_type()
-                )
-                .into(),
-            ));
-        }
-    };
-    let last_commit_id = last_commit_id.to_string();
-    drop(_perf_node);
-
-    let _perf_recursive = crate::perf_guard!("core::commits::list_by_path_recursive");
-    let mut commits: Vec<Commit> = Vec::new();
-    list_by_path_recursive(repo, path, commit, &mut commits)?;
-    log::info!(
-        "list_by_path_from_paginated {} got {} commits before pagination",
-        last_commit_id,
-        commits.len()
-    );
-    drop(_perf_recursive);
-
-    let _perf_paginate = crate::perf_guard!("core::commits::paginate_path_commits");
-    let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
-    drop(_perf_paginate);
-
-    Ok(PaginatedCommits {
+    Ok(PathHistoryPage {
         status: StatusMessage::resource_found(),
         commits,
-        pagination,
+        page_number: pagination.page_num,
+        page_size: pagination.page_size,
+        has_more,
     })
 }
 

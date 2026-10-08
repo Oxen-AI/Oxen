@@ -18,8 +18,8 @@ use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
 use liboxen::view::{
-    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, RootCommitResponse,
-    StatusMessage,
+    CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, PathHistoryPage,
+    RootCommitResponse, StatusMessage,
 };
 use os_path::OsPath;
 
@@ -37,7 +37,7 @@ use bytesize::ByteSize;
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Cursor;
@@ -48,7 +48,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::io::BufReader;
 use tokio_tar::Archive;
-use utoipa::IntoParams;
+use utoipa::{IntoParams, ToSchema};
 
 #[derive(Deserialize, Debug, IntoParams)]
 pub struct ChunkedDataUploadQuery {
@@ -74,6 +74,15 @@ pub struct ListMissingFilesQuery {
     pub head: String,
 }
 
+/// A commit history response: a revision's history carries its totals, and a file or directory's
+/// history reports whether a later page exists.
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum CommitHistory {
+    Revision(PaginatedCommits),
+    Path(PathHistoryPage),
+}
+
 /// List commit history
 #[utoipa::path(
     get,
@@ -87,7 +96,7 @@ pub struct ListMissingFilesQuery {
         PageNumQuery
     ),
     responses(
-        (status = 200, description = "Paginated list of commits with total count and cache status", body = PaginatedCommits),
+        (status = 200, description = "A page of commits, newest first. A revision's history carries its total count, and a file or directory's history reports whether a later page exists.", body = CommitHistory),
         (status = 404, description = "Repository or resource not found")
     )
 )]
@@ -108,12 +117,19 @@ pub async fn history(
         page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
         page_size: query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE),
     };
+    if pagination.page_size == 0 {
+        return Err(OxenHttpError::BadRequest(
+            "page_size must be at least 1".into(),
+        ));
+    }
 
     if repositories::is_empty(&repo).await? {
-        return Ok(HttpResponse::Ok().json(PaginatedCommits::success(
-            vec![],
-            Pagination::empty(pagination),
-        )));
+        return Ok(
+            HttpResponse::Ok().json(CommitHistory::Revision(PaginatedCommits::success(
+                vec![],
+                Pagination::empty(pagination),
+            ))),
+        );
     }
     drop(_perf_parse);
 
@@ -144,7 +160,7 @@ pub async fn history(
 
             log::debug!("commit_history got {} commits", commits.commits.len());
 
-            Ok(HttpResponse::Ok().json(commits))
+            Ok(HttpResponse::Ok().json(CommitHistory::Path(commits)))
         }
         _ => {
             // Handling the case where resource is None or its path is empty
@@ -158,7 +174,7 @@ pub async fn history(
 
                 log::debug!("commit_history got {} commits", commits.commits.len());
                 // log::debug!("commit_history commits: {:?}", commits.commits);
-                Ok(HttpResponse::Ok().json(commits))
+                Ok(HttpResponse::Ok().json(CommitHistory::Revision(commits)))
             } else {
                 Err(OxenHttpError::NotFound)
             }

@@ -15,7 +15,7 @@ use liboxen::{api, repositories};
 use tokio_stream::StreamExt;
 
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crate::error::PyOxenError;
@@ -404,27 +404,31 @@ impl PyRemoteRepo {
         };
 
         let paginated_commits = if let Some(path) = path {
-            pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-                api::client::commits::list_commits_for_path(
-                    self.repo()?,
-                    revision,
-                    path,
-                    &page_opts,
-                )
-                .await
-            })?
+            pyo3_async_runtimes::tokio::get_runtime()
+                .block_on(async {
+                    api::client::commits::list_commits_for_path(
+                        self.repo()?,
+                        revision,
+                        Path::new(path),
+                        &page_opts,
+                    )
+                    .await
+                })?
+                .into()
         } else {
-            pyo3_async_runtimes::tokio::get_runtime().block_on(async {
-                api::client::commits::list_commit_history_paginated(
-                    self.repo()?,
-                    revision,
-                    &page_opts,
-                )
-                .await
-            })?
+            pyo3_async_runtimes::tokio::get_runtime()
+                .block_on(async {
+                    api::client::commits::list_commit_history_paginated(
+                        self.repo()?,
+                        revision,
+                        &page_opts,
+                    )
+                    .await
+                })?
+                .into()
         };
 
-        Ok(paginated_commits.into())
+        Ok(paginated_commits)
     }
 
     fn list_branches(&self) -> Result<Vec<PyBranch>, PyOxenError> {

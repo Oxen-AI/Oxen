@@ -58,7 +58,8 @@ use liboxen::view::{
     ErrorFilesResponse, FilePathsResponse, FileWithHash, ListCommitResponse,
     ListNamespacesResponse, ListRepositoryResponse, MerkleHashesResponse, NamespaceResponse,
     NamespaceView, PaginatedCommits, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
-    ParseResourceResponse, RepositoryResponse, RepositoryView, RootCommitResponse, StatusMessage,
+    ParseResourceResponse, PathHistoryPage, RepositoryResponse, RepositoryView, RootCommitResponse,
+    StatusMessage,
 };
 
 use sentry::integrations::tracing as sentry_tracing;
@@ -233,7 +234,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             RepositoryStatsView, DataTypeView, DataTypeCount,
             RenameRepoRequest, RepoNew, TransferNamespaceRequest, User,
             // Commit Schemas
-            CommitResponse, ListCommitResponse, PaginatedCommits, RootCommitResponse,
+            CommitResponse, ListCommitResponse, PaginatedCommits, PathHistoryPage,
+            crate::controllers::commits::CommitHistory, RootCommitResponse,
             MerkleHashesResponse, MerkleHashes, ListCommitEntryResponse, Commit,
             CommitStatsResponse, CommitStats, CommitTreeValidationResponse,
             // Workspace Schemas
