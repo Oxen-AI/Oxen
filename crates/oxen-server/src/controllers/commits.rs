@@ -238,13 +238,12 @@ pub async fn list_missing(
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
-    // Treat a commit as fully present iff BOTH the commit's merkle-tree node is on disk under
-    // `.oxen/tree/nodes/<prefix>/<rest>/` AND the commit's dir-hashes directory exists at
+    // Treat a commit as fully present iff BOTH the commit's merkle-tree node is in the repository's
+    // node store AND the commit's dir-hashes directory exists at
     // `.oxen/history/<commit_id>/dir_hashes/`. The dir-hashes directory is uploaded as the last
-    // data step of `push` (right before the now-no-op marker write), so requiring both files is a
-    // stronger proxy for "the push got all the way to the end" than node-existence alone — and
-    // avoids regressing the `create_nodes`-without-push pattern, which uploads non-leaf nodes
-    // directly without ever populating the dir-hashes DB.
+    // data step of `push`, so requiring both is a stronger proxy for "the push got all the way to
+    // the end" than node-existence alone, and avoids regressing the `create_nodes`-without-push
+    // pattern, which uploads non-leaf nodes directly without ever populating the dir-hashes DB.
     let history_dir = util::fs::oxen_hidden_dir(&repo.path).join(HISTORY_DIR);
     let mut missing_commits = HashSet::new();
     for hash in &merkle_hashes.hashes {
@@ -314,56 +313,6 @@ pub async fn list_missing_files(
         entries: missing_files,
     };
     Ok(HttpResponse::Ok().json(response))
-}
-
-/// Mark commits as synced
-#[utoipa::path(
-    post,
-    path = "/api/repos/{namespace}/{repo_name}/commits/mark_commits_as_synced",
-    tag = "Commits",
-    description = "DEPRECATED - This operation is a no-op that echoes the hashes from the request. Removed in 0.59.0; the Oxen client stopped calling it in 0.54.0.",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    request_body(
-        content = MerkleHashes,
-        description = "DEPRECATED - Deprecated no-op response echoing the submitted hashes",
-        example = json!({
-            "hashes": ["abc1234567890def1234567890fedcba", "84c76a5b2e9a2637f9091991475c404d"]
-        })
-    ),
-    responses(
-        (status = 200, description = "Deprecated no-op response echoing the submitted hashes", body = MerkleHashesResponse),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn mark_commits_as_synced(
-    mut body: web::Payload,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let mut bytes = web::BytesMut::new();
-    while let Some(item) = body.next().await {
-        bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
-    }
-
-    let request: MerkleHashes = serde_json::from_slice(&bytes)?;
-    let hashes = request.hashes;
-
-    // We removed the commit-level synced-marker mechanism: this endpoint used to write a per-commit
-    // `IS_SYNCED` marker file that `list_missing` would later consult to skip re-uploading commit
-    // metadata. The marker was load-bearing for skipping duplicate metadata uploads but became a
-    // silent-data-loss vector when stale (see sibling no-op note on `list_missing`). It now accepts
-    // the request and returns OK without writing anything, preserving protocol compatibility for
-    // clients that still send it. Clients from 0.54.0 on do not; the endpoint goes in 0.59.0, once
-    // no client in the field still sends the POST. See docs/deprecations.md.
-    log::debug!(
-        "mark_commits_as_synced received {} commit hashes (no-op)",
-        hashes.len()
-    );
-    Ok(HttpResponse::Ok().json(MerkleHashesResponse {
-        status: StatusMessage::resource_found(),
-        hashes,
-    }))
 }
 
 /// Get commit

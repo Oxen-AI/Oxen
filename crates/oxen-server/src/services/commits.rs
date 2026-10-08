@@ -21,10 +21,6 @@ pub fn commits() -> Scope {
             "/missing",
             web::post().to(controllers::commits::list_missing),
         )
-        .route(
-            "/mark_commits_as_synced",
-            web::post().to(controllers::commits::mark_commits_as_synced),
-        )
         .route("/{commit_id}", web::get().to(controllers::commits::show))
         .route(
             "/{commit_id}/complete",
