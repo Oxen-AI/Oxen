@@ -1,7 +1,7 @@
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::{get_staged_db_manager, normalize_key};
+use crate::core::staged::staged_db_manager::get_staged_db_manager;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -1056,7 +1056,8 @@ fn staged_removal(
     let Some(staged_db) = staged_db else {
         return Ok(false);
     };
-    let Some(value) = staged_db.get(normalize_key(path).as_bytes())? else {
+    // Keyed by the platform path string, which is the key `rm` writes a removal under.
+    let Some(value) = staged_db.get(path.to_string_lossy().as_bytes())? else {
         return Ok(false);
     };
     match rmp_serde::from_slice::<StagedMerkleTreeNode>(&value) {
