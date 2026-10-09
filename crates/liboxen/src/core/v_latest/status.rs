@@ -448,26 +448,23 @@ impl StagedSource<'_> {
         }
     }
 
-    /// True if `path` is staged for deletion in the in-memory staged-files map. Used at
-    /// the tree-side check to gate "missing on disk" → unsynced classification: a file
-    /// the user has already staged for delete shouldn't be re-surfaced as unsynced.
-    /// A file staged with any other status (e.g. Added/Modified) is not relevant here,
-    /// so we check the entry's status rather than mere presence in the map. Always false
-    /// in `Db` mode (`status_from_opts` doesn't classify into unsynced).
-    fn is_file_deleted(&self, path: &Path) -> bool {
+    /// True when a removal is staged for the file `path`. A file staged with any other
+    /// status does not count.
+    fn is_removal_staged(&self, path: &Path) -> Result<bool, OxenError> {
         match self {
-            Self::Db(_) => false,
-            Self::Data(data) => data
+            Self::Db(db) => staged_removal(path, db),
+            Self::Data(data) => Ok(data
                 .staged_files
                 .get(path)
-                .is_some_and(|entry| entry.status == StagedEntryStatus::Removed),
+                .is_some_and(|entry| entry.status == StagedEntryStatus::Removed)),
         }
     }
 
-    /// Like [`Self::is_file_deleted`] but for directories. Returns true when the path's
-    /// staged-dir stats include a `Removed` entry (a single dir can have both an
-    /// `Added` and a `Removed` rollup if it contains a mix of staged adds and removes).
-    fn is_dir_deleted(&self, path: &Path) -> bool {
+    /// True when removals are staged for files under the directory `path`. The directory
+    /// itself is never what is staged: its rollups count the files staged beneath it, and
+    /// one directory carries both an `Added` and a `Removed` rollup when it holds a mix of
+    /// staged adds and removes. Always false in `Db` mode, which has no unsynced set to gate.
+    fn dir_has_removals(&self, path: &Path) -> bool {
         match self {
             Self::Db(_) => false,
             Self::Data(data) => {
@@ -695,6 +692,12 @@ async fn walk_status(
                     if is_entry_dir {
                         log::debug!("walk_status entry is a directory {path:?}");
                         subdirs_to_recurse.push(relative_path);
+                    } else if staged.is_removal_staged(&relative_path)? {
+                        log::debug!("walk_status entry has a staged removal {path:?}");
+                        // The staged removal already accounts for the committed entry, so
+                        // what sits on disk is a new file that nothing tracks.
+                        current.untracked.add_file(relative_path.clone());
+                        current.untracked_count += 1;
                     } else if staged.is_path_staged(&relative_path)? {
                         log::debug!("walk_status entry is staged {path:?}");
                         // Check this after handling directories, because we still need
@@ -795,7 +798,7 @@ async fn walk_status(
                             dir_state.removed.insert(relative_file_path);
                         }
                         MissingClassification::AsUnsynced => {
-                            if !staged.is_file_deleted(&relative_file_path) {
+                            if !staged.is_removal_staged(&relative_file_path)? {
                                 dir_state.unsynced.add_file(relative_file_path);
                             }
                         }
@@ -850,7 +853,7 @@ async fn walk_status(
                                             dir_state.removed.insert(relative_file_path);
                                         }
                                         MissingClassification::AsUnsynced => {
-                                            if !staged.is_file_deleted(&relative_file_path) {
+                                            if !staged.is_removal_staged(&relative_file_path)? {
                                                 dir_state.unsynced.add_file(relative_file_path);
                                             }
                                         }
@@ -862,10 +865,11 @@ async fn walk_status(
                                 if !dir_path.exists() {
                                     // Only do this for non-existent dirs — existing dirs
                                     // already trigger a queued EnterDir.
-                                    let dir_deleted = staged.is_dir_deleted(&relative_dir_path);
+                                    let removals_staged =
+                                        staged.dir_has_removals(&relative_dir_path);
                                     let should_record = match missing {
                                         MissingClassification::AsRemoved => true,
-                                        MissingClassification::AsUnsynced => !dir_deleted,
+                                        MissingClassification::AsUnsynced => !removals_staged,
                                     };
                                     if should_record {
                                         let mut count: usize = 0;
@@ -1041,6 +1045,28 @@ fn is_staged(
         }
     }
     Ok(false)
+}
+
+/// True when the staged db holds a `Removed` entry for `path`. An entry that does not
+/// decode counts as no removal.
+fn staged_removal(
+    path: &Path,
+    staged_db: &Option<DBWithThreadMode<SingleThreaded>>,
+) -> Result<bool, OxenError> {
+    let Some(staged_db) = staged_db else {
+        return Ok(false);
+    };
+    // Keyed by the platform path string, which is the key `rm` writes a removal under.
+    let Some(value) = staged_db.get(path.to_string_lossy().as_bytes())? else {
+        return Ok(false);
+    };
+    match rmp_serde::from_slice::<StagedMerkleTreeNode>(&value) {
+        Ok(entry) => Ok(entry.status == StagedEntryStatus::Removed),
+        Err(err) => {
+            log::error!("staged_removal error decoding {path:?}: {err}");
+            Ok(false)
+        }
+    }
 }
 
 fn in_staged_data(path: &Path, staged_data: &StagedData) -> Result<bool, OxenError> {

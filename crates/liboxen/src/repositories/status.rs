@@ -545,6 +545,21 @@ mod tests {
                 StagedEntryStatus::Removed
             );
 
+            // Put the file back on disk while its removal stays staged.
+            util::fs::write_to_path(&og_file, "hello")?;
+            let status = repositories::status(&repo).await?;
+
+            assert_eq!(
+                status.staged_files[&og_basename].status,
+                StagedEntryStatus::Removed,
+                "recreating the file leaves the staged removal alone"
+            );
+            assert_eq!(
+                status.untracked_files,
+                vec![og_basename.clone()],
+                "the recreated file is untracked"
+            );
+
             Ok(())
         })
         .await
@@ -729,6 +744,21 @@ mod tests {
 
             let relative_path = util::fs::path_relative_to_dir(&one_shot_file, repo_path)?;
             assert!(files.contains(&relative_path));
+
+            // Stage the removal and put the file back, inside a committed directory.
+            repositories::rm(&repo, &RmOpts::from_path(&relative_path)).await?;
+            util::fs::write_to_path(&one_shot_file, "a,b\n1,2\n")?;
+
+            let status = repositories::status(&repo).await?;
+            assert_eq!(
+                status.untracked_files,
+                vec![relative_path.clone()],
+                "the recreated file is untracked"
+            );
+            assert!(
+                status.untracked_dirs.is_empty(),
+                "its directory stays tracked rather than being promoted to untracked"
+            );
 
             Ok(())
         })
