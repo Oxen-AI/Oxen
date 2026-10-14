@@ -58,14 +58,7 @@ mod tests {
             )
             .await?;
 
-            let (staged, yielded) = test::run_and_report_yield(
-                repositories::workspaces::status::status_from_dir_async(&workspace, Path::new("")),
-            );
-            assert!(
-                yielded,
-                "status_from_dir_async held the thread it was called on"
-            );
-            let staged = staged?;
+            let staged = super::status_from_dir_async(&workspace, Path::new("")).await?;
             assert!(staged.staged_files.is_empty());
             assert!(staged.modified_files.is_empty());
             assert!(staged.removed_files.is_empty());

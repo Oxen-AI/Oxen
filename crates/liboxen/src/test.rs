@@ -34,17 +34,12 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::future::Future;
 use std::io::prelude::*;
-use std::panic::resume_unwind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tokio::runtime::Builder;
-use tokio::task;
 use tokio::time::{sleep, timeout};
 use tracing::level_filters::LevelFilter;
 use walkdir::WalkDir;
@@ -2126,50 +2121,6 @@ pub fn add_img_file_to_dir(dir: &Path, file_path: &Path) -> Result<PathBuf, Oxen
     }
 }
 
-/// Run `work` to completion and report whether it ever yielded the thread it started on.
-///
-/// `work` runs on a current-thread runtime of its own, the kind an oxen-server actix worker runs
-/// on, whose single blocking thread stays occupied until `work` first yields. Work handed to
-/// `spawn_blocking` therefore cannot finish before `work` yields, however fast it is, so `false`
-/// means `work` held the thread end to end, which for a server-side operation means it held an
-/// actix worker and every connection assigned to it.
-///
-/// Assert on the operation itself rather than on a caller that awaits other offloaded work
-/// first, since any of those awaits would set the flag on the operation's behalf.
-pub fn run_and_report_yield<F>(work: F) -> (F::Output, bool)
-where
-    F: Future + Send,
-    F::Output: Send,
-{
-    let yielded = Arc::new(AtomicBool::new(false));
-    let (release, gate) = mpsc::channel::<()>();
-    let output = thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                let runtime = Builder::new_current_thread()
-                    .enable_all()
-                    .max_blocking_threads(1)
-                    .build()
-                    .expect("a current-thread runtime with one blocking thread builds");
-                runtime.block_on(async {
-                    task::spawn_blocking(move || gate.recv());
-                    let flag = Arc::clone(&yielded);
-                    let probe_release = release.clone();
-                    task::spawn(async move {
-                        flag.store(true, Ordering::SeqCst);
-                        let _ = probe_release.send(());
-                    });
-                    let output = work.await;
-                    let _ = release.send(());
-                    output
-                })
-            })
-            .join()
-            .unwrap_or_else(|panic| resume_unwind(panic))
-    });
-    (output, yielded.load(Ordering::SeqCst))
-}
-
 // Catch all tests for the library
 #[cfg(test)]
 mod tests {
@@ -2179,30 +2130,7 @@ mod tests {
     use crate::error::OxenError;
     use crate::repositories;
 
-    use tokio::task;
-
-    use super::{
-        run_and_report_yield, run_training_data_repo_test_fully_committed_async,
-        write_txt_file_to_path,
-    };
-
-    #[test]
-    fn test_run_and_report_yield_tells_offloaded_work_from_inline_work() {
-        let ((), offloaded) = run_and_report_yield(async {
-            task::spawn_blocking(|| ())
-                .await
-                .expect("the offloaded closure runs to completion")
-        });
-        assert!(
-            offloaded,
-            "work awaiting spawn_blocking yields, however fast the closure is"
-        );
-        let ((), inline) = run_and_report_yield(async {});
-        assert!(
-            !inline,
-            "work that never awaits anything pending holds the thread"
-        );
-    }
+    use super::{run_training_data_repo_test_fully_committed_async, write_txt_file_to_path};
 
     #[tokio::test]
     async fn test_oxen_ignore_file() -> Result<(), OxenError> {

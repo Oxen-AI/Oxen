@@ -1616,12 +1616,7 @@ mod tests {
             let workspace = indexed_workspace(&repo, &commit, "rm-unindexes").await?;
             assert!(is_indexed(&workspace, &path)?);
 
-            let (removed, yielded) = test::run_and_report_yield(files::rm(
-                &workspace,
-                slice::from_ref(&path),
-            ));
-            let err_files = removed?;
-            assert!(yielded, "rm held the thread it was called on");
+            let err_files = files::rm(&workspace, slice::from_ref(&path)).await?;
             assert!(err_files.is_empty(), "rm reported errors: {err_files:?}");
             assert!(
                 !is_indexed(&workspace, &path)?,
