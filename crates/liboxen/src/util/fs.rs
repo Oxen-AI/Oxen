@@ -48,7 +48,7 @@ use video_rs::decode::Decoder;
 
 /// Write `data` at `offset` in the existing file at `path`. Writes to separate ranges may run on any
 /// number of threads at once.
-fn write_at(path: &Path, offset: u64, data: &[u8]) -> Result<(), OxenError> {
+pub(crate) fn write_at(path: &Path, offset: u64, data: &[u8]) -> Result<(), OxenError> {
     let mut file = OpenOptions::new()
         .write(true)
         .open(path)

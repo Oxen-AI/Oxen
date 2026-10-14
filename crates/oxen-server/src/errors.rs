@@ -397,6 +397,40 @@ impl error::ResponseError for OxenHttpError {
                             .insert_header(("Retry-After", "1"))
                             .json(error_json)
                     }
+                    OxenError::VersionUploadNotFound(upload_id) => {
+                        tracing::warn!(%upload_id, "Version upload not found");
+                        HttpResponse::NotFound()
+                            .json(StatusMessageDescription::not_found(error.to_string()))
+                    }
+                    OxenError::VersionUploadPartDeferred {
+                        upload_id,
+                        part_number,
+                        reason,
+                    } => {
+                        tracing::debug!(
+                            %upload_id,
+                            part_number,
+                            %reason,
+                            "Deferred a version upload part"
+                        );
+                        let error_json = json!({
+                            "error": {
+                                "type": "upload_part_deferred",
+                                "title": "Part cannot be stored yet",
+                                "detail": error.to_string(),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": "too_many_requests",
+                        });
+                        HttpResponse::TooManyRequests()
+                            .insert_header(("Retry-After", "1"))
+                            .json(error_json)
+                    }
+                    OxenError::VersionUploadRefused(_) => {
+                        tracing::warn!(%error, "Refused a version upload request");
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
                     OxenError::NoMergeBase { base, head } => {
                         log::debug!("No merge base between {base} and {head}");
                         let error_json = json!({

@@ -49,6 +49,45 @@ pub struct CompletedFileUpload {
     pub upload_results: Option<Vec<HashMap<String, String>>>,
 }
 
+/// Body of `POST /versions/uploads`: the file's hash and size, and where to stage it once it
+/// completes.
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
+pub struct BeginVersionUploadRequest {
+    pub hash: String,
+    pub size: u64,
+    pub destination: Option<WorkspaceDestination>,
+}
+
+/// The workspace and path to stage an uploaded file at.
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
+pub struct WorkspaceDestination {
+    pub workspace_id: String,
+    #[schema(value_type = String)]
+    pub path: PathBuf,
+}
+
+/// An upload begun: send parts 1 through `num_parts`, each `part_size` bytes but the last.
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
+pub struct VersionUploadResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub upload_id: String,
+    pub part_size: u64,
+    pub num_parts: u64,
+    /// How many consecutive parts the upload accepts at once, starting at the first part not yet
+    /// hashed. A part past them gets 429, so a client sending parts in order keeps at most this
+    /// many in flight.
+    pub part_window: u64,
+}
+
+/// A part stored. `completed` is true for the part that completed the upload.
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
+pub struct VersionUploadPartResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    pub completed: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CompleteVersionUploadRequest {
     pub files: Vec<CompletedFileUpload>,

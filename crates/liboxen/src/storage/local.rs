@@ -419,16 +419,15 @@ impl VersionStore for LocalVersionStore {
 
     async fn begin_version_upload(
         &self,
-        hash: &str,
+        hash: MerkleHash,
         size: u64,
         part_size: u64,
     ) -> Result<Box<dyn VersionUpload>, OxenError> {
-        let expected_hash: MerkleHash = hash.parse()?;
-        let version_path = self.version_path(hash);
+        let version_path = self.version_path(&hash.to_string());
         let target = version_path.clone();
         let file = spawn_blocking(move || {
             AtomicFile::new(&target)
-                .with_hash(expected_hash)
+                .with_hash(hash)
                 .open_for_parts(size)
         })
         .await??;
@@ -975,7 +974,7 @@ mod tests {
             upload
         };
         let upload = store
-            .begin_version_upload(&hash, data.len() as u64, part_size as u64)
+            .begin_version_upload(digest, data.len() as u64, part_size as u64)
             .await
             .expect("begin upload");
         let upload = upload_parts(upload).await;
@@ -984,7 +983,11 @@ mod tests {
 
         let wrong = hasher::hash_buffer(b"some other file");
         let upload = store
-            .begin_version_upload(&wrong, data.len() as u64, part_size as u64)
+            .begin_version_upload(
+                wrong.parse().expect("a version file hash parses"),
+                data.len() as u64,
+                part_size as u64,
+            )
             .await
             .expect("begin upload");
         let upload = upload_parts(upload).await;

@@ -51,7 +51,10 @@ use liboxen::view::repository::{
     RepositoryDataTypesView, RepositoryListView, RepositoryStatsResponse, RepositoryStatsView,
 };
 use liboxen::view::tree::merkle_hashes::MerkleHashes;
-use liboxen::view::versions::{VersionFile, VersionFileResponse};
+use liboxen::view::versions::{
+    BeginVersionUploadRequest, VersionFile, VersionFileResponse, VersionUploadPartResponse,
+    VersionUploadResponse, WorkspaceDestination,
+};
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
 use liboxen::view::{
     CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo,
@@ -79,6 +82,7 @@ use liboxen::model::LocalRepository;
 use liboxen::repositories;
 use liboxen::repositories::name_table::{NameTable, seed};
 use liboxen::repositories::placement;
+use liboxen::repositories::versions::uploads;
 use liboxen::sync_dir;
 
 use crate::config::Config;
@@ -214,6 +218,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::versions::download,
         crate::controllers::versions::batch_download,
         crate::controllers::versions::batch_upload,
+        crate::controllers::versions::uploads::begin,
+        crate::controllers::versions::uploads::upload_part,
     ),
     components(
         // TODO: I'm not sure if these are all necessary to include
@@ -260,7 +266,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             GenericMetadata, MetadataDir, MetadataText, MetadataImage,
             MetadataVideo, MetadataAudio, MetadataTabular,
             // Version Schemas,
-            VersionFile, VersionFileResponse,
+            VersionFile, VersionFileResponse, BeginVersionUploadRequest, WorkspaceDestination,
+            VersionUploadResponse, VersionUploadPartResponse,
             // Size Schemas
             RepoSizeFile, SizeStatus,
         ),
@@ -882,6 +889,8 @@ async fn start(
     // to the client as a dropped connection (502 Bad Gateway).
     const ACTIX_KEEP_ALIVE_SECS: u64 = 75;
 
+    tokio::spawn(uploads::abort_idle_periodically());
+
     let server_result = HttpServer::new(move || {
         App::new()
             .app_data(data.clone())
@@ -947,6 +956,8 @@ async fn start(
     .run()
     .await;
 
+    log::info!("Aborting version uploads in progress");
+    uploads::abort_all().await;
     log::info!("HTTP server stopped — flushing DuckDB connection cache");
     liboxen::core::db::data_frames::df_db::flush_all_df_db_connections();
     log::info!("DuckDB connection cache flushed — exiting");

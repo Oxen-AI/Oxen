@@ -554,12 +554,19 @@ mod tests {
     use crate::app_data::OxenAppData;
     use crate::controllers;
     use crate::test;
-    use actix_web::http::header;
+    use actix_web::http::{StatusCode, header};
+    use actix_web::test::{TestRequest, call_service, read_body};
     use actix_web::{App, web};
+    use liboxen::constants::stream_segment_size;
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::FilePathsResponse;
+    use liboxen::view::versions::{
+        BeginVersionUploadRequest, VersionUploadPartResponse, VersionUploadResponse,
+        WorkspaceDestination,
+    };
+    use std::path::Path;
 
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::web::Bytes;
@@ -707,6 +714,14 @@ mod tests {
                 .route(
                     "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path:.*}",
                     web::post().to(controllers::workspaces::files::add),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions/uploads",
+                    web::post().to(controllers::versions::uploads::begin),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions/uploads/{upload_id}/parts/{part_number}",
+                    web::put().to(controllers::versions::uploads::upload_part),
                 ),
         )
         .await;
@@ -730,6 +745,74 @@ mod tests {
         let file_hash = util::hasher::hash_buffer(file_content.as_bytes());
         let stored = repo.version_store().get_version(&file_hash).await?;
         assert_eq!(stored, file_content.as_bytes());
+
+        // A version upload's parts may arrive out of order, and the part that completes the file
+        // stages it in the workspace.
+        let data: Vec<u8> = (0..stream_segment_size() + 10)
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let hash = util::hasher::hash_buffer(&data);
+        let uploads = format!("/oxen/{namespace}/{repo_name}/versions/uploads");
+        let req = TestRequest::post()
+            .uri(&uploads)
+            .set_json(BeginVersionUploadRequest {
+                hash: hash.clone(),
+                size: data.len() as u64,
+                destination: Some(WorkspaceDestination {
+                    workspace_id: workspace_id.clone(),
+                    path: "data/big.bin".into(),
+                }),
+            })
+            .to_request();
+        let resp = call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let begun: VersionUploadResponse = serde_json::from_slice(&read_body(resp).await)?;
+        assert_eq!(begun.num_parts, 2);
+        assert!(
+            begun.part_window >= begun.num_parts,
+            "the window covers every part of a two-part file: {}",
+            begun.part_window
+        );
+
+        let part_size = begun.part_size as usize;
+        let parts_uri = |n: u64| format!("{uploads}/{}/parts/{n}", begun.upload_id);
+        let mut completed = Vec::new();
+        for (part_number, part) in [(2, &data[part_size..]), (1, &data[..part_size])] {
+            let req = TestRequest::put()
+                .uri(&parts_uri(part_number))
+                .set_payload(part.to_vec())
+                .to_request();
+            let resp = call_service(&app, req).await;
+            assert_eq!(resp.status(), StatusCode::OK, "part {part_number}");
+            let stored: VersionUploadPartResponse = serde_json::from_slice(&read_body(resp).await)?;
+            completed.push(stored.completed);
+        }
+        assert_eq!(
+            completed,
+            [false, true],
+            "only the part that fills the file completes it"
+        );
+        assert_eq!(repo.version_store().get_version(&hash).await?, data);
+        let workspace = repositories::workspaces::get(&repo, &workspace_id)?
+            .ok_or_else(|| OxenError::WorkspaceNotFound(workspace_id.clone().into()))?;
+        let status = repositories::workspaces::status::status(&workspace)?;
+        drop(workspace);
+        assert!(
+            status.staged_files.contains_key(Path::new("data/big.bin")),
+            "the completed upload is staged at the requested path: {:?}",
+            status.staged_files.keys()
+        );
+
+        let req = TestRequest::put()
+            .uri(&parts_uri(1))
+            .set_payload(data[..part_size].to_vec())
+            .to_request();
+        let resp = call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "a completed upload takes no more parts"
+        );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())

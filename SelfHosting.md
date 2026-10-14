@@ -66,6 +66,8 @@ s3_region = "us-west-1"      # required iff "s3" is in backends
 - **`s3_bucket`** — the S3 bucket the server uses for any S3-backed repo. Required when `"s3"` appears in `backends` and rejected when it doesn't. Each repo gets the prefix `repo/{repo_uuid}/` inside this bucket, named for the repo's UUID in its config, so renaming a repo or moving it to another namespace leaves its objects where they are. The prefix is not configurable per repo.
   - **`s3_region`** — the AWS region the bucket lives in (e.g. `us-west-1`). Required when `"s3"` appears in `backends`. The server uses it to build the S3 client directly rather than detecting it at runtime; if it's wrong, startup fails when the bucket reachability check runs.
 
+Give the bucket a lifecycle rule that aborts incomplete multipart uploads after a few days. The server stores a large file as a multipart upload, and aborts it if the upload is abandoned or the server shuts down, but an upload a server crash interrupts stays in the bucket, and S3 keeps and bills its parts until something aborts it.
+
 Omitting the `[storage]` section entirely is equivalent to:
 
 ```toml

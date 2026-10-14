@@ -553,6 +553,27 @@ pub enum OxenError {
         actual: Option<String>,
     },
 
+    /// No version upload has this id on this server: it never began, it already finished or
+    /// expired, or the server restarted since it began. oxen-server maps this to HTTP 404.
+    #[error("Version upload {0} not found")]
+    VersionUploadNotFound(StringError),
+
+    /// A part of a version upload that can be stored once the upload catches up: it arrived too far
+    /// ahead of the parts before it, an earlier copy of it is still being stored, or the upload is
+    /// completing. oxen-server maps this to HTTP 429 with `Retry-After`.
+    #[error("Part {part_number} of version upload {upload_id} cannot be stored yet: {reason}")]
+    VersionUploadPartDeferred {
+        upload_id: String,
+        part_number: u64,
+        reason: String,
+    },
+
+    /// A version upload refused a request it can never accept: a hash or size no upload can have, a
+    /// part number out of range, a part of the wrong length, or bytes that do not hash to the file's
+    /// hash. oxen-server maps this to HTTP 400.
+    #[error("Version upload refused: {0}")]
+    VersionUploadRefused(StringError),
+
     /// Encountered when authentication fails. Contains the authentication error message.
     #[error("Authentication failed: {0}")]
     Authentication(StringError),
@@ -1029,6 +1050,7 @@ impl OxenError {
                 | OxenError::MerkleNodeNotFound(_)
                 | OxenError::DiffPathInNeitherRevision { .. }
                 | OxenError::PathNotFoundInRevision { .. }
+                | OxenError::VersionUploadNotFound(_)
         )
     }
 
@@ -1066,6 +1088,7 @@ impl OxenError {
             OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
             OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
+            OxenError::VersionUploadRefused(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {

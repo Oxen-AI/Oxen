@@ -6,7 +6,6 @@ use rocksdb::{DB, Direction, IteratorMode, WriteBatch};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -1057,7 +1056,7 @@ pub async fn stage_file_with_hash(
     workspace: &Workspace,
     data_path: &Path,
     dst_path: &Path,
-    hash: &str,
+    hash: MerkleHash,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
@@ -1087,7 +1086,7 @@ pub async fn stage_file_with_hash(
         FileStatus {
             data_path: data_path.to_path_buf(),
             status,
-            hash: MerkleHash::from_str(hash)?,
+            hash,
             num_bytes: metadata.len(),
             mtime,
             previous_metadata,
@@ -1097,7 +1096,7 @@ pub async fn stage_file_with_hash(
         FileStatus {
             data_path: data_path.to_path_buf(),
             status: StagedEntryStatus::Added,
-            hash: MerkleHash::from_str(hash)?,
+            hash,
             num_bytes: metadata.len(),
             mtime,
             previous_metadata: None,

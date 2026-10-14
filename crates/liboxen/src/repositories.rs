@@ -62,6 +62,7 @@ pub mod status;
 pub mod storage;
 pub mod tree;
 pub mod verify;
+pub mod versions;
 pub mod workspaces;
 
 pub use add::add;

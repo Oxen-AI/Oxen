@@ -27,7 +27,7 @@ use crate::model::merkle_tree::node::EMerkleTreeNode;
 use crate::model::merkle_tree::node::{MerkleTreeNode, StagedMerkleTreeNode};
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, StagedEntryStatus};
+use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::util;
@@ -76,6 +76,7 @@ pub async fn add_version_file(
     file_hash: &str,
 ) -> Result<PathBuf, OxenError> {
     let dst_path = dst_path.as_ref();
+    let hash = file_hash.parse()?;
 
     // Materialize the version blob so the staging metadata computation has a local file to read.
     // The returned guard cleans up any temp file once staging has read it.
@@ -84,11 +85,21 @@ pub async fn add_version_file(
         .version_store()
         .materialize(file_hash, &workspace.dir())
         .await?;
+    add_version_file_from(workspace, &version_path, dst_path, hash).await
+}
 
+/// Stage the version file `file_hash` at `dst_path`, reading its bytes from `data_path`, a local
+/// copy of them.
+pub(crate) async fn add_version_file_from(
+    workspace: &Workspace,
+    data_path: &Path,
+    dst_path: &Path,
+    file_hash: MerkleHash,
+) -> Result<PathBuf, OxenError> {
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     stage_file_with_hash(
         workspace,
-        &version_path,
+        data_path,
         dst_path,
         file_hash,
         &staged_db_manager,
@@ -161,16 +172,21 @@ pub async fn add_version_files_at_paths(
                 continue;
             }
         };
-        match stage_file_with_hash(
-            workspace,
-            &version_path,
-            &dst_path,
-            &hash,
-            &staged_db_manager,
-            &seen_dirs,
-        )
-        .await
-        {
+        let staged = match hash.parse() {
+            Ok(file_hash) => {
+                stage_file_with_hash(
+                    workspace,
+                    &version_path,
+                    &dst_path,
+                    file_hash,
+                    &staged_db_manager,
+                    &seen_dirs,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        };
+        match staged {
             Ok(_) => staged_paths.push(dst_path),
             Err(e) => {
                 let error = format!("Failed to add file to staged db: {e}");

@@ -204,7 +204,7 @@ pub async fn begin_exclusive(repo: &LocalRepository) -> Result<ExclusiveAccess, 
 }
 
 /// `begin_exclusive` with an explicit drain deadline.
-async fn begin_exclusive_with_timeout(
+pub(crate) async fn begin_exclusive_with_timeout(
     repo: &LocalRepository,
     drain_timeout: Duration,
 ) -> Result<ExclusiveAccess, OxenError> {

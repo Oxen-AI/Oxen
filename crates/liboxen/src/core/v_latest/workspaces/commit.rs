@@ -906,7 +906,7 @@ mod tests {
             workspace,
             &path,
             Path::new(name),
-            &hash,
+            hash.parse()?,
             &staged_db_manager,
             seen_dirs,
         )

@@ -1,4 +1,5 @@
 pub mod chunks;
+pub mod uploads;
 
 use crate::errors::OxenHttpError;
 use crate::helpers::{file_stream_response, get_repo};

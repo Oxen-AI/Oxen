@@ -35,6 +35,14 @@ pub fn versions() -> Scope {
                 .route(web::post().to(controllers::versions::chunks::complete)),
         )
         .route(
+            "/uploads",
+            web::post().to(controllers::versions::uploads::begin),
+        )
+        .route(
+            "/uploads/{upload_id}/parts/{part_number}",
+            web::put().to(controllers::versions::uploads::upload_part),
+        )
+        .route(
             // TODO: change the endpoint to /{version_id} for consistency and a more efficient download when client has the file hash
             // For this change, a easy mapping from file_hash to file_node is needed.
             "/{resource:.*}",

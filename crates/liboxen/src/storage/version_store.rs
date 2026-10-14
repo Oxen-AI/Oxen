@@ -315,7 +315,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// [`VersionUpload::complete`].
     async fn begin_version_upload(
         &self,
-        hash: &str,
+        hash: MerkleHash,
         size: u64,
         part_size: u64,
     ) -> Result<Box<dyn VersionUpload>, OxenError>;
@@ -637,7 +637,7 @@ impl VersionStore for UnconfiguredS3VersionStore {
 
     async fn begin_version_upload(
         &self,
-        _hash: &str,
+        _hash: MerkleHash,
         _size: u64,
         _part_size: u64,
     ) -> Result<Box<dyn VersionUpload>, OxenError> {
