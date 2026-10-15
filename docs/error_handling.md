@@ -81,7 +81,7 @@ looking at.
 **8. Keep variable data out of the log message.** The log level decides what is reported as an
 incident, and the message text is the grouping key for those reports. Interpolating a hash, path, or
 id into the message produces a *separate* report per value rather than one for the condition. Log a
-constant message with the variable as a structured field (`tracing::error!(hash = %hash, "...")`)
+constant message with the variable as a structured field (`tracing::error!(oxen.file_hash = %hash, "...")`, named per the telemetry field rule in `AGENTS.md`)
 unless per-value grouping is genuinely what you want. Note `log::error!` has no structured fields
 and always formats into the message.
 

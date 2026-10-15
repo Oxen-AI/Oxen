@@ -12,7 +12,7 @@ use crate::repositories;
 use futures::{StreamExt, stream};
 
 /// # Fetch the remote branches and objects
-#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 pub async fn fetch_all(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
@@ -83,7 +83,7 @@ pub async fn fetch_all(
     branches
 }
 
-#[tracing::instrument(skip(repo, fetch_opts), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 pub async fn fetch_branch(
     repo: &LocalRepository,
     fetch_opts: &FetchOpts,
@@ -101,7 +101,7 @@ pub async fn fetch_branch(
     Ok(branch)
 }
 
-#[tracing::instrument(skip(repo, remote_repo, fetch_opts), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 pub async fn fetch_remote_branch(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,

@@ -214,8 +214,8 @@ async fn commit_inner(
             .and_then(|staged| staged.remove_unchanged(&staged_snapshot))
         {
             tracing::error!(
-                workspace_id = %workspace.id,
-                cause = ?err,
+                oxen.workspace_id = %workspace.id,
+                exception.message = ?err,
                 "Workspace commit landed but its entries could not be unstaged"
             );
         }
@@ -230,8 +230,8 @@ async fn commit_inner(
             // remove.
             if let Err(err) = repositories::workspaces::delete(&workspace) {
                 tracing::error!(
-                    workspace_id = %workspace.id,
-                    cause = ?err,
+                    oxen.workspace_id = %workspace.id,
+                    exception.message = ?err,
                     "Workspace commit landed but the workspace could not be deleted"
                 );
             }

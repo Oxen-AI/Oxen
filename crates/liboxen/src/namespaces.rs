@@ -67,8 +67,8 @@ pub fn get(
             && let Err(cause) = size::update_size(repo)
         {
             tracing::warn!(
-                repo = ?repo.path,
-                ?cause,
+                oxen.repository_path = %repo.path.display(),
+                exception.message = ?cause,
                 "Could not start a size recalculation for a repository counted as nothing"
             );
         }
@@ -80,9 +80,9 @@ pub fn get(
         .count();
     if outstanding > 0 {
         tracing::warn!(
-            namespace = name,
-            outstanding,
-            repositories = figures.len(),
+            oxen.namespace = name,
+            oxen.outstanding_repository_count = outstanding,
+            oxen.repository_count = figures.len(),
             "Reporting a storage total that counts some repositories at a figure no pass completed"
         );
     }

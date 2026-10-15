@@ -10,7 +10,7 @@ use crate::model::LocalRepository;
 /// Pull a repository's data from default branches origin/main
 /// Defaults defined in
 /// `constants::DEFAULT_REMOTE_NAME` and `constants::DEFAULT_BRANCH_NAME`
-#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     #[cfg(feature = "metrics")]
     metrics::counter!("oxen_pull_total").increment(1);
@@ -28,7 +28,7 @@ pub async fn pull(repo: &LocalRepository) -> Result<(), OxenError> {
     result
 }
 
-#[tracing::instrument(skip(repo), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 pub async fn pull_all(repo: &LocalRepository) -> Result<(), OxenError> {
     #[cfg(feature = "metrics")]
     metrics::counter!("oxen_pull_total").increment(1);

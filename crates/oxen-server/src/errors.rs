@@ -359,7 +359,7 @@ impl error::ResponseError for OxenHttpError {
                             .json(error_json)
                     }
                     OxenError::CommitIdTaken(commit_id) => {
-                        tracing::warn!(%commit_id, "Refused a commit whose id is already taken");
+                        tracing::warn!(oxen.commit_id = %commit_id, "Refused a commit whose id is already taken");
                         let error_json = json!({
                             "error": {
                                 "type": "commit_id_taken",
@@ -379,9 +379,9 @@ impl error::ResponseError for OxenHttpError {
                         actual,
                     } => {
                         tracing::warn!(
-                            %branch,
-                            ?expected,
-                            ?actual,
+                            oxen.branch_name = %branch,
+                            oxen.expected_commit_id = ?expected,
+                            oxen.actual_commit_id = ?actual,
                             "Refused to move a branch another write moved first"
                         );
                         let error_json = json!({
@@ -576,7 +576,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::StorageChangedDuringMove(repo) => {
-                        tracing::warn!(repo = %repo, "Storage move refused, the repository's storage changed during it");
+                        tracing::warn!(oxen.repository_path = %repo, "Storage move refused, the repository's storage changed during it");
                         let error_json = json!({
                             "error": {
                                 "type": "storage_changed_during_move",
@@ -589,7 +589,7 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::StorageMoveInProgress(repo) => {
-                        tracing::warn!(repo = %repo, "Storage move refused, another move of the repository is running");
+                        tracing::warn!(oxen.repository_path = %repo, "Storage move refused, another move of the repository is running");
                         let error_json = json!({
                             "error": {
                                 "type": "storage_move_in_progress",
@@ -632,7 +632,7 @@ impl error::ResponseError for OxenHttpError {
                         // the server cannot produce its bytes. Reported separately from generic
                         // IO so it is visible as data loss rather than lost among read failures.
                         tracing::error!(
-                            hash = %hash,
+                            oxen.file_hash = %hash,
                             "Version store is missing data for a hash the tree references"
                         );
                         let error_json = json!({
@@ -665,8 +665,8 @@ impl error::ResponseError for OxenHttpError {
                         source,
                     } => {
                         tracing::error!(
-                            workspace_id = %workspace_id,
-                            cause = %source,
+                            oxen.workspace_id = %workspace_id,
+                            exception.message = %source,
                             "Workspace staged db is corrupted"
                         );
                         let error_json = json!({
@@ -1177,10 +1177,10 @@ fn handle_duckdb(error: &impl std::error::Error) -> HttpResponse {
 /// server's own IO rather than the caller's data.
 fn handle_polars(error: &impl std::error::Error, is_server_side: bool) -> HttpResponse {
     let status_message = if is_server_side {
-        tracing::error!(cause = ?error, "Polars error reading a data frame");
+        tracing::error!(exception.message = ?error, "Polars error reading a data frame");
         MSG_INTERNAL_SERVER_ERROR
     } else {
-        tracing::warn!(cause = ?error, "Malformed data frame or query");
+        tracing::warn!(exception.message = ?error, "Malformed data frame or query");
         MSG_BAD_REQUEST
     };
     let error_json = json!({

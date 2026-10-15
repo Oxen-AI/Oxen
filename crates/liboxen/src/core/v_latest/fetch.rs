@@ -17,7 +17,10 @@ use crate::{api, util};
 use crate::core::progress::pull_progress::PullProgress;
 use crate::opts::fetch_opts::FetchOpts;
 
-#[tracing::instrument(skip(repo, remote_repo, fetch_opts), fields(repo_path = %repo.path.display(), branch = %fetch_opts.branch))]
+#[tracing::instrument(
+    skip_all,
+    fields(oxen.repository_path = %repo.path.display(), oxen.branch_name = %fetch_opts.branch)
+)]
 pub async fn fetch_remote_branch(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -163,7 +166,14 @@ pub async fn fetch_remote_branch(
     Ok(remote_branch)
 }
 
-#[tracing::instrument(skip(repo, remote_repo, fetch_opts, pull_progress), fields(repo_path = %repo.path.display(), branch = %branch.name, head_commit_id = %head_commit.id))]
+#[tracing::instrument(
+    skip_all,
+    fields(
+        oxen.repository_path = %repo.path.display(),
+        oxen.branch_name = %branch.name,
+        oxen.head_commit_id = %head_commit.id,
+    )
+)]
 async fn sync_from_head(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -216,7 +226,7 @@ async fn sync_from_head(
 }
 
 // Sync all the commits from the commit (and their parents)
-#[tracing::instrument(skip(repo, remote_repo, commit_id, fetch_opts, pull_progress), fields(repo_path = %repo.path.display()))]
+#[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
 async fn sync_tree_from_commit(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -403,7 +413,10 @@ pub async fn fetch_tree_and_hashes_for_commit_id(
     Ok(())
 }
 
-#[tracing::instrument(skip(repo, remote_repo, pull_progress), fields(repo_path = %repo.path.display(), branch = %remote_branch.name))]
+#[tracing::instrument(
+    skip_all,
+    fields(oxen.repository_path = %repo.path.display(), oxen.branch_name = %remote_branch.name)
+)]
 pub async fn fetch_full_tree_and_hashes(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -580,7 +593,10 @@ async fn r_download_entries(
 }
 
 // pull entries from remote repo to versions dir
-#[tracing::instrument(skip(repo, remote_repo, entries, progress_bar), fields(repo_path = %repo.path.display(), num_entries = entries.len()))]
+#[tracing::instrument(
+    skip_all,
+    fields(oxen.repository_path = %repo.path.display(), oxen.entry_count = entries.len())
+)]
 pub async fn pull_entries_to_versions_dir(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,

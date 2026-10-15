@@ -84,7 +84,7 @@ pub async fn download_data_from_version_paths(
         if path_to_read.exists() {
             tar.append_path_with_name(path_to_read, content_file)?;
         } else {
-            tracing::error!(content_file = ?content_file, path = ?path_to_read, "Could not find content");
+            tracing::error!(oxen.content_file = content_file, file.path = %path_to_read.display(), "Could not find content");
             return Err(OxenError::path_does_not_exist(path_to_read).into());
         }
     }

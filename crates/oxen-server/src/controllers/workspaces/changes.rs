@@ -239,7 +239,7 @@ pub async fn unstage_many(
                 Ok(Some(_)) => {}
                 Ok(None) => continue,
                 Err(e) => {
-                    tracing::error!(path = ?path, error = ?e, "Failed to read a staged entry");
+                    tracing::error!(oxen.file_path = %path.display(), exception.message = ?e, "Failed to read a staged entry");
                     leftovers.push(Leftover::Failed(path));
                     continue;
                 }
