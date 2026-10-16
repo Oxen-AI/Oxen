@@ -10,7 +10,7 @@ defaults:
 jobs:
   check:
     name: Cargo check, format, clippy + Ruff
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
@@ -37,6 +37,7 @@ jobs:
           # Other branches will still use the cache but won't save it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: "."
+          key: ubuntu-26.04 # See the rust-test job in ci_test.yml.
           cache-bin: false # See the rust-test job in ci_test.yml for rationale.
 
       - name: Load tool versions

@@ -10,7 +10,7 @@ defaults:
 jobs:
   build-production:
     name: Build & verify production features
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Checkout
@@ -37,6 +37,7 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           prefix-key: rust-production
+          key: ubuntu-26.04 # See the rust-test job in ci_test.yml.
           cache-all-crates: true
           cache-on-failure: true
           cache-bin: false # See the rust-test job in ci_test.yml for rationale.

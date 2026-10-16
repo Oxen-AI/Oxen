@@ -15,9 +15,9 @@ jobs:
         shell: ${{ matrix.shell }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-x64-8cpu-32ram-300ssd]
+        os: [ubuntu-26.04, macos-latest, windows-x64-8cpu-32ram-300ssd]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             platform: linux
             shell: bash -leo pipefail {0}
           - os: macos-latest
@@ -62,6 +62,9 @@ jobs:
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           prefix-key: rust-test
+          # The cache key does not include the runner image, so without this the Linux job restores
+          # native objects that main compiled with another image's toolchain and never rebuilds them.
+          key: ${{ matrix.platform == 'linux' && 'ubuntu-26.04' || '' }}
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
@@ -165,9 +168,9 @@ jobs:
         shell: ${{ matrix.shell }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-x64-8cpu-32ram-300ssd]
+        os: [ubuntu-26.04, macos-latest, windows-x64-8cpu-32ram-300ssd]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             platform: linux
             shell: bash -leo pipefail {0}
           - os: macos-latest
@@ -203,6 +206,7 @@ jobs:
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
           prefix-key: python-test
+          key: ${{ matrix.platform == 'linux' && 'ubuntu-26.04' || '' }} # See the rust-test job.
           save-if: ${{ github.ref == 'refs/heads/main' }} # Only save cache on main; always restore.
           cache-all-crates: true
           cache-on-failure: true
@@ -322,7 +326,10 @@ jobs:
         run: |
           cd ${{ github.workspace }}/oxen-python
           source .venv/bin/activate
-          pytest -s tests
+          # Each fixture copies tests/data into its own tmp_path, and pytest keeps every one until
+          # the session ends. Ubuntu 26.04 runners mount /tmp as an ~8 GB tmpfs that the suite
+          # outgrows, so keep pytest's temp tree on the runner's disk.
+          pytest -s tests --basetemp "$RUNNER_TEMP/pytest"
 
       - name: Run oxen-python tests (Windows)
         if: matrix.platform == 'windows'
