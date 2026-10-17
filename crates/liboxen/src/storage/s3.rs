@@ -37,7 +37,7 @@ use xxhash_rust::xxh3::Xxh3;
 /// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
 const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
 
-/// The smallest part S3 accepts, except the last.
+/// The smallest part S3 accepts, except the last, 5 MiB.
 const MIN_PART_SIZE: usize = 5 * 1024 * 1024;
 
 /// The most parts one S3 multipart upload accepts.
@@ -1616,10 +1616,13 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_store_and_get_large_version_from_reader() {
-        let (store, _tmp, _server) = setup().await;
+        let (mut store, _tmp, _server) = setup().await;
+        // Send every non-empty version as a multipart upload.
+        store.oneshot_size = 0;
 
-        // 20MB -- forces multipart upload (> 8MB part size)
-        let data = vec![42u8; 20 * 1024 * 1024];
+        // One full part and a 1-byte last part, distinct so parts stored out of order mismatch.
+        let mut data = vec![1u8; MIN_PART_SIZE];
+        data.push(2);
         let hash = hasher::hash_buffer(&data);
 
         let cursor = std::io::Cursor::new(data.clone());
@@ -1635,10 +1638,13 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_store_version_from_reader_exact_part_boundary() {
-        let (store, _tmp, _server) = setup().await;
+        let (mut store, _tmp, _server) = setup().await;
+        // Send every non-empty version as a multipart upload.
+        store.oneshot_size = 0;
 
-        // Exactly 16MB -- two full 8MB parts, no partial last part
-        let data = vec![7u8; 16 * 1024 * 1024];
+        // Two full parts and no partial last part, distinct so parts stored out of order mismatch.
+        let mut data = vec![1u8; MIN_PART_SIZE];
+        data.resize(2 * MIN_PART_SIZE, 2);
         let hash = hasher::hash_buffer(&data);
 
         let cursor = std::io::Cursor::new(data.clone());
@@ -2378,7 +2384,7 @@ pub(crate) mod tests {
     /// dialect sniffing — all against the s3s fixture.
     ///
     /// Each test's `setup()` mints a UUID-tagged bucket so `polars-io`'s cloud-store cache (keyed
-    /// by bucket) never collides — without that, a second `test_read_s3_jsonl*` reuses the first
+    /// by bucket) never collides — without that, a second test's cloud scan reuses the first
     /// test's cached client and dials its now-dead loopback port.
     mod cloud_reads {
         use super::*;
@@ -2426,211 +2432,153 @@ pub(crate) mod tests {
             hash
         }
 
-        async fn read(store: &Arc<dyn VersionStore>, hash: &str, ext: &str) -> DataFrame {
-            tabular::read_version_df(store, hash, ext, &DFOpts::empty())
-                .await
-                .unwrap()
-        }
-
         fn sample_df() -> DataFrame {
             df! { "a" => &[1i64, 2, 3], "b" => &["x", "y", "z"] }.unwrap()
         }
 
-        /// Assert a round-tripped frame matches `sample_df` by value, not just shape — catches
-        /// header-as-data, column swaps, and dtype/null coercion that a shape-only check misses.
-        fn assert_sample_df(df: &DataFrame) {
-            assert_eq!((df.height(), df.width()), (3, 2));
-            assert_eq!(df.column("a").unwrap().i64().unwrap().get(0), Some(1));
-            assert_eq!(df.column("b").unwrap().str().unwrap().get(2), Some("z"));
-        }
-
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_parquet() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_parquet(&store).await;
-
-            let df = read(&store, &hash, "parquet").await;
-            assert_sample_df(&df);
-        }
-
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_ipc() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_ipc(&store).await;
-
-            let df = read(&store, &hash, "arrow").await;
-            assert_sample_df(&df);
-        }
-
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_csv() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(&store, b"a,b\n1,x\n2,y\n3,z\n".to_vec()).await;
-
-            let df = read(&store, &hash, "csv").await;
-            assert_sample_df(&df);
-        }
-
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_tsv() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(&store, b"a\tb\n1\tx\n2\ty\n3\tz\n".to_vec()).await;
-
-            let df = read(&store, &hash, "tsv").await;
-            assert_sample_df(&df);
-        }
-
-        /// A `.csv` file that is actually semicolon-delimited must still parse into two columns:
-        /// proves the head-sample dialect sniff runs against the S3 object, matching local behavior.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_csv_sniffs_non_default_delimiter() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(&store, b"a;b\n1;x\n2;y\n3;z\n".to_vec()).await;
-
-            // Value-level: a mis-sniff (defaulting to comma) would yield width 1, not the (3, 2)
-            // sample, so this asserts the semicolon was sniffed from the S3 head sample.
-            let df = read(&store, &hash, "csv").await;
-            assert_sample_df(&df);
-        }
-
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_jsonl() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(
-                &store,
-                b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n{\"a\":3,\"b\":\"z\"}\n".to_vec(),
-            )
-            .await;
-
-            let df = read(&store, &hash, "jsonl").await;
-            assert_sample_df(&df);
-        }
-
-        /// Non-line-delimited JSON has no Polars cloud reader, so this exercises the fetch-bytes
-        /// fallback path (`get` the whole object, then `JsonReader`).
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn test_read_s3_json_array() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(
-                &store,
-                b"[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"},{\"a\":3,\"b\":\"z\"}]".to_vec(),
-            )
-            .await;
-
-            let df = read(&store, &hash, "json").await;
-            assert_sample_df(&df);
-        }
-
-        // The following three tests use the default `#[tokio::test]` (current-thread) runtime to
-        // mirror the actix server. A transform that drives the cloud `LazyFrame` (collect or schema
-        // resolution) must run off the async worker via spawn_blocking, or Polars' `block_in_place`
-        // panics ("can call blocking only when running on the multi-threaded runtime").
-        async fn upload_sample_parquet(store: &Arc<dyn VersionStore>) -> String {
+        fn sample_parquet() -> Vec<u8> {
             let mut buf = Vec::new();
             ParquetWriter::new(&mut buf)
                 .finish(&mut sample_df())
                 .unwrap();
-            upload(store, buf).await
+            buf
         }
 
-        async fn upload_sample_ipc(store: &Arc<dyn VersionStore>) -> String {
+        fn sample_ipc() -> Vec<u8> {
             let mut buf = Vec::new();
             IpcWriter::new(&mut buf).finish(&mut sample_df()).unwrap();
-            upload(store, buf).await
+            buf
         }
 
-        #[tokio::test]
-        async fn test_read_s3_with_take_transform_current_thread() {
+        const SAMPLE_JSONL: &[u8] =
+            b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n{\"a\":3,\"b\":\"z\"}\n";
+
+        /// Assert a round-tripped frame matches `sample_df` by value, not just shape — catches
+        /// header-as-data, column swaps, and dtype/null coercion that a shape-only check misses.
+        fn assert_sample_df(df: &DataFrame, case: &str) {
+            assert_eq!((df.height(), df.width()), (3, 2), "{case}");
+            assert_eq!(
+                df.column("a").unwrap().i64().unwrap().get(0),
+                Some(1),
+                "{case}"
+            );
+            assert_eq!(
+                df.column("b").unwrap().str().unwrap().get(2),
+                Some("z"),
+                "{case}"
+            );
+        }
+
+        /// Every tabular format reads back from S3 by value, on a multi-threaded runtime.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn test_read_s3_formats() {
             let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_parquet(&store).await;
-            let mut opts = DFOpts::empty();
-            opts.take = Some("0,2".to_string());
-            let df = tabular::read_version_df(&store, &hash, "parquet", &opts)
+            let cases = [
+                ("parquet", sample_parquet(), "Parquet cloud scan"),
+                ("arrow", sample_ipc(), "IPC cloud scan"),
+                ("csv", b"a,b\n1,x\n2,y\n3,z\n".to_vec(), "CSV cloud scan"),
+                (
+                    "tsv",
+                    b"a\tb\n1\tx\n2\ty\n3\tz\n".to_vec(),
+                    "TSV cloud scan",
+                ),
+                // A mis-sniff defaulting to comma yields one column, not the sample's two.
+                (
+                    "csv",
+                    b"a;b\n1;x\n2;y\n3;z\n".to_vec(),
+                    "semicolon-delimited .csv, sniffed from the S3 head sample",
+                ),
+                ("jsonl", SAMPLE_JSONL.to_vec(), "JSONL cloud scan"),
+                (
+                    "json",
+                    b"[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"},{\"a\":3,\"b\":\"z\"}]".to_vec(),
+                    "JSON array, fetched whole since Polars has no cloud reader for it",
+                ),
+            ];
+            for (ext, bytes, case) in cases {
+                let hash = upload(&store, bytes).await;
+                let df = tabular::read_version_df(&store, &hash, ext, &DFOpts::empty())
+                    .await
+                    .unwrap_or_else(|e| panic!("{case}: {e}"));
+                assert_sample_df(&df, case);
+            }
+        }
+
+        /// Transforms and rejected reads on the current-thread runtime the actix server uses. A
+        /// transform that drives the cloud `LazyFrame` (collect or schema resolution) must run off
+        /// the async worker via spawn_blocking, or Polars' `block_in_place` panics ("can call
+        /// blocking only when running on the multi-threaded runtime").
+        #[tokio::test]
+        async fn test_read_s3_transforms_current_thread() {
+            let (store, _tmp, _server) = setup_dyn().await;
+            let parquet = upload(&store, sample_parquet()).await;
+            let jsonl = upload(&store, SAMPLE_JSONL.to_vec()).await;
+
+            let take = DFOpts {
+                take: Some("0,2".to_string()),
+                ..DFOpts::empty()
+            };
+            let df = tabular::read_version_df(&store, &parquet, "parquet", &take)
                 .await
-                .unwrap();
+                .expect("take over a Parquet scan");
             assert_eq!((df.height(), df.width()), (2, 2));
             let a = df.column("a").unwrap().i64().unwrap();
             assert_eq!((a.get(0), a.get(1)), (Some(1), Some(3)));
-        }
 
-        #[tokio::test]
-        async fn test_read_s3_with_column_at_transform_current_thread() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_parquet(&store).await;
-            let mut opts = DFOpts::empty();
-            opts.item = Some("b:2".to_string());
-            let df = tabular::read_version_df(&store, &hash, "parquet", &opts)
+            let column_at = DFOpts {
+                item: Some("b:2".to_string()),
+                ..DFOpts::empty()
+            };
+            let df = tabular::read_version_df(&store, &parquet, "parquet", &column_at)
                 .await
-                .unwrap();
+                .expect("column_at over a Parquet scan");
             assert_eq!(df.get(0).unwrap()[0], AnyValue::String("z"));
-        }
 
-        #[tokio::test]
-        async fn test_read_s3_with_filter_transform_current_thread() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_parquet(&store).await;
-            let mut opts = DFOpts::empty();
-            opts.filter = Some("a == 2".to_string());
-            let df = tabular::read_version_df(&store, &hash, "parquet", &opts)
-                .await
-                .unwrap();
-            assert_eq!((df.height(), df.width()), (1, 2));
-            assert_eq!(df.column("b").unwrap().str().unwrap().get(0), Some("y"));
-        }
+            // A filter resolves the schema, and the cloud-scan root differs per format.
+            let filter = DFOpts {
+                filter: Some("a == 2".to_string()),
+                ..DFOpts::empty()
+            };
+            for (hash, ext) in [(&parquet, "parquet"), (&jsonl, "jsonl")] {
+                let case = format!("filter over a {ext} scan");
+                let df = tabular::read_version_df(&store, hash, ext, &filter)
+                    .await
+                    .unwrap_or_else(|e| panic!("{case}: {e}"));
+                assert_eq!((df.height(), df.width()), (1, 2), "{case}");
+                assert_eq!(
+                    df.column("b").unwrap().str().unwrap().get(0),
+                    Some("y"),
+                    "{case}"
+                );
+            }
 
-        // Non-parquet variant: the transform fix is format-agnostic, but the cloud-scan root differs
-        // per format, so exercise a filter (which resolves schema) over a JSONL cloud scan too.
-        #[tokio::test]
-        async fn test_read_s3_jsonl_with_filter_transform_current_thread() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(
-                &store,
-                b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n{\"a\":3,\"b\":\"z\"}\n".to_vec(),
-            )
-            .await;
-            let mut opts = DFOpts::empty();
-            opts.filter = Some("a == 2".to_string());
-            let df = tabular::read_version_df(&store, &hash, "jsonl", &opts)
-                .await
-                .unwrap();
-            assert_eq!((df.height(), df.width()), (1, 2));
-            assert_eq!(df.column("b").unwrap().str().unwrap().get(0), Some("y"));
-        }
+            // A transform whose collect hits an S3 error returns the error rather than panicking.
+            let column_at_first = DFOpts {
+                item: Some("b:0".to_string()),
+                ..DFOpts::empty()
+            };
+            let missing =
+                tabular::read_version_df(&store, "deadbeefdeadbeef", "parquet", &column_at_first)
+                    .await;
+            assert!(missing.is_err(), "column_at over an object never stored");
 
-        // A transform whose collect hits an S3 error (object never stored) must return a clean
-        // error, not panic via `unwrap` — and on the current-thread runtime it must not
-        // `block_in_place`-panic on the way there either.
-        #[tokio::test]
-        async fn test_read_s3_column_at_missing_object_errors_not_panics() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let mut opts = DFOpts::empty();
-            opts.item = Some("b:0".to_string());
+            let ipc = upload(&store, sample_ipc()).await;
+            let sql = DFOpts {
+                sql: Some("SELECT * FROM df".to_string()),
+                ..DFOpts::empty()
+            };
+            let result = tabular::read_version_df(&store, &ipc, "arrow", &sql).await;
+            assert!(result.is_err(), "SQL over an IPC file is rejected");
+
+            let not_a_frame = upload(&store, b"not a data frame".to_vec()).await;
             let result =
-                tabular::read_version_df(&store, "deadbeefdeadbeef", "parquet", &opts).await;
-            assert!(result.is_err());
-        }
-
-        #[tokio::test]
-        async fn test_read_s3_arrow_with_sql_is_rejected() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload_sample_ipc(&store).await;
-            let mut opts = DFOpts::empty();
-            opts.sql = Some("SELECT * FROM df".to_string());
-            let result = tabular::read_version_df(&store, &hash, "arrow", &opts).await;
-            assert!(result.is_err());
-        }
-
-        #[tokio::test]
-        async fn test_read_s3_unknown_extension_errors() {
-            let (store, _tmp, _server) = setup_dyn().await;
-            let hash = upload(&store, b"not a data frame".to_vec()).await;
-            let result = tabular::read_version_df(&store, &hash, "xlsx", &DFOpts::empty()).await;
-            assert!(result.is_err());
+                tabular::read_version_df(&store, &not_a_frame, "xlsx", &DFOpts::empty()).await;
+            assert!(result.is_err(), "an unknown extension is rejected");
         }
 
         /// End-to-end: index a workspace data frame whose version file lives in S3.
         ///
-        /// Drives 16c's S3 branch of `workspaces::data_frames::index`: `version_location` returns
+        /// Drives the S3 branch of `workspaces::data_frames::index`: `version_location` returns
         /// `S3`, so the bytes are streamed to a temp file via `copy_version_to_path` and DuckDB
         /// reads that local path. The DuckDB database itself stays on local disk; only the version
         /// file is sourced from the s3s fixture, exercising the path that has no local version
@@ -2652,7 +2600,7 @@ pub(crate) mod tests {
 
             let (s3_store, _tmp, _server) = setup_dyn().await;
 
-            crate::test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+            crate::test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
                 let file_path = Path::new("annotations")
                     .join("train")
                     .join("bounding_box.csv");
