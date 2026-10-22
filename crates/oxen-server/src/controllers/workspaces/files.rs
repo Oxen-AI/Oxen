@@ -1,6 +1,6 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{
-    BodyEncoding, file_stream_response, get_repo, get_repo_async, spool_to_temp_file,
+    BodyEncoding, ReceivedBody, file_stream_response, get_repo, get_repo_async, receive_body,
 };
 use crate::params::{app_data, path_param};
 use crate::tasks;
@@ -8,14 +8,14 @@ use crate::tasks;
 use liboxen::constants::{MAX_FILE_SIZE, stream_segment_size};
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
-use liboxen::core::v_latest::workspaces::files::{VersionFileCopy, add_version_files_from};
+use liboxen::core::v_latest::workspaces::files::{InspectedVersionFile, add_version_files};
 use liboxen::error::OxenError;
+use liboxen::model::LocalRepository;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
-use liboxen::model::{LocalRepository, MerkleHash};
 use liboxen::repositories;
-use liboxen::storage::LocalFilePath;
+use liboxen::storage::VersionStore;
 use liboxen::util;
 use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{FilePathsResponse, StatusMessage, StatusMessageDescription};
@@ -220,16 +220,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
     let received = save_parts(payload, &repo, &directory, &workspace.dir()).await?;
     log::debug!("Stored {} files", received.len());
 
-    // Stage from the local copies, which stay readable until `received` drops after staging.
-    let files_to_stage = received
-        .iter()
-        .map(|file| VersionFileCopy {
-            dst_path: file.dst_path.clone(),
-            hash: file.hash,
-            data_path: file.copy.to_path_buf(),
-        })
-        .collect();
-    let (ret_files, stage_err_files) = add_version_files_from(&workspace, files_to_stage).await?;
+    let (ret_files, stage_err_files) = add_version_files(&workspace, received).await?;
     for err in &stage_err_files {
         log::error!("Error staging file {:?}: {}", err.path, err.error);
     }
@@ -391,27 +382,26 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
-/// A file received in a multipart upload and stored, with a local copy of its bytes to stage from.
+/// A file received in a multipart upload, stored, and inspected for staging.
 struct ReceivedFile {
-    dst_path: PathBuf,
-    hash: MerkleHash,
-    copy: LocalFilePath,
+    file: InspectedVersionFile,
     /// The part's position among the upload's file parts.
     part_index: usize,
 }
 
-/// Write each file part of `payload` to a temporary file in `dir`, gunzipping a gzipped part, and
-/// store the files in the repository's version store, several at once. A part's filename is its
-/// path relative to `directory`.
+/// Receive each file part of `payload`, gunzipping a gzipped part, and store the files in the
+/// repository's version store, several at once. A part that arrives in at most
+/// `stream_segment_size()` bytes stays in memory until it is stored and inspected, and a longer one
+/// is written to a temporary file in `dir`. A part's filename is its path relative to `directory`.
 ///
-/// Returns the files stored, in the order their parts arrived. A part that fails to arrive or to
-/// store is logged and left out.
+/// Returns the files stored, in the order their parts arrived. A part that fails to arrive, to
+/// store, or to be inspected is logged and left out.
 async fn save_parts(
     mut payload: Multipart,
     repo: &LocalRepository,
     directory: &str,
     dir: &Path,
-) -> Result<Vec<ReceivedFile>, OxenHttpError> {
+) -> Result<Vec<InspectedVersionFile>, OxenHttpError> {
     let version_store = repo.version_store();
     let max_in_flight = util::concurrency::default_num_threads() * 4;
     let mut in_flight: JoinSet<Option<ReceivedFile>> = JoinSet::new();
@@ -457,18 +447,17 @@ async fn save_parts(
             BodyEncoding::Plain
         };
 
-        let spooled =
-            match spool_to_temp_file(field, dir.to_path_buf(), MAX_FILE_SIZE, encoding).await? {
-                Ok(spooled) => spooled,
-                Err(e) => {
-                    tracing::error!(
-                        oxen.file_path = %dst_path.display(),
-                        exception.message = %e,
-                        "Failed to receive an uploaded file"
-                    );
-                    continue;
-                }
-            };
+        let body = match receive_body(field, dir.to_path_buf(), MAX_FILE_SIZE, encoding).await? {
+            Ok(body) => body,
+            Err(e) => {
+                tracing::error!(
+                    oxen.file_path = %dst_path.display(),
+                    exception.message = %e,
+                    "Failed to receive an uploaded file"
+                );
+                continue;
+            }
+        };
 
         // Bound the stores in flight before dispatching the next one.
         while in_flight.len() >= max_in_flight {
@@ -479,17 +468,9 @@ async fn save_parts(
 
         let version_store = Arc::clone(&version_store);
         in_flight.spawn(tasks::inherit_hub(async move {
-            let hash = spooled.hash;
-            match version_store
-                .store_version_from_temp_file(hash, spooled.file, spooled.len)
-                .await
-            {
-                Ok(copy) => Some(ReceivedFile {
-                    dst_path,
-                    hash,
-                    copy,
-                    part_index,
-                }),
+            let hash = body.hash();
+            match store_and_inspect(version_store, body, dst_path.clone()).await {
+                Ok(file) => Some(ReceivedFile { file, part_index }),
                 Err(e) => {
                     tracing::error!(
                         oxen.file_path = %dst_path.display(),
@@ -508,9 +489,39 @@ async fn save_parts(
     }
     // Stores finish in any order, and staging in arrival order keeps the last of two parts with
     // one path.
-    received.sort_by_key(|file| file.part_index);
+    received.sort_by_key(|received| received.part_index);
 
-    Ok(received)
+    Ok(received.into_iter().map(|received| received.file).collect())
+}
+
+/// Store `body` in `version_store`, and inspect it to stage at `dst_path`.
+async fn store_and_inspect(
+    version_store: Arc<dyn VersionStore>,
+    body: ReceivedBody,
+    dst_path: PathBuf,
+) -> Result<InspectedVersionFile, OxenError> {
+    match body {
+        ReceivedBody::Memory { data, hash } => {
+            let inspected = tasks::spawn_blocking_per_item({
+                let data = data.clone();
+                move || InspectedVersionFile::from_bytes(dst_path, hash, data)
+            });
+            let hash_str = hash.to_string();
+            let stored = version_store.store_version(&hash_str, data);
+            let (_, file) = tokio::try_join!(stored, async { inspected.await? })?;
+            Ok(file)
+        }
+        ReceivedBody::Spooled(spooled) => {
+            let hash = spooled.hash;
+            let copy = version_store
+                .store_version_from_temp_file(hash, spooled.file, spooled.len)
+                .await?;
+            tasks::spawn_blocking_per_item(move || {
+                InspectedVersionFile::from_file(dst_path, hash, &copy)
+            })
+            .await?
+        }
+    }
 }
 
 /// A finished store task's file, or `None` for a file it failed to store. A task that panicked
@@ -534,8 +545,11 @@ mod tests {
     use liboxen::core::staged::get_staged_db_manager;
     use liboxen::error::OxenError;
     use liboxen::model::merkle_tree::node::EMerkleTreeNode;
+    use liboxen::model::metadata::generic_metadata::GenericMetadata;
     use liboxen::repositories;
+    use liboxen::repositories::workspaces;
     use liboxen::util;
+    use liboxen::util::fs::write_to_path;
     use liboxen::view::FilePathsResponse;
     use liboxen::view::versions::{
         BeginVersionUploadRequest, CompleteVersionUploadRequest, CompletedFileUpload,
@@ -564,6 +578,8 @@ mod tests {
         util::fs::write_to_path(&hello_file, "Hello")?;
         util::fs::write_to_path(repo.path.join("exports.csv/a.txt"), "A")?;
         util::fs::write_to_path(repo.path.join("exports.csv/b.csv"), "x,y\n1,2\n")?;
+        let rows = "id,label\n1,a\n2,b\n";
+        write_to_path(repo.path.join("data").join("rows.csv"), rows)?;
         repositories::add(&repo, &repo.path).await?;
         let commit = repositories::commit(&repo, "First commit")?;
 
@@ -673,6 +689,111 @@ mod tests {
         let file_hash = util::hasher::hash_buffer(file_content.as_bytes());
         let stored = repo.version_store().get_version(&file_hash).await?;
         assert_eq!(stored, file_content.as_bytes());
+
+        // A filename's subdirectory stays under the target directory, an empty target directory
+        // (the URI the client builds for the root) stages at the workspace root, and a filename
+        // that leaves the target directory is refused.
+        let root_uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/");
+        for (target, filename, status, staged) in [
+            (
+                &uri,
+                "nested/dog.txt",
+                StatusCode::OK,
+                Some("data/nested/dog.txt"),
+            ),
+            (&root_uri, "root.txt", StatusCode::OK, Some("root.txt")),
+            (&uri, "../escape.txt", StatusCode::BAD_REQUEST, None),
+        ] {
+            let (body, headers) = create_form_data_payload_and_headers(
+                "file[]",
+                Some(filename.to_string()),
+                Some(mime::TEXT_PLAIN),
+                Bytes::from(filename),
+            );
+            let req = headers
+                .into_iter()
+                .fold(TestRequest::post().uri(target), |req, hdr| {
+                    req.insert_header(hdr)
+                })
+                .set_payload(body)
+                .to_request();
+            let resp = call_service(&app, req).await;
+            assert_eq!(resp.status(), status, "{filename}");
+            if let Some(staged) = staged {
+                let response: FilePathsResponse = serde_json::from_slice(&read_body(resp).await)?;
+                assert_eq!(
+                    response.paths,
+                    vec![PathBuf::from(staged)],
+                    "{filename} stages at {staged}"
+                );
+            }
+        }
+
+        // A CSV over `stream_segment_size()` is spooled to disk, a smaller one stays in memory, and
+        // both are staged with the rows they hold. A file uploaded again with the content its
+        // commit has is not staged, even after a change to it was.
+        let mut big = String::from("id,label\n");
+        let mut big_rows = 0;
+        while big.len() as u64 <= stream_segment_size() {
+            big.push_str(&format!("{big_rows},label {big_rows}\n"));
+            big_rows += 1;
+        }
+        let small = "id,label\n3,c\n4,d\n".to_string();
+        for (name, content) in [
+            ("big.csv", big),
+            ("small.csv", small),
+            ("rows.csv", "id,label\n1,a\n".into()),
+            ("rows.csv", rows.into()),
+        ] {
+            let (body, headers) = create_form_data_payload_and_headers(
+                "file[]",
+                Some(name.to_string()),
+                Some(mime::TEXT_CSV),
+                Bytes::from(content),
+            );
+            let req = headers
+                .into_iter()
+                .fold(TestRequest::post().uri(&uri), |req, hdr| {
+                    req.insert_header(hdr)
+                })
+                .set_payload(body)
+                .to_request();
+            assert_eq!(
+                call_service(&app, req).await.status(),
+                StatusCode::OK,
+                "{name}"
+            );
+        }
+        let workspace = workspaces::get(&repo, &workspace_id)?
+            .ok_or_else(|| OxenError::WorkspaceNotFound(workspace_id.clone().into()))?;
+        let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+        for (path, height) in [("data/big.csv", big_rows), ("data/small.csv", 2)] {
+            let staged = staged_db_manager
+                .read_from_staged_db(path)?
+                .unwrap_or_else(|| panic!("{path} is staged"));
+            let EMerkleTreeNode::File(file_node) = staged.node.node else {
+                panic!("{path} is staged as a file");
+            };
+            let Some(GenericMetadata::MetadataTabular(metadata)) = file_node.metadata() else {
+                panic!(
+                    "{path} is staged with tabular metadata: {:?}",
+                    file_node.metadata()
+                );
+            };
+            assert_eq!(
+                (metadata.tabular.width, metadata.tabular.height),
+                (2, height),
+                "{path} is staged with its columns and rows"
+            );
+        }
+        assert!(
+            staged_db_manager
+                .read_from_staged_db("data/rows.csv")?
+                .is_none(),
+            "a file uploaded again with its committed content is not staged"
+        );
+        drop(staged_db_manager);
+        drop(workspace);
 
         // A version upload's parts may arrive out of order, and the part that completes the file
         // stages it in the workspace.
@@ -833,96 +954,6 @@ mod tests {
             status.staged_files.keys()
         );
 
-        // The multipart filename carries a subdirectory; the server must preserve the nesting under
-        // the target directory rather than flattening it to the basename.
-        let (body, headers) = create_form_data_payload_and_headers(
-            "file[]",
-            Some("nested/dog.txt".to_string()),
-            Some(mime::TEXT_PLAIN),
-            Bytes::from("nested contents"),
-        );
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/data");
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
-        let req = headers
-            .into_iter()
-            .fold(req, |req, hdr| req.insert_header(hdr))
-            .set_payload(body)
-            .to_request();
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
-
-        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
-        let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
-        assert!(
-            response
-                .paths
-                .contains(&std::path::PathBuf::from("data/nested/dog.txt")),
-            "expected the subdirectory preserved as data/nested/dog.txt, got {:?}",
-            response.paths
-        );
-
-        // A multipart filename that escapes the target directory with `..` must be rejected, not
-        // staged at an out-of-tree path.
-        let (body, headers) = create_form_data_payload_and_headers(
-            "file[]",
-            Some("../escape.txt".to_string()),
-            Some(mime::TEXT_PLAIN),
-            Bytes::from("malicious"),
-        );
-
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/data");
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
-        let req = headers
-            .into_iter()
-            .fold(req, |req, hdr| req.insert_header(hdr))
-            .set_payload(body)
-            .to_request();
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
-
-        // An empty target directory stages at the workspace root: the destination is just the
-        // (normalized) filename with no directory prefix.
-        let (body, headers) = create_form_data_payload_and_headers(
-            "file[]",
-            Some("root.txt".to_string()),
-            Some(mime::TEXT_PLAIN),
-            Bytes::from("root contents"),
-        );
-
-        // Trailing slash with an empty {path:.*} segment -- the URI the client builds for the root.
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/");
-
-        let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()));
-        let req = headers
-            .into_iter()
-            .fold(req, |req, hdr| req.insert_header(hdr))
-            .set_payload(body)
-            .to_request();
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
-
-        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
-        let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
-        assert!(
-            response
-                .paths
-                .contains(&std::path::PathBuf::from("root.txt")),
-            "expected staging at the workspace root (root.txt with no prefix), got {:?}",
-            response.paths
-        );
-
         // Build a gzipped part that inflates to one byte past the decompression cap. Highly
         // compressible zero bytes keep the compressed body tiny while the decompressed size trips
         // the limit — the decompression-bomb shape the endpoint guards against. Size via
@@ -932,8 +963,9 @@ mod tests {
         encoder.write_all(&decompressed)?;
         let gzipped = encoder.finish()?;
 
-        // Two valid gzipped parts for one path follow the bomb, to check one refused part leaves
-        // the rest, and that the later of two parts for one path is the one staged.
+        // A part labeled gzip that is not gzip data, then two valid gzipped parts for one path,
+        // follow the bomb, to check refused parts leave the rest, and that the later of two parts
+        // for one path is the one staged.
         let gzip = |content: &[u8]| -> std::io::Result<Vec<u8>> {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(content)?;
@@ -941,12 +973,22 @@ mod tests {
         };
         let after = gzip(b"after the bomb")?;
         let later = gzip(b"later for the same path")?;
+        // An uncompressed gzip of `stream_segment_size()` bytes arrives longer than that, so it is
+        // spooled to disk and gunzipped there.
+        let large: Vec<u8> = (0..stream_segment_size())
+            .map(|i| (i % 251) as u8)
+            .collect();
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::none());
+        encoder.write_all(&large)?;
+        let large_gzipped = encoder.finish()?;
         let boundary = "test-bomb-boundary";
         let mut body: Vec<u8> = Vec::new();
         for (filename, part) in [
             ("bomb.bin", &gzipped),
+            ("corrupt.bin", &b"not gzip data".to_vec()),
             ("after.txt", &after),
             ("after.txt", &later),
+            ("large.bin", &large_gzipped),
         ] {
             body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
             body.extend_from_slice(
@@ -982,8 +1024,14 @@ mod tests {
         let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
         assert_eq!(
             response.paths,
-            vec![PathBuf::from("data/after.txt"); 2],
-            "only the parts after the rejected gzip bomb stage"
+            ["data/after.txt", "data/after.txt", "data/large.bin"].map(PathBuf::from),
+            "the gzip bomb and the part that is not gzip data are refused"
+        );
+        assert!(
+            repo.version_store()
+                .version_exists(&util::hasher::hash_buffer(&large))
+                .await?,
+            "a spooled gzipped part is stored gunzipped"
         );
         // Scoped so the workspace's handles on the repository close before the cleanup below.
         {

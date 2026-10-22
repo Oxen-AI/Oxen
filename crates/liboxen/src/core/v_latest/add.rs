@@ -35,9 +35,12 @@ use std::ops::AddAssign;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::rm;
+use crate::core::v_latest::workspaces::files::InspectedVersionFile;
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
+use crate::repositories::tree::get_file_by_path;
+use crate::util::fs::path_relative_to_dir;
 
 const FILE_BATCH_SIZE: usize = 64;
 
@@ -862,7 +865,7 @@ fn process_add_file(
             return Ok(AddOutcome::Unchanged);
         };
         let staged: StagedMerkleTreeNode = rmp_serde::from_slice(&value)?;
-        if staged.status != StagedEntryStatus::Removed && *staged.node.file()?.hash() == hash {
+        if keeps_staged_entry(&staged, &hash)? {
             log::debug!("file matches HEAD - keeping its staged entry");
             return Ok(AddOutcome::Unchanged);
         }
@@ -1005,83 +1008,56 @@ pub fn add_file_node_to_staged_db(
     Ok(())
 }
 
-pub async fn stage_file_with_hash(
+/// Stage `file` in `workspace`. A file whose content the workspace's commit already has at its path
+/// is not staged, and drops a staged removal or a staged edit of that path.
+pub(crate) async fn stage_version_file(
     workspace: &Workspace,
-    data_path: &Path,
-    dst_path: &Path,
-    hash: MerkleHash,
+    file: InspectedVersionFile,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    let workspace_repo = &workspace.workspace_repo;
     let base_repo = &workspace.base_repo;
-    let head_commit = &workspace.commit;
+    let relative_path = path_relative_to_dir(&file.dst_path, &base_repo.path)?;
+    let committed = get_file_by_path(base_repo, &workspace.commit, &relative_path)?;
 
-    let relative_path = util::fs::path_relative_to_dir(dst_path, base_repo.path.clone())?;
-    let metadata = util::fs::metadata(data_path)?;
-    let mtime = FileTime::from_last_modification_time(&metadata);
-    let maybe_file_node =
-        repositories::tree::get_file_by_path(base_repo, head_commit, &relative_path)?;
-
-    let mut file_status = if let Some(file_node) = maybe_file_node {
-        let previous_metadata = file_node.metadata();
-        let status = if base_repo
-            .is_modified_from_node(data_path, &file_node)
-            .await?
-        {
-            StagedEntryStatus::Modified
-        } else {
-            // Don't add the file if it hasn't changed
-            log::debug!("file {data_path:?} has not changed - skipping add");
-            return Ok(());
-        };
-
-        FileStatus {
-            data_path: data_path.to_path_buf(),
-            status,
-            hash,
-            num_bytes: metadata.len(),
-            mtime,
-            previous_metadata,
-            previous_file_node: Some(file_node),
-        }
-    } else {
-        FileStatus {
-            data_path: data_path.to_path_buf(),
-            status: StagedEntryStatus::Added,
-            hash,
-            num_bytes: metadata.len(),
-            mtime,
-            previous_metadata: None,
-            previous_file_node: None,
-        }
-    };
-
-    let (workspace_repo, data_path, dst_path) = (
-        workspace_repo.clone(),
-        data_path.to_path_buf(),
-        dst_path.to_path_buf(),
-    );
+    let workspace_repo = workspace.workspace_repo.clone();
     let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
     tokio::task::spawn_blocking(move || {
-        if let Some(metadata) = staged_file_metadata(&staged_db_manager, &relative_path)? {
-            file_status.previous_metadata = Some(metadata);
-        }
-
-        let file_node = generate_file_node(&workspace_repo, &data_path, &dst_path, &file_status)?;
-        if let Some(file_node) = file_node {
-            let status = file_status.status.clone();
-            add_file_node_and_parent_dir(
-                &file_node,
-                status,
-                &relative_path,
-                &staged_db_manager,
-                &seen_dirs,
-            )?;
-        }
-        Ok(())
+        let (status, previous_metadata) = match committed {
+            Some(file_node) if *file_node.hash() == file.hash => {
+                if let Some(staged) = staged_db_manager.read_from_staged_db(&relative_path)?
+                    && !keeps_staged_entry(&staged, &file.hash)?
+                {
+                    tracing::debug!(
+                        oxen.file_path = %relative_path.display(),
+                        "Unstaging a workspace file uploaded with its committed content"
+                    );
+                    staged_db_manager.delete_entry(&relative_path)?;
+                }
+                return Ok(());
+            }
+            Some(file_node) => (StagedEntryStatus::Modified, file_node.metadata()),
+            None => (StagedEntryStatus::Added, None),
+        };
+        let previous_metadata =
+            staged_file_metadata(&staged_db_manager, &relative_path)?.or(previous_metadata);
+        let file_node = version_file_node(&workspace_repo, file, previous_metadata.as_ref())?;
+        add_file_node_and_parent_dir(
+            &file_node,
+            status,
+            &relative_path,
+            &staged_db_manager,
+            &seen_dirs,
+        )
     })
     .await?
+}
+
+/// Whether `staged`, the entry staged for a file whose content `hash` matches HEAD, stays staged.
+/// An entry staging that content, such as one carrying a schema change, stays, and a staged removal
+/// or a staged edit since reverted does not.
+fn keeps_staged_entry(staged: &StagedMerkleTreeNode, hash: &MerkleHash) -> Result<bool, OxenError> {
+    Ok(staged.status != StagedEntryStatus::Removed && staged.node.file()?.hash() == hash)
 }
 
 /// Stage file node and parent dirs with staged db manager
@@ -1113,60 +1089,49 @@ pub fn staged_file_metadata(
     Ok(file_node.get_mut_metadata().take())
 }
 
-pub fn generate_file_node(
+/// The file node to stage for `file`, keeping the column metadata `previous_metadata` records for a
+/// tabular file.
+fn version_file_node(
     repo: &LocalRepository,
-    version_path: &Path,
-    dst_path: &Path,
-    file_status: &FileStatus,
-) -> Result<Option<FileNode>, OxenError> {
-    let status = file_status.status.clone();
-    let hash = file_status.hash;
-    let num_bytes = file_status.num_bytes;
-    let mtime = file_status.mtime;
-    let maybe_file_node = file_status.previous_file_node.clone();
-
-    // Normalize the path
-    let relative_path = util::fs::path_relative_to_dir(dst_path, &repo.path)?;
+    file: InspectedVersionFile,
+    previous_metadata: Option<&GenericMetadata>,
+) -> Result<FileNode, OxenError> {
+    let relative_path = path_relative_to_dir(&file.dst_path, &repo.path)?;
     let file_extension = relative_path
         .extension()
         .unwrap_or_default()
         .to_string_lossy();
     let relative_path_str = relative_path.to_str().unwrap_or_default();
-    log::debug!(
-        "status {status:?} hash {hash:?} num_bytes {num_bytes:?} mtime {mtime:?} file_node {maybe_file_node:?}"
+    let (mime_type, data_type, metadata) = contents_to_stage(
+        file.mime_type,
+        file.data_type,
+        file.metadata,
+        previous_metadata,
     );
 
-    // version_path is where the file is stored, relative_path is the working directory path that contains the file extension
-    let (mime_type, data_type, metadata) = inspect_file_for_staging(
-        version_path,
-        &relative_path,
-        file_status.previous_metadata.as_ref(),
-    )?;
-
-    let (hash, metadata_hash, combined_hash) = if let Some(metadata) = &metadata {
+    let hash = file.hash;
+    let (metadata_hash, combined_hash) = if let Some(metadata) = &metadata {
         let metadata_hash = util::hasher::get_metadata_hash(&Some(metadata.clone()))?;
         let metadata_hash = MerkleHash::new(metadata_hash);
         let combined_hash =
             util::hasher::get_combined_hash(Some(metadata_hash.to_u128()), hash.to_u128())?;
-        let combined_hash = MerkleHash::new(combined_hash);
-        (hash, Some(metadata_hash), combined_hash)
+        (Some(metadata_hash), MerkleHash::new(combined_hash))
     } else {
-        (hash, None, hash)
+        (None, hash)
     };
-    let file_node = FileNode::new(FileNodeOpts {
+    FileNode::new(FileNodeOpts {
         name: relative_path_str.to_string(),
         hash,
         combined_hash,
         metadata_hash,
-        num_bytes,
-        last_modified_seconds: mtime.unix_seconds(),
-        last_modified_nanoseconds: mtime.nanoseconds(),
+        num_bytes: file.num_bytes,
+        last_modified_seconds: file.mtime.unix_seconds(),
+        last_modified_nanoseconds: file.mtime.nanoseconds(),
         data_type,
         metadata,
-        mime_type: mime_type.clone(),
+        mime_type,
         extension: file_extension.to_string(),
-    })?;
-    Ok(Some(file_node))
+    })
 }
 
 /// Reads the MIME type, data type, and metadata to stage for the file at `data_path`, whose name is
@@ -1176,8 +1141,25 @@ fn inspect_file_for_staging(
     file_path: &Path,
     previous_metadata: Option<&GenericMetadata>,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-    let (mime_type, mut data_type, metadata) =
+    let (mime_type, data_type, metadata) =
         repositories::metadata::inspect_file(data_path, file_path)?;
+    Ok(contents_to_stage(
+        mime_type,
+        data_type,
+        metadata,
+        previous_metadata,
+    ))
+}
+
+/// The MIME type, data type, and metadata to stage for a file whose contents give `mime_type`,
+/// `data_type`, and `metadata`, keeping the column metadata `previous_metadata` records for a
+/// tabular file.
+fn contents_to_stage(
+    mime_type: String,
+    mut data_type: EntryDataType,
+    metadata: Option<GenericMetadata>,
+    previous_metadata: Option<&GenericMetadata>,
+) -> (String, EntryDataType, Option<GenericMetadata>) {
     let metadata = match previous_metadata {
         Some(previous_oxen_metadata) => {
             maybe_construct_generic_metadata_for_tabular(metadata, previous_oxen_metadata)
@@ -1190,7 +1172,7 @@ fn inspect_file_for_staging(
     if metadata.is_none() && data_type == EntryDataType::Tabular {
         data_type = EntryDataType::Binary;
     }
-    Ok((mime_type, data_type, metadata))
+    (mime_type, data_type, metadata)
 }
 
 fn maybe_construct_generic_metadata_for_tabular(
