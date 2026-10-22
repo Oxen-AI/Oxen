@@ -1016,13 +1016,12 @@ pub(crate) async fn stage_version_file(
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    let base_repo = &workspace.base_repo;
-    let relative_path = path_relative_to_dir(&file.dst_path, &base_repo.path)?;
-    let committed = get_file_by_path(base_repo, &workspace.commit, &relative_path)?;
-
+    let relative_path = path_relative_to_dir(&file.dst_path, &workspace.base_repo.path)?;
+    let (base_repo, commit) = (workspace.base_repo.clone(), workspace.commit.clone());
     let workspace_repo = workspace.workspace_repo.clone();
     let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
     tokio::task::spawn_blocking(move || {
+        let committed = get_file_by_path(&base_repo, &commit, &relative_path)?;
         let (status, previous_metadata) = match committed {
             Some(file_node) if *file_node.hash() == file.hash => {
                 if let Some(staged) = staged_db_manager.read_from_staged_db(&relative_path)?
