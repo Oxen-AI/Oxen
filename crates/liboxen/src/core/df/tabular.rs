@@ -147,8 +147,8 @@ fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
         .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
 }
 
-fn read_df_json(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    read_json(&DataFrameSource::Path(path.as_ref()))
+fn read_df_json(path: &Path) -> Result<LazyFrame, OxenError> {
+    read_json(&DataFrameSource::Path(path))
 }
 
 /// Read a JSON array, which cannot be scanned lazily, so the whole array is read.
@@ -1968,7 +1968,7 @@ mod tests {
 
     #[test]
     fn test_read_json() -> Result<(), OxenError> {
-        let df = tabular::read_df_json(test::test_text_json())?.collect()?;
+        let df = tabular::read_df_json(&test::test_text_json())?.collect()?;
 
         println!("{df}");
 
