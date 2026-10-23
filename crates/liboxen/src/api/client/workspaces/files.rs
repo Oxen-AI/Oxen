@@ -7,8 +7,9 @@ use crate::model::{Commit, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::GlobOpts;
 use crate::util::{self, concurrency};
 use crate::view::versions::WorkspaceDestination;
+use crate::view::workspaces::{RenameRequest, ValidateUploadFeasibilityRequest};
 use crate::view::{ErrorFileInfo, FilePathsResponse};
-use crate::{api, repositories, view, view::workspaces::ValidateUploadFeasibilityRequest};
+use crate::{api, repositories, view};
 
 use futures_util::StreamExt;
 use glob_match::glob_match;
@@ -1023,6 +1024,24 @@ pub async fn mv(
     }
 }
 
+/// Stage a copy of the committed file at `path` at `new_path` within a workspace.
+pub async fn copy(
+    remote_repo: &RemoteRepository,
+    workspace_id: &str,
+    path: &Path,
+    new_path: &Path,
+) -> Result<view::StatusMessage, OxenError> {
+    let uri = format!("/workspaces/{workspace_id}/copy/{}", path.to_string_lossy());
+    let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
+    let request = RenameRequest {
+        new_path: new_path.to_string_lossy().into_owned(),
+    };
+    let client = client::new_for_url(&url)?;
+    let res = client.post(&url).json(&request).send().await?;
+    let body = client::parse_json_body(&url, res).await?;
+    Ok(serde_json::from_str(&body)?)
+}
+
 pub async fn download(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
@@ -1127,7 +1146,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio_stream::StreamExt;
 
-    use super::{add, add_files, download, mv, rm, upload_single_file};
+    use super::{add, add_files, copy, download, mv, rm, upload_single_file};
 
     #[test]
     fn test_expected_staged_path_mirrors_server_normalization() {
@@ -1606,6 +1625,37 @@ mod tests {
             assert_eq!(bytes, b"Hello World");
             let old_file = entries::get_entry(&remote_repo, original_path, &commit.id).await?;
             assert!(old_file.is_none(), "File should not exist at original path");
+
+            // Copy the moved file, in a new workspace on the branch the move committed to
+            workspaces::create(&remote_repo, branch_name, "copy").await?;
+            let copy_path = Path::new("README_copy.md");
+            assert_eq!(
+                copy(&remote_repo, "copy", Path::new(new_path), copy_path)
+                    .await?
+                    .status,
+                "success"
+            );
+            let commit = workspaces::commit(
+                &remote_repo,
+                branch_name,
+                "copy",
+                &commit_body("Copied a file"),
+            )
+            .await?;
+            let mut stream = file::get_file(
+                &remote_repo,
+                &commit.id,
+                copy_path,
+                file::GetFileOpts::default(),
+            )
+            .await?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = stream.next().await {
+                bytes.extend_from_slice(&chunk?);
+            }
+            assert_eq!(bytes, b"Hello World", "the copy has the source's content");
+            let source = entries::get_entry(&remote_repo, new_path, &commit.id).await?;
+            assert!(source.is_some(), "the copy leaves its source in place");
 
             // Pull a branch a workspace committed to
             let branch_name = "add-data";

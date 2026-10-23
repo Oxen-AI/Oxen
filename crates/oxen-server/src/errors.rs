@@ -600,6 +600,32 @@ impl error::ResponseError for OxenHttpError {
                         });
                         HttpResponse::Conflict().json(error_json)
                     }
+                    OxenError::DestinationExists(path) => {
+                        tracing::warn!(oxen.file_path = %path, "Copy refused, destination exists");
+                        let error_json = json!({
+                            "error": {
+                                "type": "destination_exists",
+                                "title": "Destination already exists",
+                                "detail": format!("{path} already exists. Choose another destination."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
+                    OxenError::SourceHasStagedChanges(path) => {
+                        tracing::warn!(oxen.file_path = %path, "Copy refused, source has staged changes");
+                        let error_json = json!({
+                            "error": {
+                                "type": "source_has_staged_changes",
+                                "title": "Source has staged changes",
+                                "detail": format!("{path} has changes staged in this workspace. A copy is made from the committed file, so commit or unstage the changes first."),
+                            },
+                            "status": STATUS_ERROR,
+                            "status_message": MSG_CONFLICT,
+                        });
+                        HttpResponse::Conflict().json(error_json)
+                    }
                     // Only the unsupported-format case is the caller's: they uploaded an image
                     // this build cannot decode. Every other image failure stays a server error.
                     OxenError::ImageError(_) if error.is_image_too_large() => {

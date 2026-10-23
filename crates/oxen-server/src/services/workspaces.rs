@@ -58,6 +58,10 @@ pub fn workspace() -> Scope {
                     "/files",
                     web::delete().to(controllers::workspaces::files::rm_files),
                 )
+                .route(
+                    "/copy/{path:.*}",
+                    web::post().to(controllers::workspaces::files::copy),
+                )
                 // DEPRECATED: use DELETE /changes/{path:.*} instead
                 .route(
                     "/files/{path:.*}",
