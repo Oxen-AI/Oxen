@@ -307,6 +307,15 @@ pub enum OxenError {
     #[error("Destination already staged: {0}")]
     DestinationAlreadyStaged(PathBufError),
 
+    /// A copy targeted a path the workspace's base commit already holds.
+    #[error("Destination already exists: {0}")]
+    DestinationExists(PathBufError),
+
+    /// A copy's source has changes staged in the workspace, and a copy is made only from the
+    /// committed file.
+    #[error("{0} has changes staged in the workspace")]
+    SourceHasStagedChanges(PathBufError),
+
     #[error("No paths to add!")]
     NoPathsToAdd,
 
@@ -1093,6 +1102,7 @@ impl OxenError {
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
             OxenError::RemovalAlreadyStaged(_) => true,
+            OxenError::DestinationExists(_) | OxenError::SourceHasStagedChanges(_) => true,
             OxenError::RmWouldLoseChanges(_) => true,
             OxenError::RmWouldLoseStagedContent(_) => true,
             OxenError::ReachableObjectsMissing { .. } => true,

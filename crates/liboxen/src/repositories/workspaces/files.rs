@@ -38,6 +38,8 @@ pub use crate::core::v_latest::workspaces::files::upload_zip;
 
 pub use crate::core::v_latest::workspaces::files::mv;
 
+pub use crate::core::v_latest::workspaces::files::copy;
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -316,6 +318,58 @@ mod tests {
             // Skip workspace moves and removals on windows
             if std::env::consts::OS == "windows" {
                 return Ok(());
+            }
+
+            // A copy commits beside its source with the source's content, and is refused where the
+            // source has staged changes or something is already at the destination.
+            let workspace = committing_workspace(&repo, &commit, "copy")?;
+            let table_copy = "out/table_copy.csv";
+            workspaces::files::copy(&workspace, Path::new("table.csv"), Path::new(table_copy))
+                .await?;
+            workspaces::files::copy(&workspace, other, Path::new("other_copy.txt")).await?;
+            assert_eq!(
+                staged_status(&workspace, table_copy),
+                Some(StagedEntryStatus::Added)
+            );
+            assert_eq!(
+                staged_status(&workspace, "table.csv"),
+                None,
+                "the source stays as committed"
+            );
+            stage_new_file(&workspace, "data/a.txt").await?;
+            workspaces::files::rm(&workspace, &[PathBuf::from("data/sub/b.txt")]).await?;
+            for (source, dest, refusal) in [
+                ("data/a.txt", "a_copy.txt", "SourceHasStagedChanges"),
+                ("data/sub/b.txt", "b_copy.txt", "PathStagedForRemoval"),
+                ("data", "data_copy", "NotAFile"),
+                ("missing.txt", "missing_copy.txt", "PathDoesNotExist"),
+                ("table.csv", "other.txt", "DestinationExists"),
+                ("table.csv", "other_copy.txt", "DestinationAlreadyStaged"),
+                ("table.csv", "other.txt/table.csv", "NotADirectory"),
+            ] {
+                let result =
+                    workspaces::files::copy(&workspace, Path::new(source), Path::new(dest)).await;
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|err| format!("{err:?}").starts_with(refusal)),
+                    "copying {source} to {dest} should be refused with {refusal}, got {result:?}"
+                );
+            }
+            let committed = workspaces::commit(
+                &workspace,
+                &NewCommitBody::from_config(&user, "Copy files"),
+                "copy",
+            )
+            .await?;
+            for (source, copy) in [("table.csv", table_copy), ("other.txt", "other_copy.txt")] {
+                let hash = |path: &str| {
+                    *repositories::tree::get_file_by_path(&repo, &committed, path)
+                        .unwrap()
+                        .unwrap_or_else(|| panic!("{path} should be in the commit"))
+                        .hash()
+                };
+                assert_eq!(hash(copy), hash(source), "{copy} has {source}'s content");
             }
 
             // A committed directory moves with its nested subdirectory, and retrying the move

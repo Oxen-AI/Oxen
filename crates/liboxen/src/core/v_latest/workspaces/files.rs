@@ -1413,6 +1413,53 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
     mv_dir(workspace, &db, path, new_path)
 }
 
+/// Stage a copy of the base commit's file at `path` as a new file at `new_path`. The copy shares the
+/// committed file's content, so nothing is uploaded. Refused when the workspace has changes staged
+/// for `path`, or when anything is at `new_path` already.
+pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
+    let workspace = workspace.clone();
+    let path = path.to_path_buf();
+    let new_path = new_path.to_path_buf();
+    tokio::task::spawn_blocking(move || copy_sync(&workspace, &path, &new_path)).await?
+}
+
+/// The sync core of [`copy`]: Merkle reads and a staged-db write, all under one blocking hop.
+fn copy_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
+    let base_repo = &workspace.base_repo;
+    let commit = &workspace.commit;
+    let source = repositories::tree::get_node_by_path(base_repo, commit, path)?
+        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+    if source.is_dir() {
+        return Err(OxenError::NotAFile(path.to_path_buf().into()));
+    }
+    let mut file_node = source.file()?;
+
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    let db = staged_db_manager.lock_for_write();
+    match read_from_db(&db, path)? {
+        Some(entry) if entry.status == StagedEntryStatus::Removed => {
+            return Err(OxenError::PathStagedForRemoval(path.to_path_buf().into()));
+        }
+        Some(_) => return Err(OxenError::SourceHasStagedChanges(path.to_path_buf().into())),
+        None => {}
+    }
+    if read_from_db(&db, new_path)?.is_some() {
+        return Err(OxenError::DestinationAlreadyStaged(
+            new_path.to_path_buf().into(),
+        ));
+    }
+    if repositories::tree::get_node_by_path(base_repo, commit, new_path)?.is_some() {
+        return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
+    }
+    refuse_move_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
+
+    file_node.set_name(&new_path.to_string_lossy());
+    let mut batch = StagedWriteBatch::default();
+    batch.upsert_file_node(new_path, StagedEntryStatus::Added, &file_node);
+    batch.add_parent_directories(new_path);
+    batch.write(&db)
+}
+
 /// Refuse a destination beneath a file: one the workspace stages, or one in the base commit that
 /// the workspace stages nothing over. `staged` reads the workspace's staged entry at a path.
 pub(super) fn refuse_move_under_file(
