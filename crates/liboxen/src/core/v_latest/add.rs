@@ -2,8 +2,8 @@ use filetime::FileTime;
 use futures::stream::{self, Stream, StreamExt};
 use par_stream::prelude::*;
 use parking_lot::Mutex;
-use rocksdb::{DB, Direction, IteratorMode, WriteBatch};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use rocksdb::DB;
+use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,7 +20,9 @@ use crate::constants::{OXEN_HIDDEN_DIR, STAGED_DIR};
 use crate::core;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::{StagedDBManager, get_staged_db_manager};
+use crate::core::staged::staged_db_manager::{
+    StagedDBManager, delete_empty_staged_ancestors, get_staged_db_manager,
+};
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
@@ -1031,7 +1033,7 @@ pub(crate) async fn stage_version_file(
                         oxen.file_path = %relative_path.display(),
                         "Unstaging a workspace file uploaded with its committed content"
                     );
-                    staged_db_manager.delete_entry(&relative_path)?;
+                    staged_db_manager.delete_entry_and_empty_ancestors(&relative_path)?;
                 }
                 return Ok(());
             }
@@ -1264,44 +1266,6 @@ pub fn add_dir_to_staged_db(
     let mut buf = Vec::new();
     dir_entry.serialize(&mut Serializer::new(&mut buf)).unwrap();
     staged_db.put(relative_path_str, &buf).unwrap();
-    Ok(())
-}
-
-/// Deletes the staged entry of each ancestor directory of `paths`, which are relative to the
-/// repository, that has nothing staged under it.
-fn delete_empty_staged_ancestors(staged_db: &DB, paths: &[PathBuf]) -> Result<(), OxenError> {
-    let dirs: BTreeSet<&Path> = paths
-        .iter()
-        .flat_map(|path| path.ancestors().skip(1))
-        .collect();
-    let mut unstaged_dirs = HashSet::new();
-    let mut batch = WriteBatch::default();
-    // Paths under a directory sort right after it, and visiting in reverse empties children first
-    for dir in dirs.into_iter().rev() {
-        let key = dir.to_string_lossy();
-        let mut is_staged = false;
-        let mut has_staged_child = false;
-        // Every key under `dir` begins with its key, as do siblings such as `dir.csv`
-        for entry in staged_db.iterator(IteratorMode::From(key.as_bytes(), Direction::Forward)) {
-            let (entry_key, _) = entry?;
-            if !entry_key.starts_with(key.as_bytes()) {
-                break;
-            }
-            let path = Path::new(str::from_utf8(&entry_key)?);
-            if path == dir {
-                is_staged = true;
-            } else if path.starts_with(dir) && !unstaged_dirs.contains(path) {
-                has_staged_child = true;
-                break;
-            }
-        }
-        if is_staged && !has_staged_child {
-            log::debug!("unstaging empty dir {dir:?}");
-            batch.delete(key.as_bytes());
-            unstaged_dirs.insert(dir);
-        }
-    }
-    staged_db.write(batch)?;
     Ok(())
 }
 

@@ -579,7 +579,7 @@ mod tests {
         util::fs::write_to_path(repo.path.join("exports.csv/a.txt"), "A")?;
         util::fs::write_to_path(repo.path.join("exports.csv/b.csv"), "x,y\n1,2\n")?;
         let rows = "id,label\n1,a\n2,b\n";
-        write_to_path(repo.path.join("data").join("rows.csv"), rows)?;
+        write_to_path(repo.path.join("tables").join("rows.csv"), rows)?;
         repositories::add(&repo, &repo.path).await?;
         let commit = repositories::commit(&repo, "First commit")?;
 
@@ -731,7 +731,7 @@ mod tests {
 
         // A CSV over `stream_segment_size()` is spooled to disk, a smaller one stays in memory, and
         // both are staged with the rows they hold. A file uploaded again with the content its
-        // commit has is not staged, even after a change to it was.
+        // commit has is not staged, even after a change to it was, and leaves no directory staged.
         let mut big = String::from("id,label\n");
         let mut big_rows = 0;
         while big.len() as u64 <= stream_segment_size() {
@@ -739,11 +739,13 @@ mod tests {
             big_rows += 1;
         }
         let small = "id,label\n3,c\n4,d\n".to_string();
-        for (name, content) in [
-            ("big.csv", big),
-            ("small.csv", small),
-            ("rows.csv", "id,label\n1,a\n".into()),
-            ("rows.csv", rows.into()),
+        let tables_uri =
+            format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/tables");
+        for (target, name, content) in [
+            (&uri, "big.csv", big),
+            (&uri, "small.csv", small),
+            (&tables_uri, "rows.csv", "id,label\n1,a\n".into()),
+            (&tables_uri, "rows.csv", rows.into()),
         ] {
             let (body, headers) = create_form_data_payload_and_headers(
                 "file[]",
@@ -753,7 +755,7 @@ mod tests {
             );
             let req = headers
                 .into_iter()
-                .fold(TestRequest::post().uri(&uri), |req, hdr| {
+                .fold(TestRequest::post().uri(target), |req, hdr| {
                     req.insert_header(hdr)
                 })
                 .set_payload(body)
@@ -786,12 +788,12 @@ mod tests {
                 "{path} is staged with its columns and rows"
             );
         }
-        assert!(
-            staged_db_manager
-                .read_from_staged_db("data/rows.csv")?
-                .is_none(),
-            "a file uploaded again with its committed content is not staged"
-        );
+        for path in ["tables/rows.csv", "tables"] {
+            assert!(
+                staged_db_manager.read_from_staged_db(path)?.is_none(),
+                "{path} is not staged once rows.csv is uploaded again with its committed content"
+            );
+        }
         drop(staged_db_manager);
         drop(workspace);
 
