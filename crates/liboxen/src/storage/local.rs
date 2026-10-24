@@ -211,6 +211,24 @@ impl VersionStore for LocalVersionStore {
         Ok(Box::new(stream))
     }
 
+    async fn get_version_range(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<BoxedByteStream, OxenError> {
+        use tokio::io::{AsyncSeekExt, SeekFrom};
+
+        let path = self.version_path(hash);
+        let mut file = File::open(&path)
+            .await
+            .map_err(|source| version_read_error(hash, &path, source))?;
+        file.seek(SeekFrom::Start(offset)).await?;
+        let reader = BufReader::new(file.take(size));
+
+        Ok(Box::new(ReaderStream::new(reader)))
+    }
+
     async fn get_version_derived_stream(
         &self,
         orig_hash: &str,
@@ -963,6 +981,46 @@ mod tests {
         // Get and verify the data
         let retrieved = store.get_version_chunk(&hash, offset, size).await.unwrap();
         assert_eq!(retrieved, data);
+    }
+
+    #[tokio::test]
+    async fn test_get_version_range_reads_from_the_middle() {
+        let (_temp_dir, store) = setup().await;
+        let data: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        let hash = hasher::hash_buffer(&data);
+        store
+            .store_version(&hash, Bytes::from(data.clone()))
+            .await
+            .unwrap();
+
+        let collected = read_range(&store, &hash, 1000, 500).await;
+
+        assert_eq!(collected, data[1000..1500]);
+    }
+
+    #[tokio::test]
+    async fn test_get_version_range_stops_at_the_size_asked_for() {
+        let (_temp_dir, store) = setup().await;
+        let data = b"the quick brown fox";
+        let hash = hasher::hash_buffer(data);
+        store
+            .store_version(&hash, Bytes::from_static(data))
+            .await
+            .unwrap();
+
+        assert_eq!(read_range(&store, &hash, 0, 3).await, b"the");
+        assert_eq!(read_range(&store, &hash, 16, 3).await, b"fox");
+        assert!(read_range(&store, &hash, 4, 0).await.is_empty());
+    }
+
+    async fn read_range(store: &LocalVersionStore, hash: &str, offset: u64, size: u64) -> Vec<u8> {
+        use futures::StreamExt;
+        let mut stream = store.get_version_range(hash, offset, size).await.unwrap();
+        let mut collected = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            collected.extend_from_slice(&chunk.unwrap());
+        }
+        collected
     }
 
     #[tokio::test]

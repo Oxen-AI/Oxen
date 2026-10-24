@@ -781,6 +781,40 @@ impl VersionStore for S3VersionStore {
         Ok(Box::new(parts))
     }
 
+    /// The requested bytes alone, read in parts the same way a whole file is, so a seek into a
+    /// large video costs one range rather than the object.
+    async fn get_version_range(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<BoxedByteStream, OxenError> {
+        if size == 0 {
+            return Ok(Box::new(stream::empty()));
+        }
+
+        let client = self.client().await;
+        let key = self.generate_key(hash);
+        let bucket = self.bucket.clone();
+        let part_size = self.range_part_size;
+        // HTTP Range is inclusive on both ends, so the last byte asked for is offset + size - 1.
+        let last = offset + size - 1;
+
+        let parts = (0..size.div_ceil(part_size)).map(move |i| {
+            let start = offset + i * part_size;
+            let end = last.min(start + part_size - 1);
+            read_range(Arc::clone(&client), bucket.clone(), key.clone(), start, end).boxed()
+        });
+        let spawned = parts.map(|part| {
+            let task = AbortOnDropHandle::new(tokio::spawn(part));
+            async move { task.await.map_err(io::Error::other)? }
+        });
+
+        Ok(Box::new(
+            stream::iter(spawned).buffered(RANGE_READS_IN_FLIGHT),
+        ))
+    }
+
     async fn get_version_derived_stream(
         &self,
         orig_hash: &str,
