@@ -1,6 +1,7 @@
 use crate::errors::OxenHttpError;
 use crate::helpers::{
-    BodyEncoding, file_stream_response, get_repo, get_repo_async, spool_to_temp_file,
+    BodyEncoding, ByteRange, file_range_response, file_stream_response, get_repo, get_repo_async,
+    parse_byte_range, range_not_satisfiable_response, spool_to_temp_file,
 };
 use crate::params::{app_data, path_param};
 use crate::tasks;
@@ -174,10 +175,23 @@ pub async fn get(
 
     log::debug!("did not hit the resize or thumbnail cache");
 
-    // Stream the file
-    let stream = version_store.get_version_stream(&hash_str).await?;
-
-    Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
+    // A viewer scrubbing a video asks for the part it needs, so read that rather than the file.
+    match parse_byte_range(&req, num_bytes) {
+        ByteRange::Unsatisfiable => Ok(range_not_satisfiable_response(num_bytes)),
+        ByteRange::Partial { start, end } => {
+            let stream = version_store
+                .get_version_range(&hash_str, start, end - start + 1)
+                .await?;
+            Ok(
+                file_range_response(mime_type, &last_commit_id, start, end, num_bytes)
+                    .streaming(stream),
+            )
+        }
+        ByteRange::Whole => {
+            let stream = version_store.get_version_stream(&hash_str).await?;
+            Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
+        }
+    }
 }
 
 /// Add files to workspace
