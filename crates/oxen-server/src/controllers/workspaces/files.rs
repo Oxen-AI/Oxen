@@ -508,8 +508,11 @@ async fn store_and_inspect(
             });
             let hash_str = hash.to_string();
             let stored = version_store.store_version(&hash_str, data);
-            let (_, file) = tokio::try_join!(stored, async { inspected.await? })?;
-            Ok(file)
+            // Waits for the inspection even when the store fails, since it keeps the part in
+            // memory until it ends.
+            let (stored, file) = tokio::join!(stored, inspected);
+            stored?;
+            file?
         }
         ReceivedBody::Spooled(spooled) => {
             let hash = spooled.hash;
