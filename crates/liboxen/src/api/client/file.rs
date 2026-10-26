@@ -230,6 +230,8 @@ mod tests {
     use crate::util::fs;
 
     use bytes::Bytes;
+    #[cfg(feature = "ffmpeg")]
+    use tokio_stream::StreamExt;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
