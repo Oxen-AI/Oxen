@@ -1700,18 +1700,12 @@ pub(crate) type DeclaredSizes = HashMap<u64, PathBuf>;
 
 /// How [`added_objects`] records the version blobs that added files reference.
 pub(crate) trait AddedVersions: Default {
-    /// Whether [`AddedVersions::add`] calls the path it is handed. When false, directory paths are
-    /// not built during the walk.
-    const NEEDS_PATHS: bool;
-
     /// Record that the file at `path` references `version` and declares `num_bytes` for it.
     fn add(&mut self, version: String, num_bytes: u64, path: impl FnOnce() -> PathBuf);
 }
 
 /// Content hashes alone.
 impl AddedVersions for HashSet<String> {
-    const NEEDS_PATHS: bool = false;
-
     fn add(&mut self, version: String, _num_bytes: u64, _path: impl FnOnce() -> PathBuf) {
         self.insert(version);
     }
@@ -1719,8 +1713,6 @@ impl AddedVersions for HashSet<String> {
 
 /// Content hashes mapped to every size declared for each.
 impl AddedVersions for HashMap<String, DeclaredSizes> {
-    const NEEDS_PATHS: bool = true;
-
     fn add(&mut self, version: String, num_bytes: u64, path: impl FnOnce() -> PathBuf) {
         self.entry(version)
             .or_default()
@@ -1879,13 +1871,7 @@ fn collect_added_from_dir<V: AddedVersions>(
     added.nodes.extend(head.vnodes);
     added.unreadable.extend(head.unreadable);
 
-    let child_path = |name: &str| {
-        if V::NEEDS_PATHS {
-            head_dir_path.join(name)
-        } else {
-            PathBuf::new()
-        }
-    };
+    let child_path = |name: &str| head_dir_path.join(name);
 
     // Damage on the base side prunes nothing: an entry it could not read is absent from
     // `base_entries`, so the head entry of that name counts as added.
@@ -2172,9 +2158,13 @@ mod tests {
             repositories::add(&repo, &repo.path).await?;
             let head = repositories::commit(&repo, "add data/.OXEN/config.toml")?;
             let result = find_missing_added_objects(&repo, Some(&commit), &head).await;
-            assert!(
-                matches!(result, Err(OxenError::InvalidTreePath(_))),
-                "the gate accepted a path a working tree cannot hold: {result:?}"
+            let Err(OxenError::InvalidTreePath(path)) = result else {
+                panic!("the gate accepted a path a working tree cannot hold: {result:?}");
+            };
+            assert_eq!(
+                path.to_string(),
+                Path::new("data").join(".OXEN").to_string_lossy(),
+                "the error carries the invalid entry's full path"
             );
 
             Ok(())
