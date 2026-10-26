@@ -8,340 +8,111 @@ mod tests {
     use std::path::Path;
 
     use crate::error::OxenError;
+    use crate::model::ParsedResource;
     use crate::repositories;
     use crate::resource;
 
     #[tokio::test]
-    async fn test_parse_resource_for_commit() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
+    async fn test_parse_resource_from_path() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let commit = repositories::commits::head_commit(&repo)?;
+            let parse = |path: &Path| -> Result<ParsedResource, OxenError> {
+                Ok(resource::parse_resource_from_path(&repo, path)?
+                    .unwrap_or_else(|| panic!("{path:?} should resolve")))
+            };
+
             let history = repositories::commits::list(&repo)?;
-            let commit = history.first().unwrap();
-            let path_str = format!("{}/annotations/train/one_shot.csv", commit.id);
-            let path = Path::new(&path_str);
+            assert_eq!(history.first(), Some(&commit), "one commit, the head");
+            let resource = parse(Path::new(&format!(
+                "{}/annotations/train/one_shot.csv",
+                commit.id
+            )))?;
+            assert_eq!(resource.commit.map(|c| c.id), Some(commit.id.clone()));
+            assert_eq!(resource.path, Path::new("annotations/train/one_shot.csv"));
 
-            match resource::parse_resource_from_path(&repo, path) {
-                Ok(Some(resource)) => {
-                    assert_eq!(commit.id, resource.commit.unwrap().id);
-                    assert_eq!(resource.path, Path::new("annotations/train/one_shot.csv"));
-                }
-                _ => {
-                    panic!("Should return a commit");
-                }
+            for branch_name in ["my-branch", "my/crazy/branch/name"] {
+                let branch = repositories::branches::create_checkout(&repo, branch_name)?;
+                let resource = parse(Path::new(&format!(
+                    "{branch_name}/annotations/train/one_shot.csv"
+                )))?;
+                assert_eq!(resource.commit.map(|c| c.id), Some(branch.commit_id));
+                assert_eq!(resource.path, Path::new("annotations/train/one_shot.csv"));
             }
 
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_for_branch() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "my-branch";
-            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = format!("{branch_name}/annotations/train/one_shot.csv");
-            let path = Path::new(&path_str);
-
-            match resource::parse_resource_from_path(&repo, path) {
-                Ok(Some(resource)) => {
-                    println!("Got branch: {branch:?} -> {path:?}");
-                    assert_eq!(branch.commit_id, resource.commit.unwrap().id);
-                    assert_eq!(resource.path, Path::new("annotations/train/one_shot.csv"));
-                }
-                _ => {
-                    panic!("Should return a branch");
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_for_long_branch_name() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "my/crazy/branch/name";
-            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = format!("{branch_name}/annotations/train/one_shot.csv");
-            let path = Path::new(&path_str);
-
-            match resource::parse_resource_from_path(&repo, path) {
-                Ok(Some(resource)) => {
-                    println!("Got branch: {branch:?} -> {path:?}");
-                    assert_eq!(branch.commit_id, resource.commit.unwrap().id);
-                    assert_eq!(resource.path, Path::new("annotations/train/one_shot.csv"));
-                }
-                _ => {
-                    panic!("Should return a branch");
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_for_branch_base_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "my_branch";
-            let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = branch_name.to_string();
-            let path = Path::new(&path_str);
-
-            match resource::parse_resource_from_path(&repo, path) {
-                Ok(Some(resource)) => {
-                    println!("Got branch: {branch:?} -> {path:?}");
-                    assert_eq!(branch.commit_id, resource.commit.unwrap().id);
-                    assert_eq!(resource.path, Path::new(""));
-                }
-                _ => {
-                    panic!("Should return a branch");
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_from_path_root_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "main";
-            // let branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = format!("{branch_name}/");
-            let path = Path::new(&path_str);
-
-            match resource::parse_resource_from_path(&repo, path) {
-                Ok(Some(resource)) => {
-                    assert_eq!(resource.path, Path::new(""))
-                }
-                _ => {
-                    panic!("Should return a parsed resource");
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_from_path_root_dir_complicated_branch() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "super/complex/branch-name/slashes";
-            let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = format!("{branch_name}/");
-            let path = Path::new(&path_str);
-
-            if !cfg!(windows) {
-                // skip on windows, running on linux
-                match resource::parse_resource_from_path(&repo, path) {
-                    Ok(Some(resource)) => {
-                        assert_eq!(resource.path, Path::new(""))
-                    }
-                    _ => {
-                        panic!("Should return a parsed resource");
-                    }
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_from_path_nonroot_complicated_branch() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "super/complex/branch-name/slashes";
-            let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path = Path::new(branch_name).join("folder-new");
-
-            // should be running server on linux so skip windows
-            if !cfg!(windows) {
-                match resource::parse_resource_from_path(&repo, &path) {
-                    Ok(Some(resource)) => {
-                        assert_eq!(resource.path, Path::new("folder-new"))
-                    }
-                    _ => {
-                        panic!("Should return a parsed resource");
-                    }
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_from_path_with_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_fully_committed_async(|repo| async move {
-            let branch_name = "super/complex/branch-name/slashes";
-            let _branch = repositories::branches::create_checkout(&repo, branch_name)?;
-
-            let path_str = format!("{branch_name}/folder/item.txt");
-            let path = Path::new(&path_str);
-
-            if !cfg!(windows) {
-                match resource::parse_resource_from_path(&repo, path) {
-                    Ok(Some(resource)) => {
-                        assert_eq!(resource.path, Path::new("folder/item.txt"))
-                    }
-                    _ => {
-                        panic!("Should return a parsed resource");
-                    }
-                }
-            }
-
-            Ok(())
-        })
-        .await
-    }
-
-    // -----------------------------------------------------------------------
-    // Precedence tests — lock in the commit > branch > workspace ordering
-    // -----------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn test_parse_resource_commit_wins_over_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-
-            // Create a branch whose name is exactly the commit id.
-            repositories::branches::create_from_head(&repo, &commit.id)?;
-
-            let path_str = format!("{}/some/file.txt", commit.id);
-            let path = Path::new(&path_str);
-            let resource =
-                resource::parse_resource_from_path(&repo, path)?.expect("should resolve");
-
-            // Must resolve as a commit, not the branch.
-            assert!(resource.commit.is_some(), "expected commit");
-            assert!(resource.branch.is_none(), "should not resolve as branch");
-            assert_eq!(resource.commit.unwrap().id, commit.id);
-            assert_eq!(resource.path, Path::new("some/file.txt"));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_branch_wins_over_workspace() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-
-            // Create a branch and a workspace with the same name.
-            let shared_name = "shared-name";
-            let branch = repositories::branches::create_from_head(&repo, shared_name)?;
-            let _workspace = repositories::workspaces::create(&repo, &commit, shared_name, false)?;
-
-            let path_str = format!("{shared_name}/data.csv");
-            let path = Path::new(&path_str);
-            let resource =
-                resource::parse_resource_from_path(&repo, path)?.expect("should resolve");
-
-            // Must resolve as a branch, not the workspace.
-            assert!(resource.branch.is_some(), "expected branch");
-            assert!(
-                resource.workspace.is_none(),
-                "should not resolve as workspace"
+            let branch = repositories::branches::create_checkout(&repo, "my_branch")?;
+            let resource = parse(Path::new("my_branch"))?;
+            assert_eq!(resource.commit.map(|c| c.id), Some(branch.commit_id));
+            assert_eq!(
+                resource.path,
+                Path::new(""),
+                "a bare branch name is the root dir"
             );
-            assert_eq!(resource.branch.unwrap().name, branch.name);
-            assert_eq!(resource.path, Path::new("data.csv"));
 
-            Ok(())
-        })
-        .await
-    }
+            assert_eq!(parse(Path::new("main/"))?.path, Path::new(""));
 
-    #[tokio::test]
-    async fn test_parse_resource_workspace_resolves_when_no_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
+            let branch_name = "super/complex/branch-name/slashes";
+            repositories::branches::create_checkout(&repo, branch_name)?;
+            if !cfg!(windows) {
+                assert_eq!(
+                    parse(Path::new(&format!("{branch_name}/")))?.path,
+                    Path::new("")
+                );
+                let path = Path::new(branch_name).join("folder-new");
+                assert_eq!(parse(&path)?.path, Path::new("folder-new"));
+                let path = format!("{branch_name}/folder/item.txt");
+                assert_eq!(parse(Path::new(&path))?.path, Path::new("folder/item.txt"));
+            }
 
-            let workspace = repositories::workspaces::create(&repo, &commit, "my-workspace", true)?;
-
-            let path_str = format!("{}/data.csv", workspace.id);
-            let path = Path::new(&path_str);
-            let resource =
-                resource::parse_resource_from_path(&repo, path)?.expect("should resolve");
-
-            assert!(resource.workspace.is_some(), "expected workspace");
-            assert!(resource.branch.is_none());
-            assert!(resource.commit.is_none());
-            assert_eq!(resource.workspace.unwrap().id, workspace.id);
-            assert_eq!(resource.path, Path::new("data.csv"));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_full_branch_path_match() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Branch name spans the entire path — no file portion.
             let branch_name = "feature/v2/experiment";
             let branch = repositories::branches::create_from_head(&repo, branch_name)?;
+            let resource = parse(Path::new(branch_name))?;
+            assert_eq!(resource.branch.map(|b| b.name), Some(branch.name));
+            assert_eq!(
+                resource.path,
+                Path::new(""),
+                "the branch name spans the whole path"
+            );
 
-            let path = Path::new(branch_name);
-            let resource =
-                resource::parse_resource_from_path(&repo, path)?.expect("should resolve");
-
-            assert!(resource.branch.is_some());
-            assert_eq!(resource.branch.unwrap().name, branch.name);
-            assert_eq!(resource.path, Path::new(""));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_returns_none_for_unknown() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let path = Path::new("nonexistent-thing/file.txt");
-            let result = resource::parse_resource_from_path(&repo, path)?;
-            assert!(result.is_none(), "unknown identifier should return None");
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_parse_resource_from_path_async_matches_sync() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let path_str = format!("{}/some/file.txt", commit.id);
-            let path = Path::new(&path_str);
-
-            let sync = resource::parse_resource_from_path(&repo, path)?;
-            let async_ = resource::parse_resource_from_path_async(&repo, path).await?;
-
-            let sync = sync.expect("should resolve");
-            let async_ = async_.expect("should resolve");
-            assert_eq!(async_.commit.unwrap().id, sync.commit.unwrap().id);
-            assert_eq!(async_.path, sync.path);
-
-            // Unknown identifiers resolve to None on the async path too.
+            // Resolving an unknown identifier looks for a workspace before any exists.
             let unknown = Path::new("nonexistent-thing/file.txt");
+            assert!(resource::parse_resource_from_path(&repo, unknown)?.is_none());
             assert!(
                 resource::parse_resource_from_path_async(&repo, unknown)
                     .await?
                     .is_none()
             );
+
+            let workspace = repositories::workspaces::create(&repo, &commit, "my-workspace", true)?;
+            let resource = parse(Path::new(&format!("{}/data.csv", workspace.id)))?;
+            assert!(resource.branch.is_none());
+            assert!(resource.commit.is_none());
+            assert_eq!(resource.workspace.map(|w| w.id), Some(workspace.id));
+            assert_eq!(resource.path, Path::new("data.csv"));
+
+            let shared_name = "shared-name";
+            let branch = repositories::branches::create_from_head(&repo, shared_name)?;
+            repositories::workspaces::create(&repo, &commit, shared_name, false)?;
+            let resource = parse(Path::new(&format!("{shared_name}/data.csv")))?;
+            assert!(
+                resource.workspace.is_none(),
+                "a branch wins over a workspace"
+            );
+            assert_eq!(resource.branch.map(|b| b.name), Some(branch.name));
+            assert_eq!(resource.path, Path::new("data.csv"));
+
+            repositories::branches::create_from_head(&repo, &commit.id)?;
+            let path_str = format!("{}/some/file.txt", commit.id);
+            let path = Path::new(&path_str);
+            let resource = parse(path)?;
+            assert!(resource.branch.is_none(), "a commit wins over a branch");
+            assert_eq!(resource.commit.map(|c| c.id), Some(commit.id.clone()));
+            assert_eq!(resource.path, Path::new("some/file.txt"));
+
+            let async_ = resource::parse_resource_from_path_async(&repo, path)
+                .await?
+                .expect("the async path resolves what the sync path does");
+            assert_eq!(async_.commit.map(|c| c.id), Some(commit.id));
+            assert_eq!(async_.path, resource.path);
 
             Ok(())
         })

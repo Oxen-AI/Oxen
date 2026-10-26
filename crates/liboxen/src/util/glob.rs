@@ -452,7 +452,7 @@ mod tests {
     use std::path::PathBuf;
 
     #[tokio::test]
-    async fn test_glob_parse_working_dir() -> Result<(), OxenError> {
+    async fn test_glob_parse_working_dir_and_staged_db() -> Result<(), OxenError> {
         test::run_training_data_repo_test_no_commits_async(|repo| async move {
             let repo_path = repo.clone().path;
 
@@ -505,16 +505,6 @@ mod tests {
 
             assert_eq!(paths, expected);
 
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_glob_parse_working_dir_walk_dirs() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let repo_path = repo.clone().path;
-
             // Test glob path with walk
             let opts = GlobOpts {
                 paths: vec![PathBuf::from("nlp/*")],
@@ -561,14 +551,6 @@ mod tests {
 
             assert_eq!(paths, expected);
 
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_glob_parse_staged_db() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
             // Stage some specific files and a directory
             repositories::add(&repo, "train/dog_1.jpg").await?;
             repositories::add(&repo, "annotations/train/*").await?;

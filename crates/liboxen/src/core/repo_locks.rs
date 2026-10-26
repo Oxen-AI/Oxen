@@ -250,13 +250,14 @@ mod tests {
     use super::*;
     use crate::repositories::size::{self, SizeStatus};
     use crate::test;
+    use std::time::Instant;
     use tokio::sync::oneshot;
 
-    // A write is rejected with LockTimeout while an exclusive op holds the repo, and allowed again
-    // once it releases.
     #[tokio::test]
-    async fn test_exclusive_rejects_new_writers() -> Result<(), OxenError> {
+    async fn test_exclusive_access() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
+            // A write is rejected with LockTimeout while an exclusive op holds the repo, and
+            // allowed again once it releases.
             let (held_tx, held_rx) = oneshot::channel();
             let (release_tx, release_rx) = oneshot::channel();
 
@@ -291,60 +292,39 @@ mod tests {
             release_tx.send(()).expect("release the exclusive op");
             handle.await.expect("join exclusive task")?;
 
-            // Released: writes succeed again.
-            let _guard = begin_write(&repo)?;
-            Ok(())
-        })
-        .await
-    }
-
-    // An exclusive acquire waits for an in-flight write to drain before it proceeds.
-    #[tokio::test]
-    async fn test_exclusive_waits_for_in_flight_writes_to_drain() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+            // The drain wait is bounded: a write that never drains yields LockTimeout.
             let guard = begin_write(&repo)?;
-
-            let repo_excl = repo.clone();
-            let (done_tx, mut done_rx) = oneshot::channel();
-            let handle = tokio::spawn(async move {
-                with_repo_exclusive(&repo_excl, async { Ok::<(), OxenError>(()) })
-                    .await
-                    .expect("exclusive op");
-                done_tx.send(()).expect("signal done");
-            });
-
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            assert!(
-                done_rx.try_recv().is_err(),
-                "exclusive proceeded before the in-flight write drained"
-            );
-
-            drop(guard);
-            done_rx.await.expect("exclusive should proceed after drain");
-            handle.await.expect("join exclusive task");
-            Ok(())
-        })
-        .await
-    }
-
-    // The drain wait is bounded: a write that never drains yields LockTimeout.
-    #[tokio::test]
-    async fn test_exclusive_times_out_when_writes_never_drain() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let guard = begin_write(&repo)?;
-            let result = begin_exclusive_with_timeout(&repo, Duration::from_millis(100)).await;
+            let result = begin_exclusive_with_timeout(&repo, Duration::from_millis(5)).await;
             assert!(
                 matches!(result, Err(OxenError::LockTimeout(_))),
                 "an undrained write must time out the exclusive acquire"
             );
-            drop(guard);
-
             // The timed-out acquire must clear the exclusive marker on its way out (via
             // ExclusiveMarker's Drop), leaving the repo writable again rather than wedged.
-            assert!(
-                begin_write(&repo).is_ok(),
-                "a drain timeout must leave the repo unwedged (exclusive marker cleared)"
+            drop(
+                begin_write(&repo)
+                    .expect("a drain timeout must leave the repo unwedged (marker cleared)"),
             );
+
+            // An exclusive acquire waits for the in-flight write to drain, then proceeds.
+            let repo_excl = repo.clone();
+            let handle = tokio::spawn(async move {
+                with_repo_exclusive(&repo_excl, async { Ok::<(), OxenError>(()) }).await
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while begin_write(&repo).is_ok() {
+                assert!(
+                    Instant::now() < deadline,
+                    "the exclusive acquire should be blocking new writers while it drains"
+                );
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            assert!(
+                !handle.is_finished(),
+                "exclusive proceeded before the write drained"
+            );
+            drop(guard);
+            handle.await.expect("join exclusive task")?;
             Ok(())
         })
         .await

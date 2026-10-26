@@ -1149,117 +1149,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_pagination_order_with_more_than_10_commits() -> Result<(), OxenError> {
+    async fn test_pagination_takes_both_paths() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Create 15 commits to trigger the slow path (skip + limit > 10)
             let mut commit_ids = Vec::new();
-
             for i in 0..15 {
-                let filename = format!("file_{i}.txt");
-                let file_path = repo.path.join(&filename);
+                let file_path = repo.path.join(format!("file_{i}.txt"));
                 test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
-
                 repositories::add(&repo, &file_path).await?;
                 let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
-                commit_ids.push(commit.id.clone());
+                commit_ids.push(commit.id);
             }
 
-            // Commits should be ordered newest-first (C14, C13, C12, ...)
-            // Test: skip=9, limit=2 (total 11 > 10) to trigger the slow path
-            // This should return [C5, C4] (skip 9 newest, then take 2)
-            let (paginated_commits, _total, _cached) =
-                list_from_paginated_impl(&repo, "main", 9, 2)?;
+            // Commits are ordered newest-first (C14, C13, C12, ...). skip + limit <= 10 takes the
+            // forward path: skip C14, return [C13, C12].
+            let (forward, _total, _cached) = list_from_paginated_impl(&repo, "main", 1, 2)?;
+            let ids: Vec<&str> = forward.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, [&commit_ids[13], &commit_ids[12]], "forward path");
 
-            assert_eq!(
-                paginated_commits.len(),
-                2,
-                "Should return exactly 2 commits"
-            );
-
-            // Expected: skip 9 newest (C14 down to C6), then take [C5, C4]
-            let expected_first = &commit_ids[5]; // C5 (0-indexed)
-            let expected_second = &commit_ids[4]; // C4
-
-            println!("Total commits: {}", commit_ids.len());
-            println!("Expected first: {expected_first} (C5 - Commit 5)");
-            println!("Expected second: {expected_second} (C4 - Commit 4)");
-            println!(
-                "Actual first: {} ({})",
-                paginated_commits[0].id, paginated_commits[0].message
-            );
-            println!(
-                "Actual second: {} ({})",
-                paginated_commits[1].id, paginated_commits[1].message
-            );
-
-            assert_eq!(
-                &paginated_commits[0].id, expected_first,
-                "First result should be C5 (Commit 5), but got {}",
-                paginated_commits[0].message
-            );
-            assert_eq!(
-                &paginated_commits[1].id, expected_second,
-                "Second result should be C4 (Commit 4), but got {}",
-                paginated_commits[1].message
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_pagination_with_forward_path() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Create exactly 10 commits - this should use forward pagination (fast path)
-            let mut commit_ids = Vec::new();
-
-            for i in 0..10 {
-                let filename = format!("file_{i}.txt");
-                let file_path = repo.path.join(&filename);
-                test::write_txt_file_to_path(&file_path, format!("Content {i}"))?;
-
-                repositories::add(&repo, &file_path).await?;
-                let commit = repositories::commit(&repo, &format!("Commit {i}"))?;
-                commit_ids.push(commit.id.clone());
-            }
-
-            // With skip=1, limit=2, and total commits <= 10, should use forward path
-            let (paginated_commits, _total, _cached) =
-                list_from_paginated_impl(&repo, "main", 1, 2)?;
-
-            assert_eq!(
-                paginated_commits.len(),
-                2,
-                "Should return exactly 2 commits"
-            );
-
-            // Forward path should work correctly: skip C9, return [C8, C7]
-            let expected_first = &commit_ids[8]; // C8
-            let expected_second = &commit_ids[7]; // C7
-
-            println!("Forward path test:");
-            println!("Expected first: {expected_first} (C8)");
-            println!("Expected second: {expected_second} (C7)");
-            println!(
-                "Actual first: {} ({})",
-                paginated_commits[0].id, paginated_commits[0].message
-            );
-            println!(
-                "Actual second: {} ({})",
-                paginated_commits[1].id, paginated_commits[1].message
-            );
-
-            assert_eq!(
-                &paginated_commits[0].id, expected_first,
-                "First result should be C8, got {}",
-                paginated_commits[0].message
-            );
-            assert_eq!(
-                &paginated_commits[1].id, expected_second,
-                "Second result should be C7, got {}",
-                paginated_commits[1].message
-            );
+            // skip + limit > 10 takes the slow path: skip C14 down to C6, return [C5, C4].
+            let (slow, _total, _cached) = list_from_paginated_impl(&repo, "main", 9, 2)?;
+            let ids: Vec<&str> = slow.iter().map(|c| c.id.as_str()).collect();
+            assert_eq!(ids, [&commit_ids[5], &commit_ids[4]], "slow path");
 
             Ok(())
         })

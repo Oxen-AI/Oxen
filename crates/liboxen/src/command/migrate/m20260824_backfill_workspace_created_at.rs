@@ -149,17 +149,30 @@ mod tests {
         Ok(legacy_path)
     }
 
-    /// A workspace config from before this migration gets a creation time from its directory's
-    /// mtime and moves onto the current filename, and the workspace still loads afterward.
     #[tokio::test]
-    async fn test_up_backfills_created_at_and_renames_the_config() -> Result<(), OxenError> {
+    async fn test_up_backfills_created_at() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             let commit = repositories::commits::head_commit(&repo)?;
+            let migration = BackfillWorkspaceCreatedAtMigration;
+
+            // The migration only runs forward: reversing it would discard the only record of
+            // when these workspaces appeared.
+            assert!(!migration.is_applicable(Direction::Down, &repo)?);
+            assert!(migration.down(repo.clone()).is_err());
+
+            // A workspace created with a creation time already recorded is left exactly as it was.
+            let current = repositories::workspaces::create(&repo, &commit, "ws-current", true)?;
+            assert!(!migration.is_applicable(Direction::Up, &repo)?);
+            migration.up(repo.clone())?;
+            let reloaded = repositories::workspaces::get(&repo, "ws-current")?
+                .expect("workspace should still load");
+            assert_eq!(reloaded.created_at, current.created_at);
+
+            // A workspace config from before this migration gets a creation time from its
+            // directory's mtime and moves onto the current filename, and still loads afterward.
             let workspace = repositories::workspaces::create(&repo, &commit, "ws-legacy", true)?;
             let workspace_dir = workspace.dir();
             let legacy_path = make_legacy(&workspace)?;
-
-            let migration = BackfillWorkspaceCreatedAtMigration;
             assert!(migration.is_applicable(Direction::Up, &repo)?);
             assert!(
                 !migration.is_needed(&repo)?,
@@ -170,69 +183,34 @@ mod tests {
 
             assert!(!legacy_path.exists(), "the former config name is cleared");
             assert!(Workspace::config_path_from_dir(&workspace_dir).exists());
-
-            let reloaded = repositories::workspaces::get(&repo, "ws-legacy")?
-                .expect("a migrated workspace should still load");
+            let after_first = repositories::workspaces::get(&repo, "ws-legacy")?
+                .expect("a migrated workspace should still load")
+                .created_at;
             assert_eq!(
-                reloaded.created_at,
+                after_first,
                 Some(directory_mtime(&workspace_dir)?),
                 "created_at comes from the workspace directory's mtime"
             );
-
             assert!(
                 !migration.is_applicable(Direction::Up, &repo)?,
                 "a migrated repo has nothing left to migrate"
             );
 
-            Ok(())
-        })
-        .await
-    }
-
-    /// Re-running reads the same directory mtime it read the first time, so a workspace's recorded
-    /// creation time does not drift with every pass.
-    #[tokio::test]
-    async fn test_up_is_idempotent() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let workspace = repositories::workspaces::create(&repo, &commit, "ws-legacy", true)?;
-            make_legacy(&workspace)?;
-
-            let migration = BackfillWorkspaceCreatedAtMigration;
-            migration.up(repo.clone())?;
-            let after_first = repositories::workspaces::get(&repo, "ws-legacy")?
-                .expect("workspace should load after the first pass")
-                .created_at;
-            assert!(after_first.is_some());
-
+            // Re-running reads the same directory mtime it read the first time, so a workspace's
+            // recorded creation time does not drift with every pass.
             migration.up(repo.clone())?;
             let after_second = repositories::workspaces::get(&repo, "ws-legacy")?
                 .expect("workspace should load after the second pass")
                 .created_at;
-
             assert_eq!(after_first, after_second);
-            Ok(())
-        })
-        .await
-    }
 
-    /// An interrupted rename leaves a config under both names. The one under the current name is
-    /// authoritative and complete, so the pass keeps it and clears the leftover.
-    #[tokio::test]
-    async fn test_up_clears_a_leftover_config_from_an_interrupted_rename() -> Result<(), OxenError>
-    {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let workspace = repositories::workspaces::create(&repo, &commit, "ws-both", true)?;
-            let workspace_dir = workspace.dir();
-
-            // Both names present, the current one already carrying a creation time.
-            let current_path = Workspace::config_path_from_dir(&workspace_dir);
-            let legacy_path = Workspace::legacy_config_path_from_dir(&workspace_dir);
+            // An interrupted rename leaves a config under both names. The one under the current
+            // name is authoritative and complete, so the pass keeps it and clears the leftover.
+            let both = repositories::workspaces::create(&repo, &commit, "ws-both", true)?;
+            let current_path = Workspace::config_path_from_dir(both.dir());
+            let legacy_path = Workspace::legacy_config_path_from_dir(both.dir());
             let contents = util::fs::read_from_path(&current_path)?;
             AtomicFile::new(&legacy_path).write(contents.as_bytes())?;
-
-            let migration = BackfillWorkspaceCreatedAtMigration;
             assert!(
                 migration.is_applicable(Direction::Up, &repo)?,
                 "a leftover under the former name is still work to do"
@@ -242,50 +220,20 @@ mod tests {
 
             assert!(!legacy_path.exists(), "the leftover is cleared");
             assert!(current_path.exists());
-
             let reloaded = repositories::workspaces::get(&repo, "ws-both")?
                 .expect("the workspace should still load");
             assert_eq!(
-                reloaded.created_at, workspace.created_at,
+                reloaded.created_at, both.created_at,
                 "the config under the current name is kept as-is"
             );
 
-            Ok(())
-        })
-        .await
-    }
-
-    /// A workspace created with a creation time already recorded is left exactly as it was.
-    #[tokio::test]
-    async fn test_up_leaves_an_already_recorded_workspace_alone() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let workspace = repositories::workspaces::create(&repo, &commit, "ws-current", true)?;
-
-            let migration = BackfillWorkspaceCreatedAtMigration;
-            assert!(!migration.is_applicable(Direction::Up, &repo)?);
-
-            migration.up(repo.clone())?;
-
-            let reloaded = repositories::workspaces::get(&repo, "ws-current")?
-                .expect("workspace should still load");
-            assert_eq!(reloaded.created_at, workspace.created_at);
-            Ok(())
-        })
-        .await
-    }
-
-    /// One unreadable config does not strand the other workspaces in the repository.
-    #[tokio::test]
-    async fn test_up_skips_an_unparseable_config() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
+            // One unreadable config does not strand the other workspaces in the repository. This
+            // leaves a workspace that cannot load, so it runs last.
             let good = repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
             let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
             make_legacy(&good)?;
             AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
 
-            let migration = BackfillWorkspaceCreatedAtMigration;
             migration.up(repo.clone())?;
 
             let reloaded = repositories::workspaces::get(&repo, "ws-good")?
@@ -294,19 +242,6 @@ mod tests {
                 reloaded.created_at.is_some(),
                 "a readable workspace is backfilled even when a sibling config is unreadable"
             );
-            Ok(())
-        })
-        .await
-    }
-
-    /// The migration only runs forward: reversing it would discard the only record of when these
-    /// workspaces appeared.
-    #[tokio::test]
-    async fn test_down_is_refused() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let migration = BackfillWorkspaceCreatedAtMigration;
-            assert!(!migration.is_applicable(Direction::Down, &repo)?);
-            assert!(migration.down(repo).is_err());
             Ok(())
         })
         .await

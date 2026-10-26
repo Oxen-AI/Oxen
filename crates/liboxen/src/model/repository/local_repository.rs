@@ -728,40 +728,6 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_get_set_has_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
-            let url = "http://0.0.0.0:3000/repositories/OxenData";
-            let remote_name = "origin";
-            local_repo.set_remote(remote_name, url);
-            let remote = local_repo.get_remote(remote_name).unwrap();
-            assert_eq!(remote.name, remote_name);
-            assert_eq!(remote.url, url);
-
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn test_delete_remote() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test(|mut local_repo| {
-            let origin_url = "http://0.0.0.0:3000/repositories/OxenData";
-            let origin_name = "origin";
-
-            let other_url = "http://0.0.0.0:4000/repositories/OxenData";
-            let other_name = "other";
-            local_repo.set_remote(origin_name, origin_url);
-            local_repo.set_remote(other_name, other_url);
-
-            // Remove and make sure we cannot get again
-            local_repo.delete_remote(origin_name);
-            let remote = local_repo.get_remote(origin_name);
-            assert!(remote.is_none());
-
-            Ok(())
-        })
-    }
-
     // Note: Adding/Setting/Deleting workspaces does not currently require the repo to be in remote mode
     // Do we want to require that?
     #[test]
@@ -987,6 +953,25 @@ mod tests {
             // A repository reporting no identity is still attachable.
             let plain = repo.set_remote_repo("origin", &remote_ns_repo());
             assert_eq!(plain.repo_uuid, None);
+            assert_eq!(
+                repo.get_remote("origin")
+                    .and_then(|remote| remote.repo_uuid),
+                None,
+                "re-attaching replaces the stored remote, UUID included"
+            );
+            assert_eq!(repo.remotes().len(), 1, "remotes: {:?}", repo.remotes());
+
+            let other_url = "http://0.0.0.0:4000/repositories/OxenData";
+            repo.set_remote("other", other_url);
+            let other = repo.get_remote("other").expect("the remote just set");
+            assert_eq!(other.name, "other");
+            assert_eq!(other.url, other_url);
+            repo.delete_remote("origin");
+            assert!(repo.get_remote("origin").is_none());
+            assert!(
+                repo.get_remote("other").is_some(),
+                "deleting one remote keeps the others"
+            );
             Ok(())
         })
     }
@@ -1027,44 +1012,30 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_version_bytes_counts_a_committed_file() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let contents = "a".repeat(1234);
-            let path = test::write_txt_file_to_path(repo.path.join("one.txt"), &contents)?;
-            repositories::add(&repo, &path).await?;
-            repositories::commit(&repo, "Add one file")?;
-
-            assert_eq!(repo.version_bytes()?, contents.len() as u64);
-            Ok(())
-        })
-        .await
-    }
-
     /// The same content at two paths is two file nodes addressing one version file, so its bytes
     /// count once rather than twice.
     #[tokio::test]
-    async fn test_version_bytes_counts_duplicate_content_once() -> Result<(), OxenError> {
+    async fn test_version_bytes_counts_each_version_file_once() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            let contents = "b".repeat(500);
-            let first = test::write_txt_file_to_path(repo.path.join("first.txt"), &contents)?;
-            let second = test::write_txt_file_to_path(repo.path.join("second.txt"), &contents)?;
+            assert_eq!(
+                repo.version_bytes()?,
+                0,
+                "nothing committed references nothing"
+            );
+
+            let one = "a".repeat(1234);
+            let path = test::write_txt_file_to_path(repo.path.join("one.txt"), &one)?;
+            repositories::add(&repo, &path).await?;
+            repositories::commit(&repo, "Add one file")?;
+            assert_eq!(repo.version_bytes()?, one.len() as u64);
+
+            let twice = "b".repeat(500);
+            let first = test::write_txt_file_to_path(repo.path.join("first.txt"), &twice)?;
+            let second = test::write_txt_file_to_path(repo.path.join("second.txt"), &twice)?;
             repositories::add(&repo, &first).await?;
             repositories::add(&repo, &second).await?;
             repositories::commit(&repo, "Add the same content twice")?;
-
-            assert_eq!(repo.version_bytes()?, contents.len() as u64);
-            Ok(())
-        })
-        .await
-    }
-
-    /// Nothing committed means nothing referenced, so the walk reports zero rather than failing on
-    /// a tree that holds no file nodes.
-    #[tokio::test]
-    async fn test_version_bytes_is_zero_for_an_empty_repo() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            assert_eq!(repo.version_bytes()?, 0);
+            assert_eq!(repo.version_bytes()?, (one.len() + twice.len()) as u64);
             Ok(())
         })
         .await

@@ -346,343 +346,62 @@ mod tests {
     use super::*;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::test;
-    use crate::util;
     use std::thread;
 
     #[tokio::test]
-    async fn test_concurrent_access() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Spawn multiple threads to read/write concurrently
-            let mut handles = vec![];
-            for i in 0..5 {
-                let repo_clone = repo.clone();
-                let handle = thread::spawn(move || {
-                    // Each thread creates its own branch and reads all branches
-                    with_ref_manager(&repo_clone, |manager| {
-                        manager.create_branch(format!("branch-{i}"), format!("commit-{i}"))?;
-                        manager.list_branches()
-                    })
-                });
-                handles.push(handle);
-            }
-
-            // Wait for all threads and collect results
-            let results: Vec<Result<Vec<Branch>, OxenError>> =
-                handles.into_iter().map(|h| h.join().unwrap()).collect();
-
-            // Verify all operations succeeded
-            for result in results {
-                assert!(result.is_ok());
-            }
-
-            // Verify final state
-            with_ref_manager(&repo, |manager| {
-                let branches = manager.list_branches()?;
-                // Should have 6 branches (initial + 5 new ones)
-                assert_eq!(branches.len(), 6);
-                Ok(())
-            })?;
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_list_branches() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // add and commit a file
-            let new_file = repo.path.join("new_file.txt");
-            util::fs::write(&new_file, "I am a new file")?;
-            repositories::add(&repo, new_file).await?;
-            repositories::commit(&repo, "Added a new file")?;
-
-            repositories::branches::create_from_head(&repo, "feature/add-something")?;
-            repositories::branches::create_from_head(&repo, "bug/something-is-broken")?;
-
-            // Use with_ref_manager instead of creating RefReader directly
-            with_ref_manager(&repo, |manager| {
-                let branches = manager.list_branches()?;
-
-                // We started with the main branch, then added two more
-                assert_eq!(branches.len(), 3);
-
-                assert!(branches.iter().any(|b| b.name == "feature/add-something"));
-                assert!(branches.iter().any(|b| b.name == "bug/something-is-broken"));
-                assert!(branches.iter().any(|b| b.name == "main"));
-
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_default_head() -> Result<(), OxenError> {
+    async fn test_branch_refs() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
             with_ref_manager(&repo, |manager| {
-                assert_eq!(manager.read_head_ref()?.unwrap(), DEFAULT_BRANCH_NAME);
-                Ok(())
-            })
-        })
-        .await
-    }
+                assert_eq!(
+                    manager.read_head_ref()?.as_deref(),
+                    Some(DEFAULT_BRANCH_NAME)
+                );
+                assert_eq!(
+                    manager.list_branches()?.len(),
+                    1,
+                    "a repo starts with one branch"
+                );
 
-    #[tokio::test]
-    async fn test_create_branch_set_head() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                let branch_name = "experiment/cat-dog";
-                let commit_id = format!("{}", uuid::Uuid::new_v4());
-                manager.create_branch(branch_name, &commit_id)?;
-                manager.set_head(branch_name)?;
-                assert_eq!(manager.head_commit_id()?, Some(commit_id));
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_list_branches_empty() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                // always start with a default branch
-                let branches = manager.list_branches()?;
-                assert_eq!(branches.len(), 1);
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_list_branches_one() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                let name = "my-branch";
-                let commit_id = format!("{}", uuid::Uuid::new_v4());
-                manager.create_branch(name, &commit_id)?;
-                let branches = manager.list_branches()?;
-                // we always start with "main" branch
-                assert_eq!(branches.len(), 2);
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_list_branches_many() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                // we always start with a default branch
+                manager.create_branch("my-branch", uuid::Uuid::new_v4().to_string())?;
+                assert_eq!(manager.list_branches()?.len(), 2);
                 manager.create_branch("name_1", "1")?;
                 manager.create_branch("name_2", "2")?;
                 manager.create_branch("name_3", "3")?;
-                let branches = manager.list_branches()?;
-                assert_eq!(branches.len(), 4);
-                Ok(())
-            })
-        })
-        .await
-    }
+                assert_eq!(manager.list_branches()?.len(), 5);
 
-    #[tokio::test]
-    async fn test_create_branch_same_name() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                manager.create_branch("my-fun-name", "1")?;
+                assert!(manager.create_branch("my-branch", "2").is_err());
+                assert_eq!(
+                    manager.list_branches()?.len(),
+                    5,
+                    "a refused create adds nothing"
+                );
+                assert!(matches!(
+                    manager.create_branch("my name", "1234"),
+                    Err(OxenError::InvalidBranchName(_))
+                ));
 
-                assert!(manager.create_branch("my-fun-name", "2").is_err());
+                manager.create_branch("delete-me", "1234")?;
+                let count = manager.list_branches()?.len();
+                manager.delete_branch("delete-me")?;
+                assert_eq!(manager.list_branches()?.len(), count - 1);
 
-                // We should still only have two branches, default one and this one
-                let branches = manager.list_branches()?;
-                assert_eq!(branches.len(), 2);
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_delete_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                let name = "my-branch-name";
-                manager.create_branch(name, "1234")?;
-                let og_branches = manager.list_branches()?;
-                let og_branch_count = og_branches.len();
-
-                // Delete branch
-                manager.delete_branch(name)?;
-
-                // Should have one less branch than after creation
-                let branches = manager.list_branches()?;
-                assert_eq!(branches.len(), og_branch_count - 1);
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rename_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                let og_name = "my-branch-name";
+                let og_name = "rename-me";
                 manager.create_branch(og_name, "1234")?;
-                let og_branches = manager.list_branches()?;
-                let og_branch_count = og_branches.len();
-
-                // try to rename to invalid name
-                let result = manager.rename_branch(og_name, "invalid~name");
-                assert!(result.is_err());
-
-                // try to rename to existing name
-                let result = manager.rename_branch(og_name, "my-branch-name");
-                assert!(result.is_err());
-
-                // rename branch
-                let new_name = "new-name";
-                manager.rename_branch(og_name, new_name)?;
-
-                // Should have same number of branches, and one with the new name
+                let count = manager.list_branches()?.len();
+                assert!(manager.rename_branch(og_name, "invalid~name").is_err());
+                assert!(manager.rename_branch(og_name, og_name).is_err());
+                manager.rename_branch(og_name, "new-name")?;
                 let branches = manager.list_branches()?;
-                assert_eq!(branches.len(), og_branch_count);
-                assert!(branches.iter().any(|b| b.name == new_name));
-                Ok(())
-            })
-        })
-        .await
-    }
+                assert_eq!(branches.len(), count);
+                assert!(branches.iter().any(|b| b.name == "new-name"));
 
-    #[tokio::test]
-    async fn test_invalid_branch_names() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                let result = manager.create_branch("my name", "1234");
-                assert!(matches!(result, Err(OxenError::InvalidBranchName(_))));
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_create_branch_same_name_exactly_one_wins() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // 10 threads race to create the same branch with different commit ids. Under the
-            // refs RwLock, exactly one must succeed; the rest must get BranchAlreadyExists. The
-            // pre-RwLock behavior had a check-then-act race where multiple creates could each
-            // see has_branch==false and silently overwrite each other.
-            let mut handles = vec![];
-            for i in 0..10 {
-                let repo_clone = repo.clone();
-                let handle = thread::spawn(move || -> Result<bool, OxenError> {
-                    with_ref_manager(&repo_clone, |manager| {
-                        match manager.create_branch("contested", format!("commit-{i}")) {
-                            Ok(_) => Ok(true),
-                            Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
-                            Err(other) => Err(other),
-                        }
-                    })
-                });
-                handles.push(handle);
-            }
-
-            let outcomes: Vec<bool> = handles
-                .into_iter()
-                .map(|h| h.join().expect("thread panicked"))
-                .collect::<Result<Vec<_>, _>>()?;
-            let winners = outcomes.iter().filter(|&&won| won).count();
-            assert_eq!(
-                winners, 1,
-                "expected exactly one create to win, got {winners}"
-            );
-
-            with_ref_manager(&repo, |manager| {
-                assert!(manager.has_branch("contested"));
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_rename_collisions() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Set up: branches src-a and src-b, both racing to rename to "dest".
-            with_ref_manager(&repo, |manager| {
-                manager.create_branch("src-a", "commit-a")?;
-                manager.create_branch("src-b", "commit-b")?;
-                Ok(())
-            })?;
-
-            let repo_a = repo.clone();
-            let h_a = thread::spawn(move || -> Result<bool, OxenError> {
-                with_ref_manager(&repo_a, |manager| {
-                    match manager.rename_branch("src-a", "dest") {
-                        Ok(_) => Ok(true),
-                        Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
-                        Err(other) => Err(other),
-                    }
-                })
-            });
-            let repo_b = repo.clone();
-            let h_b = thread::spawn(move || -> Result<bool, OxenError> {
-                with_ref_manager(&repo_b, |manager| {
-                    match manager.rename_branch("src-b", "dest") {
-                        Ok(_) => Ok(true),
-                        Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
-                        Err(other) => Err(other),
-                    }
-                })
-            });
-
-            let won_a = h_a.join().expect("thread a panicked")?;
-            let won_b = h_b.join().expect("thread b panicked")?;
-            assert_ne!(won_a, won_b, "exactly one rename must win");
-
-            with_ref_manager(&repo, |manager| {
-                let branches = manager.list_branches()?;
-                let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
-                assert!(names.contains(&"dest"), "dest must exist after one win");
-                // Whichever source lost retains its original name; the winner's source is gone.
-                let losing_src = if won_a { "src-b" } else { "src-a" };
-                let winning_src = if won_a { "src-a" } else { "src-b" };
-                assert!(names.contains(&losing_src));
-                assert!(!names.contains(&winning_src));
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_compare_and_swap_branch_commit_id_happy_path() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
                 manager.create_branch("feature", "c1")?;
                 manager.compare_and_swap_branch_commit_id("feature", Some("c1"), "c2")?;
                 assert_eq!(
                     manager.get_commit_id_for_branch("feature")?.as_deref(),
                     Some("c2")
                 );
-                Ok(())
-            })
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_compare_and_swap_branch_commit_id_mismatch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
-                manager.create_branch("feature", "c1")?;
-                let result =
-                    manager.compare_and_swap_branch_commit_id("feature", Some("wrong"), "c2");
-                match result {
+                match manager.compare_and_swap_branch_commit_id("feature", Some("wrong"), "c3") {
                     Err(OxenError::BranchHeadMismatch {
                         branch,
                         expected,
@@ -690,35 +409,24 @@ mod tests {
                     }) => {
                         assert_eq!(branch, "feature");
                         assert_eq!(expected.as_deref(), Some("wrong"));
-                        assert_eq!(actual.as_deref(), Some("c1"));
+                        assert_eq!(actual.as_deref(), Some("c2"));
                     }
                     other => panic!("expected BranchHeadMismatch, got {other:?}"),
                 }
-                // Value must be unchanged.
                 assert_eq!(
                     manager.get_commit_id_for_branch("feature")?.as_deref(),
-                    Some("c1")
+                    Some("c2"),
+                    "a mismatched swap leaves the value unchanged"
                 );
-                Ok(())
-            })
-        })
-        .await
-    }
 
-    #[tokio::test]
-    async fn test_compare_and_swap_branch_commit_id_absent_expected() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            with_ref_manager(&repo, |manager| {
                 // expected = None means "the branch must be absent" — succeeds and creates it.
                 manager.compare_and_swap_branch_commit_id("new-branch", None, "c1")?;
                 assert_eq!(
                     manager.get_commit_id_for_branch("new-branch")?.as_deref(),
                     Some("c1"),
                 );
-
                 // Once present, a second swap with expected = None must fail with the actual.
-                let result = manager.compare_and_swap_branch_commit_id("new-branch", None, "c2");
-                match result {
+                match manager.compare_and_swap_branch_commit_id("new-branch", None, "c2") {
                     Err(OxenError::BranchHeadMismatch {
                         expected, actual, ..
                     }) => {
@@ -728,43 +436,132 @@ mod tests {
                     other => panic!("expected BranchHeadMismatch, got {other:?}"),
                 }
                 Ok(())
-            })
-        })
-        .await
-    }
+            })?;
 
-    #[tokio::test]
-    async fn test_concurrent_set_branch_commit_id_serializes() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // 10 threads racing on set_branch_commit_id — every write must serialize under
-            // the RwLock and the final value must equal one of the values we wrote (no torn
-            // writes, no panics). Before Phase 2 wires CAS in, last-writer-wins is allowed;
-            // this test asserts safety only, not no-loss.
-            with_ref_manager(&repo, |manager| manager.create_branch("hot", "initial"))?;
-
-            let mut handles = vec![];
-            for i in 0..10 {
-                let repo_clone = repo.clone();
-                let handle = thread::spawn(move || -> Result<(), OxenError> {
-                    with_ref_manager(&repo_clone, |manager| {
-                        manager.set_branch_commit_id("hot", format!("commit-{i}"))
-                    })
-                });
-                handles.push(handle);
-            }
-            for h in handles {
-                h.join().expect("thread panicked")?;
-            }
-
+            repositories::branches::create_from_head(&repo, "feature/add-something")?;
+            repositories::branches::create_from_head(&repo, "bug/something-is-broken")?;
             with_ref_manager(&repo, |manager| {
-                let final_value = manager
-                    .get_commit_id_for_branch("hot")?
+                let branches = manager.list_branches()?;
+                assert!(branches.iter().any(|b| b.name == "feature/add-something"));
+                assert!(branches.iter().any(|b| b.name == "bug/something-is-broken"));
+                assert!(branches.iter().any(|b| b.name == DEFAULT_BRANCH_NAME));
+                Ok(())
+            })?;
+
+            // Threads each create their own branch and read all branches.
+            let count = with_ref_manager(&repo, |manager| manager.list_branches())?.len();
+            let handles: Vec<_> = (0..5)
+                .map(|i| {
+                    let repo = repo.clone();
+                    thread::spawn(move || {
+                        with_ref_manager(&repo, |manager| {
+                            manager.create_branch(format!("branch-{i}"), format!("commit-{i}"))?;
+                            manager.list_branches()
+                        })
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().expect("thread panicked")?;
+            }
+            let branches = with_ref_manager(&repo, |manager| manager.list_branches())?;
+            assert_eq!(branches.len(), count + 5);
+
+            // 10 threads race to create the same branch with different commit ids. Under the
+            // refs RwLock, exactly one must succeed; the rest must get BranchAlreadyExists. The
+            // pre-RwLock behavior had a check-then-act race where multiple creates could each
+            // see has_branch==false and silently overwrite each other.
+            let handles: Vec<_> = (0..10)
+                .map(|i| {
+                    let repo = repo.clone();
+                    thread::spawn(move || -> Result<bool, OxenError> {
+                        with_ref_manager(&repo, |manager| {
+                            match manager.create_branch("contested", format!("commit-{i}")) {
+                                Ok(_) => Ok(true),
+                                Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
+                                Err(other) => Err(other),
+                            }
+                        })
+                    })
+                })
+                .collect();
+            let outcomes = handles
+                .into_iter()
+                .map(|h| h.join().expect("thread panicked"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let winners = outcomes.iter().filter(|&&won| won).count();
+            assert_eq!(
+                winners, 1,
+                "expected exactly one create to win, got {winners}"
+            );
+            assert!(with_ref_manager(&repo, |manager| Ok(
+                manager.has_branch("contested")
+            ))?);
+
+            // Branches src-a and src-b race to rename to "dest".
+            with_ref_manager(&repo, |manager| {
+                manager.create_branch("src-a", "commit-a")?;
+                manager.create_branch("src-b", "commit-b")
+            })?;
+            let rename_to_dest = |src: &'static str| {
+                let repo = repo.clone();
+                thread::spawn(move || -> Result<bool, OxenError> {
+                    with_ref_manager(&repo, |manager| match manager.rename_branch(src, "dest") {
+                        Ok(_) => Ok(true),
+                        Err(OxenError::BranchAlreadyExists(_)) => Ok(false),
+                        Err(other) => Err(other),
+                    })
+                })
+            };
+            let (h_a, h_b) = (rename_to_dest("src-a"), rename_to_dest("src-b"));
+            let won_a = h_a.join().expect("thread a panicked")?;
+            let won_b = h_b.join().expect("thread b panicked")?;
+            assert_ne!(won_a, won_b, "exactly one rename must win");
+            let branches = with_ref_manager(&repo, |manager| manager.list_branches())?;
+            let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+            assert!(names.contains(&"dest"), "dest must exist after one win");
+            // Whichever source lost retains its original name; the winner's source is gone.
+            let (winning_src, losing_src) = if won_a {
+                ("src-a", "src-b")
+            } else {
+                ("src-b", "src-a")
+            };
+            assert!(names.contains(&losing_src));
+            assert!(!names.contains(&winning_src));
+
+            // 10 threads race on set_branch_commit_id. Every write must serialize under the RwLock
+            // and the final value must equal one of the values we wrote (no torn writes, no
+            // panics). Last-writer-wins is allowed, so this asserts safety only, not no-loss.
+            with_ref_manager(&repo, |manager| manager.create_branch("hot", "initial"))?;
+            let handles: Vec<_> = (0..10)
+                .map(|i| {
+                    let repo = repo.clone();
+                    thread::spawn(move || {
+                        with_ref_manager(&repo, |manager| {
+                            manager.set_branch_commit_id("hot", format!("commit-{i}"))
+                        })
+                    })
+                })
+                .collect();
+            for handle in handles {
+                handle.join().expect("thread panicked")?;
+            }
+            let final_value =
+                with_ref_manager(&repo, |manager| manager.get_commit_id_for_branch("hot"))?
                     .expect("branch must exist");
-                let valid: Vec<String> = (0..10).map(|i| format!("commit-{i}")).collect();
-                assert!(
-                    valid.contains(&final_value),
-                    "final value {final_value} is not one of the writes"
-                );
+            let valid: Vec<String> = (0..10).map(|i| format!("commit-{i}")).collect();
+            assert!(
+                valid.contains(&final_value),
+                "final value {final_value} is not one of the writes"
+            );
+
+            // Moves HEAD onto a commit id that does not exist, so it runs last.
+            with_ref_manager(&repo, |manager| {
+                let branch_name = "experiment/cat-dog";
+                let commit_id = uuid::Uuid::new_v4().to_string();
+                manager.create_branch(branch_name, &commit_id)?;
+                manager.set_head(branch_name)?;
+                assert_eq!(manager.head_commit_id()?, Some(commit_id));
                 Ok(())
             })
         })
