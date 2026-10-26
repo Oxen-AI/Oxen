@@ -135,15 +135,26 @@ mod tests {
     async fn test_page_slice_query_and_list_remote_data_frames() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|mut local_repo| async move {
             let repo_dir = local_repo.path.clone();
-            // 200k rows by 11 columns, starting
-            // image_id,lefteye_x,lefteye_y,righteye_x,...
-            // 000001.jpg,69,109,106,...
+            // 1,000 rows by 11 columns, whose lefteye_x cycles through 60 to 79
             let large_csv = Path::new("large_files").join("test.csv");
+            let rows = 1_000;
+            let lefteye_x = |row: usize| 60 + row % 20;
+            let mut csv = String::from(
+                "image_id,lefteye_x,lefteye_y,righteye_x,righteye_y,nose_x,nose_y,\
+                 leftmouth_x,leftmouth_y,rightmouth_x,rightmouth_y\n",
+            );
+            for row in 1..=rows {
+                let x = lefteye_x(row);
+                csv.push_str(&format!(
+                    "{row:06}.jpg,{x},109,106,113,77,142,73,152,108,154\n"
+                ));
+            }
+            fs::create_dir_all(repo_dir.join("large_files"))?;
+            test::write_txt_file_to_path(repo_dir.join(&large_csv), csv)?;
             // prompt,response,is_correct,response_time,difficulty
             let mixed_csv = Path::new("csvs").join("test.csv");
             let parquet = Path::new("data").join("test.parquet");
             for (path, from) in [
-                (&large_csv, test::test_200k_csv()),
                 (
                     &mixed_csv,
                     test::test_csv_file_with_name("mixed_data_types.csv"),
@@ -203,7 +214,7 @@ mod tests {
             repositories::push(&local_repo).await?;
 
             // Pages of a csv, with the schema metadata committed on it
-            for (page, page_size, total_pages) in [(None, 10, 20_000), (Some(1), 20, 10_000)] {
+            for (page, page_size) in [(None, 10), (Some(1), 20)] {
                 let opts = DFOpts {
                     page,
                     page_size: Some(page_size),
@@ -212,11 +223,11 @@ mod tests {
                 let df = get(&remote_repo, DEFAULT_BRANCH_NAME, &large_csv, opts)
                     .await?
                     .data_frame;
-                assert_eq!((df.source.size.height, df.source.size.width), (200_000, 11));
+                assert_eq!((df.source.size.height, df.source.size.width), (rows, 11));
                 assert_eq!(df.view.pagination.page_number, 1);
                 assert_eq!(df.view.pagination.page_size, page_size);
-                assert_eq!(df.view.pagination.total_entries, 200_000);
-                assert_eq!(df.view.pagination.total_pages, total_pages);
+                assert_eq!(df.view.pagination.total_entries, rows);
+                assert_eq!(df.view.pagination.total_pages, rows.div_ceil(page_size));
                 assert_eq!(df.view.data.as_array().expect("rows").len(), page_size);
                 for schema in [&df.source.schema, &df.view.schema] {
                     assert_eq!(schema.metadata, Some(schema_metadata.clone()));
@@ -226,6 +237,7 @@ mod tests {
 
             // Pages of a sql query over an indexed csv
             index(&remote_repo, DEFAULT_BRANCH_NAME, &large_ref).await?;
+            let matching = (1..=rows).filter(|&row| lefteye_x(row) > 70).count();
             for page in [1, 2] {
                 let opts = DFOpts {
                     page: Some(page),
@@ -239,13 +251,13 @@ mod tests {
                 let df = get(&remote_repo, DEFAULT_BRANCH_NAME, &large_csv, opts)
                     .await?
                     .data_frame;
-                assert_eq!((df.source.size.height, df.source.size.width), (200_000, 11));
+                assert_eq!((df.source.size.height, df.source.size.width), (rows, 11));
                 assert_eq!((df.view.size.height, df.view.size.width), (100, 4));
                 assert_eq!(df.view.data.as_array().expect("rows").len(), 100);
                 assert_eq!(df.view.pagination.page_number, page);
                 assert_eq!(df.view.pagination.page_size, 100);
-                assert_eq!(df.view.pagination.total_entries, 37_291);
-                assert_eq!(df.view.pagination.total_pages, 373);
+                assert_eq!(df.view.pagination.total_entries, matching);
+                assert_eq!(df.view.pagination.total_pages, matching.div_ceil(100));
             }
 
             // Columns, pages, and a slice of a parquet file

@@ -33,12 +33,14 @@ mod tests {
     use crate::repositories;
     use crate::test;
 
+    use std::fs;
+
     #[test]
     fn test_get_metadata_tabular() {
-        let file = test::test_text_file_with_name("celeb_a_200k.csv");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let file = test::test_csv_file_with_name("mixed_data_types.csv");
+        let metadata = repositories::metadata::get(&file).unwrap();
 
-        assert!(metadata.size >= 9604701); // not sure why different on windows
+        assert_eq!(metadata.size, fs::metadata(&file).unwrap().len());
         assert_eq!(metadata.data_type, EntryDataType::Tabular);
         assert_eq!(metadata.mime_type, "text/plain");
 
@@ -47,7 +49,7 @@ mod tests {
             _ => panic!("Wrong metadata type"),
         };
 
-        assert_eq!(metadata.tabular.width, 11);
-        assert_eq!(metadata.tabular.height, 200_000);
+        assert_eq!(metadata.tabular.width, 5);
+        assert_eq!(metadata.tabular.height, 4);
     }
 }

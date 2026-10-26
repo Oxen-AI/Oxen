@@ -698,26 +698,28 @@ who won the game?,The packers beat up on the bears,packers
     #[tokio::test]
     async fn test_list_diff_entries_cifar_csvs() -> Result<(), OxenError> {
         test::run_empty_data_repo_test_no_commits_async(|mut repo| async move {
-            // Track test.csv file
-            let test_file = test::test_csv_file_with_name("test_cifar_2x9999.csv");
-            let repo_filename = "test.csv";
-            let repo_filepath = repo.path.join(repo_filename);
-            util::fs::copy(&test_file, &repo_filepath)?;
-
-            repositories::add(&repo, &repo_filepath).await?;
-            repositories::commit(&repo, "Adding test csv with two columns and 9999 rows")?;
+            // test.csv gains a first row on the branch, and train.csv gains three columns
+            let test_csv = |first_row: usize| {
+                let rows: String = (first_row..10)
+                    .map(|i| format!("images/test/{i}.png,cat\n"))
+                    .collect();
+                format!("file,label\n{rows}")
+            };
+            let train_rows = |extra_columns: &str| -> String {
+                (0..10)
+                    .map(|i| format!("images/train/{i}.png,cat{extra_columns}\n"))
+                    .collect()
+            };
+            util::fs::write_to_path(repo.path.join("test.csv"), test_csv(1))?;
+            util::fs::write_to_path(
+                repo.path.join("train.csv"),
+                format!("file,label\n{}", train_rows("")),
+            )?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding test.csv and train.csv")?;
 
             // Get the current branch
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Track train.csv file
-            let test_file = test::test_csv_file_with_name("train_cifar_2x50000.csv");
-            let repo_filename = "train.csv";
-            let repo_filepath = repo.path.join(repo_filename);
-            util::fs::copy(&test_file, &repo_filepath)?;
-
-            repositories::add(&repo, &repo_filepath).await?;
-            repositories::commit(&repo, "Adding train csv with two columns and 50k rows")?;
 
             // Create the remote repo and point the local one at it
             let remote_repo = test::connect_remote_repo(&mut repo).await?;
@@ -729,23 +731,16 @@ who won the game?,The packers beat up on the bears,packers
             let branch_name = "modify-data";
             repositories::branches::create_checkout(&repo, branch_name)?;
 
-            // Modify test.csv file
-            let test_file = test::test_csv_file_with_name("test_cifar_2x10000.csv");
-            let repo_filename = "test.csv";
-            let repo_filepath = repo.path.join(repo_filename);
-            util::fs::copy(&test_file, &repo_filepath)?;
-
-            repositories::add(&repo, &repo_filepath).await?;
-            repositories::commit(&repo, "Adding title row to csv")?;
-
-            // Track train.csv file
-            let test_file = test::test_csv_file_with_name("train_cifar_5x50000.csv");
-            let repo_filename = "train.csv";
-            let repo_filepath = repo.path.join(repo_filename);
-            util::fs::copy(&test_file, &repo_filepath)?;
-
-            repositories::add(&repo, &repo_filepath).await?;
-            repositories::commit(&repo, "Adding columns to train.csv")?;
+            util::fs::write_to_path(repo.path.join("test.csv"), test_csv(0))?;
+            util::fs::write_to_path(
+                repo.path.join("train.csv"),
+                format!(
+                    "file,label,contributor,dataset,is_cool\n{}",
+                    train_rows(",,cifar10,TRUE")
+                ),
+            )?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Adding a row to test.csv and columns to train.csv")?;
 
             // Push it real good
             let opts = PushOpts {

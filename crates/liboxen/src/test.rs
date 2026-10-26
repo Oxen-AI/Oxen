@@ -1472,14 +1472,6 @@ pub fn test_audio_file_with_name(name: &str) -> PathBuf {
     TEST_DATA_DIR.join("test").join("audio").join(name)
 }
 
-/// Returns: data/test/text/celeb_a_200k.csv
-pub fn test_200k_csv() -> PathBuf {
-    TEST_DATA_DIR
-        .join("test")
-        .join("text")
-        .join("celeb_a_200k.csv")
-}
-
 /// Returns: data/test/parquet/sft 100.parquet
 pub fn test_100_parquet() -> PathBuf {
     TEST_DATA_DIR
@@ -1628,14 +1620,9 @@ pub fn populate_prompts(repo_dir: &Path) -> Result<(), OxenError> {
 }
 
 pub fn populate_csv_files(repo_dir: &Path) -> Result<(), OxenError> {
-    // `large_files/test.csv` used to be a straight copy of the full 200k-row celeb_a CSV
-    // (~9.6 MB). Almost none of the tests that use this fixture actually need the size —
-    // they exercise push/pull/clone/merge-conflict mechanics or just check that the file
-    // exists after a download. Tests that genuinely need the 200k-row dataset load it
-    // directly via `test_200k_csv()` / `test_text_file_with_name("celeb_a_200k.csv")`.
-    //
-    // Write a tiny CSV with the same schema so the fixture still looks realistic without
-    // paying the I/O + network cost of pushing 9.6 MB through localhost HTTP per test.
+    // `large_files/test.csv` holds 100 rows in the celeb_a face-landmark schema. The tests that
+    // use this fixture exercise push/pull/clone/merge-conflict mechanics or check that the file
+    // exists after a download, so none of them needs a large file.
     let large_dir = repo_dir.join("large_files");
     util::fs::create_dir_all(&large_dir)?;
     let large_file_1 = large_dir.join("test.csv");
