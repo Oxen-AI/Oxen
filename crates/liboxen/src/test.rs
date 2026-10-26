@@ -2,6 +2,7 @@
 //!
 
 use crate::api;
+use crate::api::client::file::GetFileOpts;
 use crate::api::requests::RepoNew;
 #[cfg(test)]
 use crate::config::RepositoryConfig;
@@ -27,6 +28,7 @@ use crate::repositories::name_table::NameTable;
 use crate::util;
 use crate::util::telemetry::TracingGuard;
 
+use futures_util::StreamExt;
 use http::StatusCode;
 use rand::RngExt;
 use rand::distr::Alphanumeric;
@@ -175,6 +177,21 @@ pub(crate) fn create_legacy_repo_with_identity(
 
 fn create_empty_dir(base_dir: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     create_prefixed_dir(base_dir, "dir")
+}
+
+/// The bytes of the file at `path` in `revision` of `remote_repo`, a branch, commit, or workspace.
+pub async fn file_bytes(
+    remote_repo: &RemoteRepository,
+    revision: &str,
+    path: &Path,
+) -> Result<Vec<u8>, OxenError> {
+    let mut stream =
+        api::client::file::get_file(remote_repo, revision, path, GetFileOpts::default()).await?;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    Ok(bytes)
 }
 
 pub async fn create_remote_repo(repo: &LocalRepository) -> Result<RemoteRepository, OxenError> {

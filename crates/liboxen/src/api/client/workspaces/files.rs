@@ -1127,7 +1127,7 @@ mod tests {
     use crate::api::client::branches::create_from_branch;
     use crate::api::client::commits::get_by_id;
     use crate::api::client::workspaces::{self, changes};
-    use crate::api::client::{dir, entries, file, schemas, versions};
+    use crate::api::client::{dir, entries, schemas, versions};
     use crate::model::metadata::MetadataDir;
     use crate::repositories::commits::head_commit;
     use crate::util::fs;
@@ -1144,7 +1144,6 @@ mod tests {
     use std::path::{Path, PathBuf, absolute};
 
     use tempfile::TempDir;
-    use tokio_stream::StreamExt;
 
     use super::{add, add_files, copy, download, mv, rm, upload_single_file};
 
@@ -1611,18 +1610,10 @@ mod tests {
             .await?;
             let new_file = entries::get_entry(&remote_repo, new_path, &commit.id).await?;
             assert!(new_file.is_some(), "File should exist at new path");
-            let mut stream = file::get_file(
-                &remote_repo,
-                branch_name,
-                Path::new(new_path),
-                file::GetFileOpts::default(),
-            )
-            .await?;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = stream.next().await {
-                bytes.extend_from_slice(&chunk?);
-            }
-            assert_eq!(bytes, b"Hello World");
+            assert_eq!(
+                test::file_bytes(&remote_repo, branch_name, Path::new(new_path)).await?,
+                b"Hello World"
+            );
             let old_file = entries::get_entry(&remote_repo, original_path, &commit.id).await?;
             assert!(old_file.is_none(), "File should not exist at original path");
 
@@ -1642,18 +1633,11 @@ mod tests {
                 &commit_body("Copied a file"),
             )
             .await?;
-            let mut stream = file::get_file(
-                &remote_repo,
-                &commit.id,
-                copy_path,
-                file::GetFileOpts::default(),
-            )
-            .await?;
-            let mut bytes = Vec::new();
-            while let Some(chunk) = stream.next().await {
-                bytes.extend_from_slice(&chunk?);
-            }
-            assert_eq!(bytes, b"Hello World", "the copy has the source's content");
+            assert_eq!(
+                test::file_bytes(&remote_repo, &commit.id, copy_path).await?,
+                b"Hello World",
+                "the copy has the source's content"
+            );
             let source = entries::get_entry(&remote_repo, new_path, &commit.id).await?;
             assert!(source.is_some(), "the copy leaves its source in place");
 

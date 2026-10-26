@@ -230,11 +230,10 @@ mod tests {
     use crate::util::fs;
 
     use bytes::Bytes;
-    use tokio_stream::StreamExt;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
-    use crate::model::{NewCommitBody, RemoteRepository};
+    use crate::model::NewCommitBody;
     use crate::{api, repositories, test};
     use std::path::Path;
 
@@ -248,26 +247,13 @@ mod tests {
         }
     }
 
-    async fn file_bytes(
-        remote_repo: &RemoteRepository,
-        revision: &str,
-        path: &Path,
-    ) -> Result<Vec<u8>, OxenError> {
-        let mut stream = get_file(remote_repo, revision, path, GetFileOpts::default()).await?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            bytes.extend_from_slice(&chunk?);
-        }
-        Ok(bytes)
-    }
-
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_put_get_move_and_delete_files() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let bbox_path = test::test_bounding_box_csv();
             assert!(
-                !file_bytes(&remote_repo, DEFAULT_BRANCH_NAME, &bbox_path)
+                !test::file_bytes(&remote_repo, DEFAULT_BRANCH_NAME, &bbox_path)
                     .await?
                     .is_empty()
             );
@@ -285,7 +271,7 @@ mod tests {
                 &full_path,
             )
             .await?;
-            let bytes = file_bytes(&remote_repo, workspace_id, &staged).await?;
+            let bytes = test::file_bytes(&remote_repo, workspace_id, &staged).await?;
             assert_eq!(bytes, Bytes::from_static(b"test content"));
             fs::remove_file(&full_path)?;
 
