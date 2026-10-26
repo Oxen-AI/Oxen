@@ -388,7 +388,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/copy/{path}",
-    description = "Stage a copy of a file from the workspace's base commit at a new path. The copy shares the committed file's content, so nothing is uploaded.",
+    description = "Stage a copy of a file from the workspace's base commit at a new path. The copy shares the committed file's content, so nothing is uploaded. A copy with a different extension gets the type and metadata an upload of the same bytes to the new path would.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -418,9 +418,6 @@ pub async fn copy(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHt
     let path = PathBuf::from(path_param(&req, "path")?);
 
     let body: RenameRequest = serde_json::from_str(&body)?;
-    if body.new_path.is_empty() {
-        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
-    }
     let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
