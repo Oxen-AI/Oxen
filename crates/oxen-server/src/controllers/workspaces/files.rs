@@ -967,7 +967,8 @@ mod tests {
 
         // A part labeled gzip that is not gzip data, then two valid gzipped parts for one path,
         // follow the bomb, to check refused parts leave the rest, and that the later of two parts
-        // for one path is the one staged.
+        // for one path is the one staged. A committed file uploaded with new content and then
+        // with its committed content leaves its directory staged for a later file in it.
         let gzip = |content: &[u8]| -> std::io::Result<Vec<u8>> {
             let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
             encoder.write_all(content)?;
@@ -975,6 +976,8 @@ mod tests {
         };
         let after = gzip(b"after the bomb")?;
         let later = gzip(b"later for the same path")?;
+        let (changed_rows, committed_rows) = (gzip(b"id,label\n9,z\n")?, gzip(rows.as_bytes())?);
+        let more = gzip(b"more")?;
         // An uncompressed gzip of `stream_segment_size()` bytes arrives longer than that, so it is
         // spooled to disk and gunzipped there.
         let large: Vec<u8> = (0..stream_segment_size())
@@ -986,11 +989,14 @@ mod tests {
         let boundary = "test-bomb-boundary";
         let mut body: Vec<u8> = Vec::new();
         for (filename, part) in [
-            ("bomb.bin", &gzipped),
-            ("corrupt.bin", &b"not gzip data".to_vec()),
-            ("after.txt", &after),
-            ("after.txt", &later),
-            ("large.bin", &large_gzipped),
+            ("data/bomb.bin", &gzipped),
+            ("data/corrupt.bin", &b"not gzip data".to_vec()),
+            ("data/after.txt", &after),
+            ("data/after.txt", &later),
+            ("data/large.bin", &large_gzipped),
+            ("tables/rows.csv", &changed_rows),
+            ("tables/rows.csv", &committed_rows),
+            ("tables/more.txt", &more),
         ] {
             body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
             body.extend_from_slice(
@@ -1005,10 +1011,8 @@ mod tests {
         }
         body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/data");
-
         let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
+            .uri(&root_uri)
             .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .insert_header((
                 header::CONTENT_TYPE,
@@ -1026,7 +1030,15 @@ mod tests {
         let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
         assert_eq!(
             response.paths,
-            ["data/after.txt", "data/after.txt", "data/large.bin"].map(PathBuf::from),
+            [
+                "data/after.txt",
+                "data/after.txt",
+                "data/large.bin",
+                "tables/rows.csv",
+                "tables/rows.csv",
+                "tables/more.txt",
+            ]
+            .map(PathBuf::from),
             "the gzip bomb and the part that is not gzip data are refused"
         );
         assert!(
@@ -1039,7 +1051,12 @@ mod tests {
         {
             let workspace =
                 repositories::workspaces::get(&repo, &workspace_id)?.expect("the workspace exists");
-            let staged = get_staged_db_manager(&workspace.workspace_repo)?
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            assert!(
+                staged_db_manager.read_from_staged_db("tables")?.is_some(),
+                "tables is staged for more.txt after rows.csv is unstaged in the same upload"
+            );
+            let staged = staged_db_manager
                 .read_from_staged_db("data/after.txt")?
                 .expect("after.txt is staged");
             let EMerkleTreeNode::File(file_node) = staged.node.node else {
@@ -1066,7 +1083,7 @@ mod tests {
             .expect("the body has a part header")
             + 4;
         let req = actix_web::test::TestRequest::post()
-            .uri(&uri)
+            .uri(&root_uri)
             .app_data(OxenAppData::new(sync_dir.to_path_buf()))
             .insert_header((
                 header::CONTENT_TYPE,

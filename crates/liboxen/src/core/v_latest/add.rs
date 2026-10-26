@@ -1034,6 +1034,12 @@ pub(crate) async fn stage_version_file(
                         "Unstaging a workspace file uploaded with its committed content"
                     );
                     staged_db_manager.delete_entry_and_empty_ancestors(&relative_path)?;
+                    // The deletion may remove these directories' entries, so a later file under
+                    // them in the batch stages them again.
+                    let mut seen_dirs = seen_dirs.lock();
+                    for dir in relative_path.ancestors().skip(1) {
+                        seen_dirs.remove(dir);
+                    }
                 }
                 return Ok(());
             }
