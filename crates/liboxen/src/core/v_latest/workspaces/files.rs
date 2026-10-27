@@ -414,16 +414,6 @@ pub async fn import(
     let parsed_url =
         Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
 
-    let scheme = parsed_url.scheme();
-    if scheme != "http" && scheme != "https" {
-        return Err(OxenError::file_import_error(
-            "Only http and https URLs are allowed",
-        ));
-    }
-
-    validate_url_host(&parsed_url, allow_loopback)
-        .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
-
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
 
@@ -518,6 +508,15 @@ async fn fetch_file(
     let mut response = None;
 
     for hop in 0..=MAX_REDIRECTS {
+        let scheme = current_url.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(OxenError::file_import_error(
+                "Only http and https URLs are allowed",
+            ));
+        }
+        validate_url_host(&current_url, allow_loopback)
+            .map_err(|e| OxenError::file_import_error(e.to_string()))?;
+
         let mut req = client.get(current_url.as_str());
         if hop == 0 {
             req = req.header("Authorization", auth_header_value.clone());
@@ -550,16 +549,6 @@ async fn fetch_file(
             let next_url = current_url
                 .join(location)
                 .map_err(|e| OxenError::file_import_error(format!("Invalid redirect URL: {e}")))?;
-
-            // Validate redirect target
-            let scheme = next_url.scheme();
-            if scheme != "http" && scheme != "https" {
-                return Err(OxenError::file_import_error(
-                    "Redirect to non-HTTP(S) URL is not allowed",
-                ));
-            }
-            validate_url_host(&next_url, allow_loopback)
-                .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
             current_url = next_url;
             continue;
