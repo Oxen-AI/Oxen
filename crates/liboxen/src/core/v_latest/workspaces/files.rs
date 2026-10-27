@@ -249,10 +249,8 @@ fn is_private_ip(ip: &IpAddr) -> bool {
             // which is checked like any other IPv4 address. The rest of 64:ff9b::/32, including
             // the local-use 64:ff9b:1::/48, is not globally routable.
             if segments[0] == 0x0064 && segments[1] == 0xff9b {
-                if segments[2..6] != [0, 0, 0, 0] {
-                    return true;
-                }
-                return is_private_ip(&IpAddr::V4(embedded_v4(segments[6], segments[7])));
+                return segments[2..6] != [0; 4]
+                    || is_private_ip(&IpAddr::V4(embedded_v4(segments[6], segments[7])));
             }
             // 2002::/16 (6to4) embeds an IPv4 address in its second and third segments.
             if segments[0] == 0x2002 {
