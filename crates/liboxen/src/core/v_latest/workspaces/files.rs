@@ -13,7 +13,7 @@ use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::iter::successors;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use url::{Host, Url};
@@ -343,7 +343,7 @@ impl Resolve for PublicAddrResolver {
         Box::pin(async move {
             let host = name.as_str();
             // Port 0 is replaced with the URL's port by the client.
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, 0))
+            let addrs: Vec<_> = tokio::net::lookup_host((host, 0))
                 .await
                 .map_err(|source| InvalidUrlError::DnsResolutionFailed {
                     host: host.to_string(),
@@ -1426,8 +1426,6 @@ fn restore_indexes(workspace: &Workspace, moved: &[(&Path, &Path)]) {
 
 #[cfg(test)]
 mod tests {
-    use std::net::IpAddr;
-
     use reqwest::dns::Resolve;
 
     use super::{InvalidUrlError, PublicAddrResolver, is_private_ip};
@@ -1467,7 +1465,7 @@ mod tests {
             "64:ff9b:1::808:808",
             "2002:a9fe:a9fe::1",
         ] {
-            let parsed: IpAddr = ip.parse().expect("test addresses are valid");
+            let parsed = ip.parse().expect("test addresses are valid");
             assert!(is_private_ip(&parsed), "{ip} should be private/reserved");
         }
         for ip in [
@@ -1479,7 +1477,7 @@ mod tests {
             "64:ff9b::808:808",
             "2002:808:808::1",
         ] {
-            let parsed: IpAddr = ip.parse().expect("test addresses are valid");
+            let parsed = ip.parse().expect("test addresses are valid");
             assert!(!is_private_ip(&parsed), "{ip} should be public");
         }
     }
