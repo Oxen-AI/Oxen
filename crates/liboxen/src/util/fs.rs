@@ -230,49 +230,61 @@ pub fn append_to_file(path: &Path, value: &str) -> Result<(), OxenError> {
     }
 }
 
-pub fn count_lines(
+pub(crate) fn count_lines(
     data: impl Read,
     opts: CountLinesOpts,
 ) -> Result<(usize, Option<usize>), OxenError> {
     let mut reader = BufReader::with_capacity(1024 * 32, data);
-    let mut line_count = 1;
-    let mut char_count = 0;
-    let mut last_buf: Vec<u8> = Vec::new();
-    let mut char_option: Option<usize> = None;
-
+    let mut counts = LineCounts::new(opts.with_chars);
     loop {
         let len = {
             let buf = reader.fill_buf()?;
-
             if buf.is_empty() {
                 break;
             }
-
-            if opts.remove_trailing_blank_line {
-                last_buf = buf.to_vec();
-            }
-
-            if opts.with_chars {
-                char_count += bytecount::num_chars(buf);
-            }
-
-            line_count += bytecount::count(buf, b'\n');
+            counts.add(buf);
             buf.len()
         };
         reader.consume(len);
     }
+    Ok(counts.lines(opts.remove_trailing_blank_line))
+}
 
-    if let Some(last_byte) = last_buf.last()
-        && last_byte == &b'\n'
-    {
-        line_count -= 1;
+/// The newlines, and optionally the UTF-8 characters, in bytes added in order, from which
+/// [`count_lines`]'s answer follows however the bytes were split.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineCounts {
+    newlines: usize,
+    chars: Option<usize>,
+    last_byte: Option<u8>,
+}
+
+impl LineCounts {
+    pub(crate) fn new(with_chars: bool) -> Self {
+        Self {
+            newlines: 0,
+            chars: with_chars.then_some(0),
+            last_byte: None,
+        }
     }
 
-    if opts.with_chars {
-        char_option = Some(char_count);
+    pub(crate) fn add(&mut self, data: &[u8]) {
+        self.newlines += bytecount::count(data, b'\n');
+        if let Some(chars) = &mut self.chars {
+            *chars += bytecount::num_chars(data);
+        }
+        if let Some(&last) = data.last() {
+            self.last_byte = Some(last);
+        }
     }
 
-    Ok((line_count, char_option))
+    /// What [`count_lines`] returns for the bytes added so far: the line count, less a trailing
+    /// newline's empty line when `remove_trailing_blank_line` is set, and the character count when
+    /// these counts take one.
+    pub(crate) fn lines(&self, remove_trailing_blank_line: bool) -> (usize, Option<usize>) {
+        let trailing = remove_trailing_blank_line && self.last_byte == Some(b'\n');
+        (1 + self.newlines - usize::from(trailing), self.chars)
+    }
 }
 
 /// Reads the first `n` bytes from `data`, or all of it when it is shorter.

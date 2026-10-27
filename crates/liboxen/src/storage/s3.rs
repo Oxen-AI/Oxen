@@ -2407,7 +2407,10 @@ pub(crate) mod tests {
         use super::*;
         use crate::core::df::tabular;
         use crate::opts::DFOpts;
+        use crate::repositories::metadata::{StoredVersion, inspect_bytes, inspect_stored};
+        use crate::test;
         use polars::prelude::*;
+        use std::path::PathBuf;
 
         /// Make the s3s fixture credentials discoverable by Polars' `from_env` cloud-scan path
         /// (used for the columnar formats). All s3s tests share these fixed creds, and nothing else
@@ -2518,6 +2521,77 @@ pub(crate) mod tests {
                     .await
                     .unwrap_or_else(|e| panic!("{case}: {e}"));
                 assert_sample_df(&df, case);
+            }
+
+            let mut files: Vec<(PathBuf, Vec<u8>)> = [
+                test::test_csv_file_with_name("mixed_data_types.csv"),
+                test::test_spam_ham(),
+                test::test_text_jsonl(),
+                test::test_text_json(),
+                test::test_1k_parquet(),
+                test::test_img_file_with_name("cat_1.jpg"),
+                test::test_audio_file_with_name("121-121726-0005.wav"),
+                test::test_video_file_with_name("basketball.mp4"),
+                test::test_text_file_with_name("hello.txt"),
+            ]
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(&path).unwrap();
+                (path, bytes)
+            })
+            .collect();
+            files.push((PathBuf::from("frame.arrow"), sample_ipc()));
+            // Longer than a stored file's first fetch, with a string past it among the rows schema
+            // inference reads, so a head cut short infers another type for `b`.
+            let rows: String = (0..12_000)
+                .map(|i| match i {
+                    9_000 => format!("{i},x\n"),
+                    _ => format!("{i},{i}\n"),
+                })
+                .collect();
+            files.push((
+                PathBuf::from("rows.csv"),
+                format!("a,b\n{rows}").into_bytes(),
+            ));
+            for (path, bytes) in files {
+                let hash = upload(&store, bytes.clone()).await;
+                let VersionLocation::S3 {
+                    url,
+                    region,
+                    endpoint_url,
+                } = store.version_location(&hash).await.unwrap()
+                else {
+                    panic!("an S3 store keeps {hash} in S3");
+                };
+                let version = StoredVersion::new(
+                    Arc::clone(&store),
+                    hash.parse().unwrap(),
+                    bytes.len() as u64,
+                    url,
+                    &region,
+                    endpoint_url.as_deref(),
+                    None,
+                )
+                .await
+                .unwrap();
+                let file_path = path.clone();
+                let (mime_type, data_type, metadata) =
+                    tokio::task::spawn_blocking(move || inspect_stored(&version, &file_path))
+                        .await
+                        .unwrap()
+                        .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+                let in_memory = inspect_bytes(Bytes::from(bytes), &path).unwrap();
+                assert!(metadata.is_some(), "{path:?} has metadata to compare");
+                assert_eq!(
+                    (mime_type, data_type),
+                    (in_memory.0, in_memory.1),
+                    "{path:?}"
+                );
+                assert_eq!(
+                    hasher::maybe_get_metadata_hash(&metadata).unwrap(),
+                    hasher::maybe_get_metadata_hash(&in_memory.2).unwrap(),
+                    "{path:?} gets the same metadata read from S3 as from memory"
+                );
             }
         }
 
@@ -2666,7 +2740,7 @@ pub(crate) mod tests {
                 })?;
                 assert!(count > 0, "expected the S3-indexed table to have rows");
 
-                // An upload into the workspace stages its file from the copy kept on disk.
+                // An upload into the workspace counts its file's lines as its parts arrive.
                 let data = Bytes::from_static(b"one\ntwo\nthree");
                 let hash = hash_buffer(&data);
                 let destination = WorkspaceDestination {
@@ -2693,14 +2767,35 @@ pub(crate) mod tests {
                         .await?,
                     data
                 );
-                let staged = get_staged_db_manager(&s3_workspace.workspace_repo)?
-                    .read_from_staged_db("uploaded.txt")?
-                    .expect("the upload staged uploaded.txt");
-                let num_lines = match staged.node.file()?.metadata() {
-                    Some(GenericMetadata::MetadataText(text)) => text.text.num_lines,
-                    other => panic!("uploaded.txt is staged as text: {other:?}"),
+                // An upload of a file the store has stages it from the bytes it reads back.
+                let again = WorkspaceDestination {
+                    workspace_id: s3_workspace.id.clone(),
+                    path: PathBuf::from("again.txt"),
                 };
-                assert_eq!(num_lines, 3, "staging reads the file's bytes from the copy");
+                assert!(matches!(
+                    Upload::begin(
+                        &s3_workspace.base_repo,
+                        &hash,
+                        data.len() as u64,
+                        Some(again)
+                    )
+                    .await?,
+                    UploadStart::AlreadyStored
+                ));
+                let staged_db = get_staged_db_manager(&s3_workspace.workspace_repo)?;
+                for path in ["uploaded.txt", "again.txt"] {
+                    let staged = staged_db
+                        .read_from_staged_db(path)?
+                        .unwrap_or_else(|| panic!("{path} is staged"));
+                    let file = staged.node.file()?;
+                    let num_lines = match file.metadata() {
+                        Some(GenericMetadata::MetadataText(text)) => text.text.num_lines,
+                        other => panic!("{path} is staged as text: {other:?}"),
+                    };
+                    assert_eq!(num_lines, 3, "{path} is staged with its line count");
+                    assert_eq!(file.num_bytes(), data.len() as u64, "{path}");
+                }
+                drop(staged_db);
 
                 Ok(())
             })
