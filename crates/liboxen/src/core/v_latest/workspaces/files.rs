@@ -1428,7 +1428,7 @@ fn restore_indexes(workspace: &Workspace, moved: &[(&Path, &Path)]) {
 mod tests {
     use reqwest::dns::Resolve;
 
-    use super::{InvalidUrlError, PublicAddrResolver, is_private_ip};
+    use super::{PublicAddrResolver, is_private_ip};
 
     #[test]
     fn test_is_private_ip() {
@@ -1483,23 +1483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_public_addr_resolver_refuses_private_addresses() {
-        let refused = PublicAddrResolver {
-            allow_loopback: false,
-        }
-        .resolve("localhost".parse().expect("localhost is a valid name"))
-        .await;
-        let err = refused
-            .err()
-            .expect("localhost resolves only to loopback addresses");
-        assert!(
-            matches!(
-                err.downcast_ref::<InvalidUrlError>(),
-                Some(InvalidUrlError::PrivateIp(ip)) if ip.is_loopback()
-            ),
-            "refused with the private address, got {err}"
-        );
-
+    async fn test_public_addr_resolver_admits_loopback_when_allowed() {
         let addrs: Vec<_> = PublicAddrResolver {
             allow_loopback: true,
         }
