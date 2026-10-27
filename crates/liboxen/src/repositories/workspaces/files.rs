@@ -249,17 +249,34 @@ mod tests {
 
             // Import refuses every URL that does not reach a public HTTP host.
             let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
+            let private = "private/reserved IP address";
             let cases = [
-                ("http://127.0.0.1/secret", "loopback address"),
-                ("http://10.0.0.1/internal", "private address"),
+                ("http://127.0.0.1/secret", "loopback address", private),
+                ("http://10.0.0.1/internal", "private address", private),
                 (
                     "http://169.254.169.254/latest/meta-data/",
                     "link-local/metadata address",
+                    private,
                 ),
-                ("http://[::1]/secret", "IPv6 loopback"),
-                ("file:///etc/passwd", "non-HTTP scheme"),
+                (
+                    "http://[::ffff:169.254.169.254]/latest/meta-data/",
+                    "IPv4-mapped metadata address",
+                    private,
+                ),
+                ("http://[::1]/secret", "IPv6 loopback", private),
+                // The import client's resolver checks a host name as it connects.
+                (
+                    "http://localhost/secret",
+                    "name resolving to loopback",
+                    private,
+                ),
+                (
+                    "file:///etc/passwd",
+                    "non-HTTP scheme",
+                    "Only http and https",
+                ),
             ];
-            for (url, label) in cases {
+            for (url, label, expected) in cases {
                 // allow_loopback is false, so loopback targets are rejected like other private IPs.
                 let result = workspaces::files::import(
                     url,
@@ -270,8 +287,30 @@ mod tests {
                     false,
                 )
                 .await;
-                assert!(result.is_err(), "should reject {label}");
+                let err = result.expect_err(label).to_string();
+                assert!(err.contains(expected), "{label}: got {err}");
             }
+
+            // A redirect to a private IP literal is refused, even from an allowed host.
+            let mut server = mockito::Server::new_async().await;
+            let _redirect = server
+                .mock("GET", "/moved")
+                .with_status(302)
+                .with_header("location", "http://10.0.0.1/internal")
+                .create_async()
+                .await;
+            let err = workspaces::files::import(
+                &format!("{}/moved", server.url()),
+                "",
+                PathBuf::from("data"),
+                None,
+                &workspace,
+                true,
+            )
+            .await
+            .expect_err("redirect to a private address")
+            .to_string();
+            assert!(err.contains(private), "redirect: got {err}");
             drop(workspace);
 
             // Skip workspace moves and removals on windows

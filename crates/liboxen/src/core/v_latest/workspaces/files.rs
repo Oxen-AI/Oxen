@@ -3,17 +3,20 @@ use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLockWriteGuard};
 use reqwest::Client;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::header::HeaderValue;
 use reqwest::redirect;
 use rocksdb::DB;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::net::IpAddr;
+use std::iter::successors;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use url::Url;
+use url::{Host, Url};
 use zip::ZipArchive;
 
 use crate::core;
@@ -218,15 +221,15 @@ pub fn exists(workspace: &Workspace, path: impl AsRef<Path>) -> Result<bool, Oxe
 fn is_private_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            v4.is_loopback()           // 127.0.0.0/8
-                || v4.is_private()     // 10/8, 172.16/12, 192.168/16
-                || v4.is_link_local()  // 169.254/16
-                || v4.is_unspecified() // 0.0.0.0
-                || v4.is_broadcast()   // 255.255.255.255
+            v4.is_loopback()               // 127.0.0.0/8
+                || v4.is_private()         // 10/8, 172.16/12, 192.168/16
+                || v4.is_link_local()      // 169.254/16
+                || v4.is_multicast()       // 224.0.0.0/4
+                || v4.is_documentation()   // 192.0.2/24, 198.51.100/24, 203.0.113/24
                 || is_cgn_or_reserved_v4(v4.octets())
         }
         IpAddr::V6(v6) => {
-            if v6.is_loopback() || v6.is_unspecified() {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
                 return true;
             }
             let segments = v6.segments();
@@ -234,24 +237,24 @@ fn is_private_ip(ip: &IpAddr) -> bool {
             if segments[0] & 0xfe00 == 0xfc00 {
                 return true;
             }
-            // fe80::/10 (link-local)
-            if segments[0] & 0xffc0 == 0xfe80 {
+            // fe80::/10 (link-local) and fec0::/10 (deprecated site-local)
+            if segments[0] & 0xff80 == 0xfe80 {
                 return true;
             }
             // 2001:db8::/32 (documentation)
             if segments[0] == 0x2001 && segments[1] == 0x0db8 {
                 return true;
             }
-            // 64:ff9b::/96 and 64:ff9b:1::/48 (NAT64 — may embed private IPv4)
+            // 64:ff9b::/96 (well-known NAT64 prefix) embeds an IPv4 address in its last 32 bits,
+            // which is checked like any other IPv4 address. The rest of 64:ff9b::/32, including
+            // the local-use 64:ff9b:1::/48, is not globally routable.
             if segments[0] == 0x0064 && segments[1] == 0xff9b {
-                // Extract embedded IPv4 and check it
-                let v4 = std::net::Ipv4Addr::new(
-                    (segments[6] >> 8) as u8,
-                    segments[6] as u8,
-                    (segments[7] >> 8) as u8,
-                    segments[7] as u8,
-                );
-                return is_private_ip(&IpAddr::V4(v4));
+                return segments[2..6] != [0; 4]
+                    || is_private_ip(&IpAddr::V4(embedded_v4(segments[6], segments[7])));
+            }
+            // 2002::/16 (6to4) embeds an IPv4 address in its second and third segments.
+            if segments[0] == 0x2002 {
+                return is_private_ip(&IpAddr::V4(embedded_v4(segments[1], segments[2])));
             }
             // IPv4-mapped (::ffff:x.x.x.x) and IPv4-compatible (::x.x.x.x)
             if let Some(v4) = v6.to_ipv4_mapped() {
@@ -265,8 +268,21 @@ fn is_private_ip(ip: &IpAddr) -> bool {
     }
 }
 
+/// The IPv4 address carried in two segments of an IPv6 address.
+fn embedded_v4(high: u16, low: u16) -> Ipv4Addr {
+    Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))
+}
+
 /// Additional reserved IPv4 ranges not covered by std methods
 fn is_cgn_or_reserved_v4(octets: [u8; 4]) -> bool {
+    // 0.0.0.0/8 ("this network", RFC 791), including the unspecified address 0.0.0.0
+    if octets[0] == 0 {
+        return true;
+    }
+    // 240.0.0.0/4 (reserved, RFC 1112), including the broadcast address 255.255.255.255
+    if octets[0] >= 240 {
+        return true;
+    }
     // 100.64.0.0/10 — Shared/CGN (RFC 6598), used internally by cloud providers
     if octets[0] == 100 && (octets[1] & 0xC0) == 64 {
         return true;
@@ -297,35 +313,50 @@ enum InvalidUrlError {
     PrivateIp(std::net::IpAddr),
 }
 
-/// Resolves a URL's hostname via DNS and rejects it if any resolved address is
-/// private/reserved. This prevents SSRF attacks where a user-supplied URL could reach
-/// internal services (e.g. cloud metadata at 169.254.169.254, internal APIs, etc.).
-///
-/// When `allow_loopback` is true, loopback targets (127.0.0.0/8 and ::1) are permitted (for tests).
-async fn validate_url_target(url: &Url, allow_loopback: bool) -> Result<(), InvalidUrlError> {
-    let host = url.host_str().ok_or(InvalidUrlError::NoHost)?;
-    let port = url.port_or_known_default().unwrap_or(443);
-    let addr = format!("{host}:{port}");
-
-    let resolved =
-        tokio::net::lookup_host(&addr)
-            .await
-            .map_err(|e| InvalidUrlError::DnsResolutionFailed {
-                host: host.to_string(),
-                source: e,
-            })?;
-
-    for socket_addr in resolved {
-        let ip = socket_addr.ip();
-        if allow_loopback && ip.is_loopback() {
-            continue;
-        }
-        if is_private_ip(&ip) {
-            return Err(InvalidUrlError::PrivateIp(ip));
-        }
+/// Rejects an address `is_private_ip` reports, except a loopback one when `allow_loopback` is set.
+fn check_target_ip(ip: IpAddr, allow_loopback: bool) -> Result<(), InvalidUrlError> {
+    if (allow_loopback && ip.is_loopback()) || !is_private_ip(&ip) {
+        Ok(())
+    } else {
+        Err(InvalidUrlError::PrivateIp(ip))
     }
+}
 
-    Ok(())
+/// Rejects a URL with no host, or whose host is a private or reserved IP literal, which the
+/// import client connects to without consulting `PublicAddrResolver`.
+fn validate_url_host(url: &Url, allow_loopback: bool) -> Result<(), InvalidUrlError> {
+    match url.host().ok_or(InvalidUrlError::NoHost)? {
+        Host::Domain(_) => Ok(()),
+        Host::Ipv4(v4) => check_target_ip(IpAddr::V4(v4), allow_loopback),
+        Host::Ipv6(v6) => check_target_ip(IpAddr::V6(v6), allow_loopback),
+    }
+}
+
+/// Resolves host names for the import client, refusing a name with any private or reserved address.
+struct PublicAddrResolver {
+    allow_loopback: bool,
+}
+
+impl Resolve for PublicAddrResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let allow_loopback = self.allow_loopback;
+        Box::pin(async move {
+            let host = name.as_str();
+            // Port 0 is replaced with the URL's port by the client.
+            let addrs: Vec<_> = tokio::net::lookup_host((host, 0))
+                .await
+                .map_err(|source| InvalidUrlError::DnsResolutionFailed {
+                    host: host.to_string(),
+                    source,
+                })?
+                .collect();
+            for addr in &addrs {
+                check_target_ip(addr.ip(), allow_loopback)?;
+            }
+            let addrs: Addrs = Box::new(addrs.into_iter());
+            Ok(addrs)
+        })
+    }
 }
 
 fn parse_content_disposition_filename(header: &str) -> Option<String> {
@@ -367,7 +398,7 @@ fn sanitize_filename(name: &str) -> String {
 }
 
 /// Downloads a file from a user-supplied URL into a workspace directory.
-/// Validates the URL scheme and target IP before fetching to prevent SSRF.
+/// Validates the URL scheme, and connects only to addresses that are not private or reserved.
 ///
 /// `allow_loopback` relaxes the SSRF guard for loopback targets for tests.
 pub async fn import(
@@ -380,17 +411,6 @@ pub async fn import(
 ) -> Result<(), OxenError> {
     let parsed_url =
         Url::parse(url).map_err(|_| OxenError::file_import_error(format!("Invalid URL: {url}")))?;
-
-    let scheme = parsed_url.scheme();
-    if scheme != "http" && scheme != "https" {
-        return Err(OxenError::file_import_error(
-            "Only http and https URLs are allowed",
-        ));
-    }
-
-    validate_url_target(&parsed_url, allow_loopback)
-        .await
-        .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
     let auth_header_value = HeaderValue::from_str(auth)
         .map_err(|_e| OxenError::file_import_error(format!("Invalid header auth value {auth}")))?;
@@ -474,8 +494,11 @@ async fn fetch_file(
     workspace: &Workspace,
     allow_loopback: bool,
 ) -> Result<(), OxenError> {
+    // Every hop uses this client, which resolves each host itself rather than through a proxy.
     let client = Client::builder()
         .redirect(redirect::Policy::none())
+        .dns_resolver(PublicAddrResolver { allow_loopback })
+        .no_proxy()
         .build()
         .map_err(|e| OxenError::file_import_error(format!("Failed to build HTTP client: {e}")))?;
 
@@ -483,15 +506,29 @@ async fn fetch_file(
     let mut response = None;
 
     for hop in 0..=MAX_REDIRECTS {
+        let scheme = current_url.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(OxenError::file_import_error(
+                "Only http and https URLs are allowed",
+            ));
+        }
+        validate_url_host(&current_url, allow_loopback)
+            .map_err(|e| OxenError::file_import_error(e.to_string()))?;
+
         let mut req = client.get(current_url.as_str());
         if hop == 0 {
             req = req.header("Authorization", auth_header_value.clone());
         }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| OxenError::file_import_error(format!("Fetch file request failed: {e}")))?;
+        let resp = req.send().await.map_err(|e| {
+            // A host `PublicAddrResolver` refused reaches here as the cause of a connect error.
+            let refused = successors(e.source(), |&err| err.source())
+                .find_map(|err| err.downcast_ref::<InvalidUrlError>());
+            OxenError::file_import_error(match refused {
+                Some(refused) => refused.to_string(),
+                None => format!("Fetch file request failed: {e}"),
+            })
+        })?;
 
         let status = resp.status();
         if status.is_redirection() {
@@ -510,17 +547,6 @@ async fn fetch_file(
             let next_url = current_url
                 .join(location)
                 .map_err(|e| OxenError::file_import_error(format!("Invalid redirect URL: {e}")))?;
-
-            // Validate redirect target
-            let scheme = next_url.scheme();
-            if scheme != "http" && scheme != "https" {
-                return Err(OxenError::file_import_error(
-                    "Redirect to non-HTTP(S) URL is not allowed",
-                ));
-            }
-            validate_url_target(&next_url, allow_loopback)
-                .await
-                .map_err(|e| OxenError::ImportFileError(format!("{e}").into()))?;
 
             current_url = next_url;
             continue;
@@ -1395,5 +1421,77 @@ fn restore_indexes(workspace: &Workspace, moved: &[(&Path, &Path)]) {
                 "Could not move a data frame index back after a failed directory move"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::dns::Resolve;
+
+    use super::{PublicAddrResolver, is_private_ip};
+
+    #[test]
+    fn test_is_private_ip() {
+        for ip in [
+            "169.254.169.254",
+            "169.254.170.2",
+            "169.254.170.23",
+            "127.0.0.1",
+            "10.1.2.3",
+            "172.16.0.1",
+            "192.168.1.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "0.1.2.3",
+            "255.255.255.255",
+            "240.0.0.1",
+            "224.0.0.1",
+            "239.255.255.250",
+            "198.18.0.1",
+            "192.0.0.1",
+            "192.0.2.1",
+            "::1",
+            "::",
+            "fc00::1",
+            "fd12:3456::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+            "::ffff:169.254.169.254",
+            "::ffff:127.0.0.1",
+            "::169.254.169.254",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b::0a00:0001",
+            "64:ff9b:1::808:808",
+            "2002:a9fe:a9fe::1",
+        ] {
+            let parsed = ip.parse().expect("test addresses are valid");
+            assert!(is_private_ip(&parsed), "{ip} should be private/reserved");
+        }
+        for ip in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "100.128.0.1",
+            "2606:4700:4700::1111",
+            "::ffff:8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:808:808::1",
+        ] {
+            let parsed = ip.parse().expect("test addresses are valid");
+            assert!(!is_private_ip(&parsed), "{ip} should be public");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_public_addr_resolver_admits_loopback_when_allowed() {
+        let addrs: Vec<_> = PublicAddrResolver {
+            allow_loopback: true,
+        }
+        .resolve("localhost".parse().expect("localhost is a valid name"))
+        .await
+        .expect("allow_loopback admits loopback addresses")
+        .collect();
+        assert!(!addrs.is_empty());
+        assert!(addrs.iter().all(|addr| addr.ip().is_loopback()));
     }
 }
