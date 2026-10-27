@@ -524,12 +524,12 @@ async fn fetch_file(
 
         let resp = req.send().await.map_err(|e| {
             // A host `PublicAddrResolver` refused reaches here as the cause of a connect error.
-            match successors(e.source(), |&err| err.source())
-                .find_map(|err| err.downcast_ref::<InvalidUrlError>())
-            {
-                Some(refused) => OxenError::ImportFileError(format!("{refused}").into()),
-                None => OxenError::file_import_error(format!("Fetch file request failed: {e}")),
-            }
+            let refused = successors(e.source(), |&err| err.source())
+                .find_map(|err| err.downcast_ref::<InvalidUrlError>());
+            OxenError::file_import_error(match refused {
+                Some(refused) => refused.to_string(),
+                None => format!("Fetch file request failed: {e}"),
+            })
         })?;
 
         let status = resp.status();
