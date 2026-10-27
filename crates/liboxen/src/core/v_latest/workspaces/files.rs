@@ -25,7 +25,7 @@ use crate::core::staged::staged_db_manager::{
     StagedWriteBatch, get_staged_db_manager, read_from_db, staged_entries_under,
 };
 use crate::core::v_latest::add::{
-    get_file_node, process_add_file_with_staged_db_manager, stage_version_file,
+    get_file_node, process_add_file_with_staged_db_manager, stage_version_file, version_file_node,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -104,33 +104,7 @@ pub(crate) async fn add_stored_version_file(
     size: u64,
     lines: Option<LineCounts>,
 ) -> Result<PathBuf, OxenError> {
-    let store = workspace.base_repo.version_store();
-    let inspect = |dst_path| async move {
-        match store.version_location(&file_hash.to_string()).await? {
-            VersionLocation::Local(data_path) => {
-                spawn_blocking(move || {
-                    InspectedVersionFile::from_file(dst_path, file_hash, &data_path)
-                })
-                .await?
-            }
-            VersionLocation::S3 {
-                url,
-                region,
-                endpoint_url,
-            } => {
-                let version = StoredVersion::new(
-                    store,
-                    file_hash,
-                    size,
-                    url,
-                    &region,
-                    endpoint_url.as_deref(),
-                )
-                .await?;
-                InspectedVersionFile::from_stored(dst_path, file_hash, version, lines).await
-            }
-        }
-    };
+    let inspect = |dst_path| inspect_stored_version(workspace, dst_path, file_hash, size, lines);
     let committed = CommittedFiles::load(workspace).await?;
     let file =
         VersionFileToStage::prepare_stored(&committed, dst_path.to_path_buf(), file_hash, inspect)
@@ -145,6 +119,40 @@ pub(crate) async fn add_stored_version_file(
     .await?;
 
     Ok(dst_path.to_path_buf())
+}
+
+/// Inspect the version file `file_hash`, `size` bytes long, which the store has, to stage at
+/// `dst_path`. `lines` are its line counts, when they were taken as it arrived.
+async fn inspect_stored_version(
+    workspace: &Workspace,
+    dst_path: PathBuf,
+    file_hash: MerkleHash,
+    size: u64,
+    lines: Option<LineCounts>,
+) -> Result<InspectedVersionFile, OxenError> {
+    let store = workspace.base_repo.version_store();
+    match store.version_location(&file_hash.to_string()).await? {
+        VersionLocation::Local(data_path) => {
+            spawn_blocking(move || InspectedVersionFile::from_file(dst_path, file_hash, &data_path))
+                .await?
+        }
+        VersionLocation::S3 {
+            url,
+            region,
+            endpoint_url,
+        } => {
+            let version = StoredVersion::new(
+                store,
+                file_hash,
+                size,
+                url,
+                &region,
+                endpoint_url.as_deref(),
+            )
+            .await?;
+            InspectedVersionFile::from_stored(dst_path, file_hash, version, lines).await
+        }
+    }
 }
 
 /// The files a workspace's commit has, for looking them up by path.
@@ -1418,34 +1426,53 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
 /// and metadata an upload of the same bytes to `new_path` would. Refused when the workspace has
 /// changes staged for `path`, or when anything is at `new_path` already.
 pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
-    let content_to_stage = {
-        let workspace = workspace.clone();
-        let path = path.to_path_buf();
-        let new_path = new_path.to_path_buf();
-        tokio::task::spawn_blocking(move || copy_sync(&workspace, &path, &new_path)).await??
+    let (path, new_path) = (path.to_path_buf(), new_path.to_path_buf());
+    let source = {
+        let (workspace, path) = (workspace.clone(), path.clone());
+        spawn_blocking(move || committed_file(&workspace, &path)).await??
     };
-    if let Some(hash) = content_to_stage {
-        add_version_file(workspace, new_path, &hash.to_string()).await?;
-    }
-    Ok(())
+    let inspected = if util::fs::file_extension(&path) != util::fs::file_extension(&new_path) {
+        let (hash, size) = (*source.hash(), source.num_bytes());
+        let mut file =
+            inspect_stored_version(workspace, new_path.clone(), hash, size, None).await?;
+        file.mtime = FileTime::from_unix_time(
+            source.last_modified_seconds(),
+            source.last_modified_nanoseconds(),
+        );
+        Some(file)
+    } else {
+        None
+    };
+    let workspace = workspace.clone();
+    spawn_blocking(move || {
+        let copy = match inspected {
+            Some(file) => version_file_node(&workspace.workspace_repo, file, None)?,
+            None => source,
+        };
+        stage_copy(&workspace, &path, &new_path, copy)
+    })
+    .await?
 }
 
-/// The sync core of [`copy`]: Merkle reads, its refusals, and a staged-db write for a copy that
-/// keeps the file's extension, all under one blocking hop. Returns the hash of the content to stage
-/// `new_path` from when the copy changes the extension.
-fn copy_sync(
+/// The file at `path` in the workspace's base commit.
+fn committed_file(workspace: &Workspace, path: &Path) -> Result<FileNode, OxenError> {
+    let source =
+        repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, path)?
+            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+    let EMerkleTreeNode::File(file_node) = source.node else {
+        return Err(OxenError::NotAFile(path.to_path_buf().into()));
+    };
+    Ok(file_node)
+}
+
+/// Stage `file_node` at `new_path` as a copy of the committed file at `path`, refusing the copy
+/// under the same staged-db guard as the write.
+fn stage_copy(
     workspace: &Workspace,
     path: &Path,
     new_path: &Path,
-) -> Result<Option<MerkleHash>, OxenError> {
-    let base_repo = &workspace.base_repo;
-    let commit = &workspace.commit;
-    let source = repositories::tree::get_node_by_path(base_repo, commit, path)?
-        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
-    let EMerkleTreeNode::File(mut file_node) = source.node else {
-        return Err(OxenError::NotAFile(path.to_path_buf().into()));
-    };
-
+    mut file_node: FileNode,
+) -> Result<(), OxenError> {
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     let db = staged_db_manager.lock_for_write();
     match read_from_db(&db, path)? {
@@ -1460,20 +1487,18 @@ fn copy_sync(
             new_path.to_path_buf().into(),
         ));
     }
-    if repositories::tree::get_node_by_path(base_repo, commit, new_path)?.is_some() {
+    if repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, new_path)?
+        .is_some()
+    {
         return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
     }
     refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
 
-    if util::fs::file_extension(path) != util::fs::file_extension(new_path) {
-        return Ok(Some(*file_node.hash()));
-    }
     file_node.set_name(&new_path.to_string_lossy());
     let mut batch = StagedWriteBatch::default();
     batch.upsert_file_node(new_path, StagedEntryStatus::Added, &file_node);
     batch.add_parent_directories(new_path);
-    batch.write(&db)?;
-    Ok(None)
+    batch.write(&db)
 }
 
 /// Refuse a destination beneath a file: one the workspace stages, or one in the base commit that
