@@ -203,7 +203,7 @@ wheels = [
 
 [[package]]
 name = "oxenai"
-version = "0.65.1"
+version = "0.65.2"
 source = { editable = "." }
 dependencies = [
     { name = "fsspec" },
