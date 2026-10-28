@@ -1,5 +1,8 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{create_user_from_options, file_stream_response, get_repo, get_repo_async};
+use crate::helpers::{
+    ByteRange, create_user_from_options, file_range_response, file_stream_response, get_repo,
+    get_repo_async, parse_byte_range, range_not_satisfiable_response,
+};
 use crate::params::{
     app_data, parse_resource, parse_resource_async, path_param, query_param, request_relative_path,
 };
@@ -258,10 +261,23 @@ pub async fn get(
         );
     }
 
-    // Stream the file
-    let stream = version_store.get_version_stream(&hash_str).await?;
-
-    Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
+    // A viewer scrubbing a video asks for the part it needs, so read that rather than the file.
+    match parse_byte_range(&req, num_bytes) {
+        ByteRange::Unsatisfiable => Ok(range_not_satisfiable_response(num_bytes)),
+        ByteRange::Partial { start, end } => {
+            let stream = version_store
+                .get_version_range(&hash_str, start, end - start + 1)
+                .await?;
+            Ok(
+                file_range_response(mime_type, &last_commit_id, start, end, num_bytes)
+                    .streaming(stream),
+            )
+        }
+        ByteRange::Whole => {
+            let stream = version_store.get_version_stream(&hash_str).await?;
+            Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
+        }
+    }
 }
 
 /// Upload files
@@ -922,9 +938,37 @@ mod tests {
                 .unwrap(),
             header::CONTENT_LENGTH.as_str()
         );
+        // A file served whole still says a seek would have worked, which is what makes a player
+        // ask for one at all.
+        assert_eq!(resp.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
         // Drain the body to close the streamed file handle before cleanup; on NFS an
         // unlinked-but-still-open file lingers as .nfsXXXX and the rmdir fails with ENOTEMPTY.
         actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+
+        let ranged = |path: &str, range: &str| {
+            actix_web::test::TestRequest::get()
+                .uri(&file_uri(path))
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+                .insert_header((header::RANGE, range.to_string()))
+                .to_request()
+        };
+
+        let resp = actix_web::test::call_service(&app, ranged("data/hello.txt", "bytes=1-3")).await;
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes 1-3/5"
+        );
+        assert_eq!(resp.headers().get(header::ACCEPT_RANGES).unwrap(), "bytes");
+        assert_eq!(body::to_bytes(resp.into_body()).await.unwrap(), "ell");
+
+        let resp = actix_web::test::call_service(&app, ranged("data/hello.txt", "bytes=99-")).await;
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(
+            resp.headers().get(header::CONTENT_RANGE).unwrap(),
+            "bytes */5"
+        );
+        body::to_bytes(resp.into_body()).await.unwrap();
 
         // A path no commit contains is an ordinary 404 and must not be confused with the server
         // having lost data.

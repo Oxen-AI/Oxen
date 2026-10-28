@@ -355,6 +355,22 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError>;
 
+    /// Stream part of a version file.
+    ///
+    /// `get_version_chunk` buffers what it reads, which suits a chunk and not a seek into a
+    /// video, where the range asked for can be most of the file.
+    ///
+    /// # Arguments
+    /// * `hash` - The content hash that identifies this version
+    /// * `offset` - The starting byte position
+    /// * `size` - How many bytes to read from there
+    async fn get_version_range(
+        &self,
+        hash: &str,
+        offset: u64,
+        size: u64,
+    ) -> Result<BoxedByteStream, OxenError>;
+
     /// Get the size in bytes of a derived file (e.g., resized image, video thumbnail).
     ///
     /// Returns the content length of the derived artifact on disk.
@@ -641,6 +657,15 @@ impl VersionStore for UnconfiguredS3VersionStore {
         _offset: u64,
         _size: u64,
     ) -> Result<Vec<u8>, OxenError> {
+        Err(OxenError::S3BackendMissingServerOpts)
+    }
+
+    async fn get_version_range(
+        &self,
+        _hash: &str,
+        _offset: u64,
+        _size: u64,
+    ) -> Result<BoxedByteStream, OxenError> {
         Err(OxenError::S3BackendMissingServerOpts)
     }
 
