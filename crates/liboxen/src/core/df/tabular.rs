@@ -6,7 +6,6 @@ use polars::polars_utils::slice_enum::Slice;
 use polars::prelude::DataType as PolarsDataType;
 use polars::prelude::*;
 use polars_buffer::Buffer;
-use qsv_sniffer::error::SnifferError;
 use qsv_sniffer::metadata::Metadata as SniffedCsv;
 use serde_json::json;
 use std::collections::HashSet;
@@ -27,7 +26,7 @@ use crate::opts::{CountLinesOpts, DFOpts};
 use crate::repositories;
 use crate::repositories::metadata::{ByteSource, MIN_FETCH, StoredVersion};
 use crate::storage::{VersionLocation, VersionStore};
-use crate::util::fs::AtomicFile;
+use crate::util::fs::{AtomicFile, read_first_n_bytes};
 use crate::util::hasher;
 use std::sync::Arc;
 
@@ -44,6 +43,8 @@ const READ_ERROR: &str = "Could not read tabular data";
 
 /// How many rows a CSV's schema is inferred from.
 const CSV_INFER_SCHEMA_LENGTH: usize = 10_000;
+/// The most of a stored CSV fetched into memory to infer its schema from, 64 MiB.
+const MAX_CSV_HEAD_LEN: u64 = 64 * 1024 * 1024;
 
 impl ByteSource<'_> {
     fn scan_sources(&self) -> Result<ScanSources, OxenError> {
@@ -76,16 +77,14 @@ impl ByteSource<'_> {
         }
     }
 
-    fn sniff(&self) -> Result<SniffedCsv, SnifferError> {
-        match self {
-            ByteSource::Path(path) => qsv_sniffer::Sniffer::new().sniff_path(path),
-            ByteSource::Memory(data) => {
-                qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(data.clone()))
-            }
-            ByteSource::Stored(version) => {
-                qsv_sniffer::Sniffer::new().sniff_reader(version.reader())
-            }
-        }
+    /// The CSV dialect sniffed from the first [`CSV_SNIFF_SAMPLE_BYTES`] of the bytes.
+    fn sniff(&self) -> Result<SniffedCsv, OxenError> {
+        let sample = read_first_n_bytes(&mut self.open()?, CSV_SNIFF_SAMPLE_BYTES)?;
+        qsv_sniffer::Sniffer::new()
+            .sniff_reader(Cursor::new(sample))
+            .map_err(|err| {
+                OxenError::internal_error(format!("Could not sniff a CSV dialect: {err}"))
+            })
     }
 }
 
@@ -194,7 +193,7 @@ pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
 }
 
 /// A scan of `source`, a CSV. A stored version file's scan holds only its first rows, enough for its
-/// schema, fetched into memory.
+/// schema or as many as fit in [`MAX_CSV_HEAD_LEN`], fetched into memory.
 fn scan_df_csv(
     source: &ByteSource,
     delimiter: u8,
@@ -214,10 +213,11 @@ fn scan_df_csv(
 }
 
 /// The first bytes of `version`, a CSV quoted with `quote_char`, holding every row its schema is
-/// inferred from, or all of it when it is shorter. Blocks while it fetches them.
+/// inferred from or as many of them as fit in [`MAX_CSV_HEAD_LEN`], or all of it when it is shorter.
+/// Blocks while it fetches them.
 fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, OxenError> {
     let mut head = version.head(MIN_FETCH)?;
-    while (head.len() as u64) < version.size() {
+    while (head.len() as u64) < version.size().min(MAX_CSV_HEAD_LEN) {
         let rows = count_rows_from_slice_par(
             Buffer::from_owner(head.clone()),
             quote_char,
@@ -238,7 +238,7 @@ fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, Ox
             // No whole row past the header yet, or compressed bytes cut short, which do not count.
             Ok(_) | Err(_) => 0,
         };
-        head = version.head(len.max(2 * head.len()) as u64)?;
+        head = version.head((len.max(2 * head.len()) as u64).min(MAX_CSV_HEAD_LEN))?;
     }
     Ok(head)
 }
@@ -1234,7 +1234,7 @@ pub(crate) async fn collect_with_opts(
     }
 }
 
-/// Head bytes fetched as the CSV/TSV dialect sniff sample. qsv_sniffer reads whole lines and stops
+/// Head bytes a CSV/TSV dialect is sniffed from. qsv_sniffer reads whole lines and stops
 /// once the cumulative size passes its 16 KiB default sample, so it normally inspects ~16 KiB; the
 /// extra headroom here covers wide rows. If we have trouble sniffing wide rows, we can try
 /// increasing this value.
@@ -1371,8 +1371,7 @@ async fn resolve_s3_csv_dialect(
     }
     // Fixed-size head sample. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
     // consume the forward-only `get_version_stream` directly; a buffer (hence a byte cap) is
-    // required. If huge first lines sniff wrong, raise this cap. Streaming whole lines would match
-    // local exactly but reintroduces local's unbounded single-line memory cost.
+    // required. If huge first lines sniff wrong, raise this cap.
     let sample = version_store
         .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
         .await?;

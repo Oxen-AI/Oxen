@@ -2406,11 +2406,13 @@ pub(crate) mod tests {
     mod cloud_reads {
         use super::*;
         use crate::core::df::tabular;
+        use crate::model::EntryDataType;
+        use crate::model::metadata::generic_metadata::GenericMetadata;
         use crate::opts::DFOpts;
         use crate::repositories::metadata::{StoredVersion, inspect_bytes, inspect_stored};
         use crate::test;
         use polars::prelude::*;
-        use std::path::PathBuf;
+        use std::path::{Path, PathBuf};
 
         /// Make the s3s fixture credentials discoverable by Polars' `from_env` cloud-scan path
         /// (used for the columnar formats). All s3s tests share these fixed creds, and nothing else
@@ -2541,45 +2543,22 @@ pub(crate) mod tests {
             })
             .collect();
             files.push((PathBuf::from("frame.arrow"), sample_ipc()));
-            // Longer than a stored file's first fetch, with a string past it among the rows schema
-            // inference reads, so a head cut short infers another type for `b`.
-            let rows: String = (0..12_000)
-                .map(|i| match i {
-                    9_000 => format!("{i},x\n"),
-                    _ => format!("{i},{i}\n"),
-                })
-                .collect();
-            files.push((
-                PathBuf::from("rows.csv"),
-                format!("a,b\n{rows}").into_bytes(),
-            ));
+            // `count` rows under `header`, each ending in `tail`, with a string in `b` at a row past
+            // a stored file's first fetch and among the rows schema inference reads.
+            let csv = |header: &str, count: usize, tail: &str| {
+                let rows: String = (0..count)
+                    .map(|i| match i {
+                        9_000 => format!("{i},x{tail}\n"),
+                        _ => format!("{i},{i}{tail}\n"),
+                    })
+                    .collect();
+                format!("{header}\n{rows}").into_bytes()
+            };
+            // A head cut short of the string infers another type for `b`.
+            files.push((PathBuf::from("rows.csv"), csv("a,b", 12_000, "")));
             for (path, bytes) in files {
-                let hash = upload(&store, bytes.clone()).await;
-                let VersionLocation::S3 {
-                    url,
-                    region,
-                    endpoint_url,
-                } = store.version_location(&hash).await.unwrap()
-                else {
-                    panic!("an S3 store keeps {hash} in S3");
-                };
-                let version = StoredVersion::new(
-                    Arc::clone(&store),
-                    hash.parse().unwrap(),
-                    bytes.len() as u64,
-                    url,
-                    &region,
-                    endpoint_url.as_deref(),
-                    None,
-                )
-                .await
-                .unwrap();
-                let file_path = path.clone();
                 let (mime_type, data_type, metadata) =
-                    tokio::task::spawn_blocking(move || inspect_stored(&version, &file_path))
-                        .await
-                        .unwrap()
-                        .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+                    inspect_uploaded(&store, &path, bytes.clone()).await;
                 let in_memory = inspect_bytes(Bytes::from(bytes), &path).unwrap();
                 assert!(metadata.is_some(), "{path:?} has metadata to compare");
                 assert_eq!(
@@ -2593,6 +2572,54 @@ pub(crate) mod tests {
                     "{path:?} gets the same metadata read from S3 as from memory"
                 );
             }
+
+            // Rows too wide for those inference reads to fit in the most of a stored CSV fetched
+            // into memory, so its schema comes from the rows that fit, before the string in `b`.
+            let wide = format!(",{}", "c".repeat(8 * 1024));
+            let (_, _, metadata) =
+                inspect_uploaded(&store, Path::new("wide.csv"), csv("a,b,c", 10_050, &wide)).await;
+            let Some(GenericMetadata::MetadataTabular(metadata)) = metadata else {
+                panic!("wide.csv has tabular metadata, not {metadata:?}");
+            };
+            let dtypes: Vec<_> = (metadata.tabular.schema.fields.iter())
+                .map(|field| field.dtype.as_str())
+                .collect();
+            assert_eq!(dtypes, ["i64", "i64", "str"], "wide.csv's column types");
+            assert_eq!(metadata.tabular.height, 10_050, "wide.csv counts every row");
+        }
+
+        /// What inspecting `bytes`, stored in `store` as the version file at `path`, gives.
+        async fn inspect_uploaded(
+            store: &Arc<dyn VersionStore>,
+            path: &Path,
+            bytes: Vec<u8>,
+        ) -> (String, EntryDataType, Option<GenericMetadata>) {
+            let size = bytes.len() as u64;
+            let hash = upload(store, bytes).await;
+            let VersionLocation::S3 {
+                url,
+                region,
+                endpoint_url,
+            } = store.version_location(&hash).await.unwrap()
+            else {
+                panic!("an S3 store keeps {hash} in S3");
+            };
+            let version = StoredVersion::new(
+                Arc::clone(store),
+                hash.parse().unwrap(),
+                size,
+                url,
+                &region,
+                endpoint_url.as_deref(),
+                None,
+            )
+            .await
+            .unwrap();
+            let file_path = path.to_path_buf();
+            tokio::task::spawn_blocking(move || inspect_stored(&version, &file_path))
+                .await
+                .unwrap()
+                .unwrap_or_else(|e| panic!("{path:?}: {e}"))
         }
 
         /// Transforms and rejected reads on the current-thread runtime the actix server uses. A

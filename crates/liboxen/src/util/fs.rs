@@ -288,7 +288,7 @@ impl LineCounts {
 }
 
 /// Reads the first `n` bytes from `data`, or all of it when it is shorter.
-fn read_first_n_bytes(data: &mut impl Read, n: u64) -> io::Result<Vec<u8>> {
+pub(crate) fn read_first_n_bytes(data: &mut impl Read, n: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(n as usize + 1);
     data.take(n).read_to_end(&mut bytes)?;
     Ok(bytes)
