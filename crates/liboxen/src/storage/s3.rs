@@ -2611,14 +2611,11 @@ pub(crate) mod tests {
                 url,
                 &region,
                 endpoint_url.as_deref(),
-                None,
             )
             .await
             .unwrap();
-            let file_path = path.to_path_buf();
-            tokio::task::spawn_blocking(move || inspect_stored(&version, &file_path))
+            inspect_stored(version, path, None)
                 .await
-                .unwrap()
                 .unwrap_or_else(|e| panic!("{path:?}: {e}"))
         }
 
@@ -2809,6 +2806,25 @@ pub(crate) mod tests {
                     .await?,
                     UploadStart::AlreadyStored
                 ));
+                // A data frame's height comes from the line counts taken as its parts arrive.
+                let csv = Bytes::from_static(b"a,b\n1,2\n3,4\n5,6\n");
+                let csv_hash = hash_buffer(&csv);
+                let csv_destination = WorkspaceDestination {
+                    workspace_id: s3_workspace.id.clone(),
+                    path: PathBuf::from("uploaded.csv"),
+                };
+                let UploadStart::AwaitingParts(upload) = Upload::begin(
+                    &s3_workspace.base_repo,
+                    &csv_hash,
+                    csv.len() as u64,
+                    Some(csv_destination),
+                )
+                .await?
+                else {
+                    panic!("the store does not have {csv_hash} yet");
+                };
+                let receiving = upload.receive_part(1)?.expect("part 1 is not received yet");
+                assert_eq!(receiving.store(csv.clone()).await?, PartStored::Completed);
                 let staged_db = get_staged_db_manager(&s3_workspace.workspace_repo)?;
                 for path in ["uploaded.txt", "again.txt"] {
                     let staged = staged_db
@@ -2821,6 +2837,16 @@ pub(crate) mod tests {
                     };
                     assert_eq!(num_lines, 3, "{path} is staged with its line count");
                     assert_eq!(file.num_bytes(), data.len() as u64, "{path}");
+                }
+                let staged = staged_db
+                    .read_from_staged_db("uploaded.csv")?
+                    .expect("uploaded.csv is staged");
+                match staged.node.file()?.metadata() {
+                    Some(GenericMetadata::MetadataTabular(tabular)) => {
+                        assert_eq!(tabular.tabular.height, 3, "the header and trailing newline");
+                        assert_eq!(tabular.tabular.width, 2);
+                    }
+                    other => panic!("uploaded.csv is staged as a data frame: {other:?}"),
                 }
                 drop(staged_db);
 

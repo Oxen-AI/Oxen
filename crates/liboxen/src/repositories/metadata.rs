@@ -1,7 +1,7 @@
 //! Helper functions to get metadata from the local filesystem.
 //!
 
-use crate::core::df::tabular::s3_cloud_options;
+use crate::core::df::tabular::{header_lines, height_from_lines, s3_cloud_options, stored_schema};
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
@@ -9,7 +9,6 @@ use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, LocalRepository, MerkleHash, MetadataEntry};
-use crate::opts::CountLinesOpts;
 use crate::repositories;
 use crate::storage::VersionStore;
 use crate::util;
@@ -29,7 +28,7 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::runtime::Handle;
-use tokio_util::task::AbortOnDropHandle;
+use tokio::task::spawn_blocking;
 
 pub mod audio;
 pub mod image;
@@ -168,33 +167,6 @@ impl ByteSource<'_> {
         }
     }
 
-    /// What [`util::fs::count_lines`] gives for `data`, a reader of these bytes, which is left
-    /// unread for a stored version file. Blocks while a stored file downloads to count its lines.
-    pub(crate) fn count_lines(
-        &self,
-        data: impl Read,
-        opts: CountLinesOpts,
-    ) -> Result<(usize, Option<usize>), OxenError> {
-        self.start_counting_lines(opts).finish(data)
-    }
-
-    /// Starts counting the lines of these bytes. A stored version file whose lines were not counted
-    /// as it arrived downloads to count them while the caller goes on, until the count finishes or
-    /// is dropped.
-    pub(crate) fn start_counting_lines(&self, opts: CountLinesOpts) -> LineCount<'_> {
-        let counting = match self {
-            ByteSource::Stored(version) => match version.lines {
-                Some(lines) => Counting::Taken(lines),
-                None => Counting::Downloading(
-                    &version.bytes,
-                    version.bytes.download_line_counts(opts.with_chars),
-                ),
-            },
-            ByteSource::Path(_) | ByteSource::Memory(_) => Counting::Unread,
-        };
-        LineCount { opts, counting }
-    }
-
     /// Fails a stored version file's inspection with `err`, from a Polars scan of the file, when
     /// the scan could not fetch the file's bytes.
     pub(crate) fn record_scan_error(&self, err: &PolarsError) {
@@ -220,48 +192,12 @@ impl fmt::Debug for ByteSource<'_> {
     }
 }
 
-/// A line count [`ByteSource::start_counting_lines`] started.
-pub(crate) struct LineCount<'a> {
-    opts: CountLinesOpts,
-    counting: Counting<'a>,
-}
-
-/// Where a [`LineCount`] gets the counts it finishes with.
-enum Counting<'a> {
-    /// A reader of the bytes, read when the count finishes.
-    Unread,
-    /// The counts taken as a stored version file arrived.
-    Taken(LineCounts),
-    /// A download of a stored version file, which the task runs.
-    Downloading(
-        &'a StoredBytes,
-        AbortOnDropHandle<Result<LineCounts, OxenError>>,
-    ),
-}
-
-impl LineCount<'_> {
-    /// What [`util::fs::count_lines`] gives for `data`, a reader of the bytes, which is left unread
-    /// for a stored version file. Blocks until a stored file's download ends.
-    pub(crate) fn finish(self, data: impl Read) -> Result<(usize, Option<usize>), OxenError> {
-        let lines = match self.counting {
-            Counting::Unread => return util::fs::count_lines(data, self.opts),
-            Counting::Taken(lines) => lines,
-            Counting::Downloading(bytes, download) => bytes
-                .runtime
-                .block_on(download)?
-                .map_err(|err| bytes.record_error(err))?,
-        };
-        let (line_count, chars) = lines.lines(self.opts.remove_trailing_blank_line);
-        Ok((line_count, chars.filter(|_| self.opts.with_chars)))
-    }
-}
-
-/// A version file in an S3 version store, with its line counts when they were taken as it arrived.
+/// A version file in an S3 version store.
+#[derive(Clone)]
 pub(crate) struct StoredVersion {
     bytes: Arc<StoredBytes>,
     pub(crate) url: String,
     pub(crate) cloud_options: CloudOptions,
-    lines: Option<LineCounts>,
 }
 
 impl StoredVersion {
@@ -274,7 +210,6 @@ impl StoredVersion {
         url: String,
         region: &str,
         endpoint_url: Option<&str>,
-        lines: Option<LineCounts>,
     ) -> Result<Self, OxenError> {
         let cloud_options = s3_cloud_options(&url, region, endpoint_url)?;
         Ok(Self {
@@ -288,7 +223,6 @@ impl StoredVersion {
             }),
             url,
             cloud_options,
-            lines,
         })
     }
 
@@ -307,10 +241,9 @@ impl StoredVersion {
     }
 
     /// The file's first `len` bytes, or all of it when it is shorter, running on past `len` when an
-    /// earlier read of its start fetched more. Fetches only what no earlier read of its start did,
-    /// and blocks while it does.
-    pub(crate) fn head(&self, len: u64) -> io::Result<Bytes> {
-        self.bytes.head(len)
+    /// earlier read of its start fetched more. Fetches only what no earlier read of its start did.
+    pub(crate) async fn fetch_head(&self, len: u64) -> Result<Bytes, OxenError> {
+        self.bytes.fetch_head(len).await
     }
 }
 
@@ -329,55 +262,65 @@ impl StoredBytes {
     /// The `len` bytes at `offset`, which must lie before the file's end, fetched from the store.
     /// Blocks.
     fn fetch(&self, offset: u64, len: u64) -> io::Result<Bytes> {
-        let hash = self.hash.to_string();
-        let fetch = self.store.get_version_chunk(&hash, offset, len);
+        self.runtime
+            .block_on(self.fetch_chunk(offset, len))
+            .map_err(|err| self.record_error(err))
+    }
+
+    /// What [`StoredBytes::fetch`] gives, without blocking.
+    async fn fetch_chunk(&self, offset: u64, len: u64) -> Result<Bytes, OxenError> {
         let chunk = self
-            .runtime
-            .block_on(fetch)
-            .map_err(|err| self.record_error(err))?;
+            .store
+            .get_version_chunk(&self.hash.to_string(), offset, len)
+            .await?;
         if chunk.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
+            return Err(OxenError::internal_error(
                 "the version store returned no bytes before the file's end",
             ));
         }
         Ok(Bytes::from(chunk))
     }
 
-    /// See [`StoredVersion::head`].
+    /// What [`StoredVersion::fetch_head`] gives, blocking while it fetches.
     fn head(&self, len: u64) -> io::Result<Bytes> {
+        self.runtime
+            .block_on(self.fetch_head(len))
+            .map_err(|err| self.record_error(err))
+    }
+
+    /// See [`StoredVersion::fetch_head`].
+    async fn fetch_head(&self, len: u64) -> Result<Bytes, OxenError> {
         let head = self.head.lock().clone();
         let len = len.min(self.size);
         if head.len() as u64 >= len {
             return Ok(head);
         }
-        let rest = self.fetch(head.len() as u64, len - head.len() as u64)?;
-        let mut joined = BytesMut::with_capacity(head.len() + rest.len());
-        joined.extend_from_slice(&head);
-        joined.extend_from_slice(&rest);
-        let joined = joined.freeze();
+        let offset = head.len() as u64;
+        let rest = self.fetch_chunk(offset, len - offset).await?;
+        // A CSV's head grows toward 64 MiB, too large to copy on the runtime.
+        let joined = spawn_blocking(move || {
+            let mut joined = BytesMut::with_capacity(head.len() + rest.len());
+            joined.extend_from_slice(&head);
+            joined.extend_from_slice(&rest);
+            joined.freeze()
+        })
+        .await?;
         *self.head.lock() = joined.clone();
         Ok(joined)
     }
 
-    /// Starts counting the file's lines, and its characters when `with_chars` is set, from a
-    /// download of it on the async runtime, which dropping the task stops.
-    fn download_line_counts(
-        self: &Arc<Self>,
-        with_chars: bool,
-    ) -> AbortOnDropHandle<Result<LineCounts, OxenError>> {
-        let bytes = Arc::clone(self);
-        AbortOnDropHandle::new(self.runtime.spawn(async move {
-            let mut stream = bytes
-                .store
-                .get_version_stream(&bytes.hash.to_string())
-                .await?;
-            let mut lines = LineCounts::new(with_chars);
-            while let Some(chunk) = stream.next().await {
-                lines.add(&chunk?);
-            }
-            Ok(lines)
-        }))
+    /// The file's line counts, and its character count when `with_chars` is set, from a download of
+    /// the whole file.
+    async fn download_line_counts(&self, with_chars: bool) -> Result<LineCounts, OxenError> {
+        let mut stream = self
+            .store
+            .get_version_stream(&self.hash.to_string())
+            .await?;
+        let mut lines = LineCounts::new(with_chars);
+        while let Some(chunk) = stream.next().await {
+            lines.add(&chunk?);
+        }
+        Ok(lines)
     }
 
     /// Keeps `err` unless an earlier failure was kept, and returns an error to fail the read with.
@@ -477,14 +420,101 @@ pub(crate) fn inspect_bytes(
 }
 
 /// Reads the MIME type, data type, and metadata of `version`, the bytes of a file named
-/// `file_path`, fetching what it reads from the store. Blocks while it reads them. Fails when the
-/// store cannot give it the bytes, and gives no metadata for content that cannot be parsed.
-pub(crate) fn inspect_stored(
-    version: &StoredVersion,
+/// `file_path`, fetching what it reads from the store. A text file's or line-counted data frame's
+/// line counts come from `lines` when they were taken as it arrived, and otherwise from a download
+/// of the file. Fails when the store cannot give it the bytes, and gives no metadata for content
+/// that cannot be parsed.
+pub(crate) async fn inspect_stored(
+    version: StoredVersion,
     file_path: &Path,
+    lines: Option<LineCounts>,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-    let inspected = inspect(&ByteSource::Stored(version), file_path);
-    version.bytes.take_error().map_or(inspected, Err)
+    let head = read_head(&mut Cursor::new(version.fetch_head(MIN_FETCH).await?))?;
+    let mime_type = mime_type_from_head(&head, file_path);
+    let data_type = data_type_from_head(&head, file_path, &mime_type);
+    let extension = file_extension(file_path);
+    let metadata = match (&data_type, header_lines(Some(&extension))) {
+        (EntryDataType::Text, _) => {
+            let lines = match lines {
+                Some(lines) => lines,
+                None => version.bytes.download_line_counts(true).await?,
+            };
+            Some(GenericMetadata::MetadataText(text::from_counts(&lines)))
+        }
+        // The schema is read while the lines are counted, and either failing stops the other.
+        (EntryDataType::Tabular, Some(header)) => {
+            let scanning = stored_schema(&version, &extension);
+            let counting = async {
+                match lines {
+                    Some(lines) => Ok(lines),
+                    None => version.bytes.download_line_counts(false).await,
+                }
+            };
+            tokio::pin!(scanning, counting);
+            let scanned = tokio::select! {
+                scanned = &mut scanning => match scanned? {
+                    Ok(schema) => Ok((schema, counting.await?)),
+                    Err(err) => Err(err),
+                },
+                lines = &mut counting => {
+                    let lines = lines?;
+                    scanning.await?.map(|schema| (schema, lines))
+                }
+            };
+            let tabular = scanned.map(|(schema, lines)| {
+                let height = height_from_lines(&lines, header);
+                GenericMetadata::MetadataTabular(tabular::from_schema(&schema, height))
+            });
+            settle(
+                tabular,
+                &ByteSource::Stored(&version),
+                file_path,
+                "Could not compute tabular metadata",
+            )?
+        }
+        // A JSON data frame is parsed whole, so its bytes are fetched on the runtime.
+        (EntryDataType::Tabular, None) if extension == "json" => {
+            let data = Bytes::from(
+                version
+                    .bytes
+                    .store
+                    .get_version(&version.bytes.hash.to_string())
+                    .await?,
+            );
+            let tabular = spawn_blocking(move || {
+                tabular::get_metadata_with_extension(&ByteSource::Memory(data), "json")
+            })
+            .await?
+            .map(GenericMetadata::MetadataTabular);
+            settle(
+                tabular,
+                &ByteSource::Stored(&version),
+                file_path,
+                "Could not compute tabular metadata",
+            )?
+        }
+        (
+            EntryDataType::Image
+            | EntryDataType::Video
+            | EntryDataType::Audio
+            | EntryDataType::Tabular,
+            _,
+        ) => {
+            let version = version.clone();
+            let file_path = file_path.to_path_buf();
+            let data_type = data_type.clone();
+            spawn_blocking(move || {
+                let source = ByteSource::Stored(&version);
+                get_file_metadata(&mut version.reader(), &source, &file_path, &data_type)
+            })
+            .await??
+        }
+        (EntryDataType::Dir | EntryDataType::Binary, _) => None,
+    };
+    version
+        .bytes
+        .take_error()
+        .map_or(Ok((mime_type, data_type, metadata)), Err)
 }
 
 fn inspect(
@@ -503,9 +533,9 @@ fn inspect(
 }
 
 /// Returns the metadata of `data`, the bytes of a file of `data_type` named `file_path`. A tabular
-/// file's metadata, and line counts taken as a stored file arrived, come from `source` instead,
-/// which holds the same bytes as `data`. Gives no metadata for content that cannot be parsed, and
-/// fails when the store cannot give a stored file's bytes.
+/// file's metadata comes from `source` instead, which holds the same bytes as `data`. Gives no
+/// metadata for content that cannot be parsed, and fails when the store cannot give a stored file's
+/// bytes.
 fn get_file_metadata(
     data: &mut (impl Read + Seek),
     source: &ByteSource,
@@ -516,7 +546,7 @@ fn get_file_metadata(
     data.rewind()?;
     let (metadata, failure) = match data_type {
         EntryDataType::Text => (
-            text::get_metadata(data, source).map(GenericMetadata::MetadataText),
+            text::get_metadata(data).map(GenericMetadata::MetadataText),
             "Could not compute text metadata",
         ),
         EntryDataType::Image => (
@@ -538,6 +568,17 @@ fn get_file_metadata(
         ),
         _ => return Ok(None),
     };
+    settle(metadata, source, file_path, failure)
+}
+
+/// `metadata`, or `None` with `failure` logged when its content could not be parsed. Fails with the
+/// store's error instead when a stored file's bytes could not be fetched.
+fn settle(
+    metadata: Result<GenericMetadata, OxenError>,
+    source: &ByteSource,
+    file_path: &Path,
+    failure: &str,
+) -> Result<Option<GenericMetadata>, OxenError> {
     match metadata {
         Ok(metadata) => Ok(Some(metadata)),
         Err(err) => {

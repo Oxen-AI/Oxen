@@ -36,7 +36,6 @@ use crate::model::merkle_tree::node::FileNode;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::model::{EntryDataType, LocalRepository};
-use crate::opts::CountLinesOpts;
 use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, repositories, util};
@@ -230,12 +229,10 @@ pub fn append_to_file(path: &Path, value: &str) -> Result<(), OxenError> {
     }
 }
 
-pub(crate) fn count_lines(
-    data: impl Read,
-    opts: CountLinesOpts,
-) -> Result<(usize, Option<usize>), OxenError> {
+/// The line counts of `data`, with its character count when `with_chars` is set.
+pub(crate) fn line_counts(data: impl Read, with_chars: bool) -> Result<LineCounts, OxenError> {
     let mut reader = BufReader::with_capacity(1024 * 32, data);
-    let mut counts = LineCounts::new(opts.with_chars);
+    let mut counts = LineCounts::new(with_chars);
     loop {
         let len = {
             let buf = reader.fill_buf()?;
@@ -247,11 +244,11 @@ pub(crate) fn count_lines(
         };
         reader.consume(len);
     }
-    Ok(counts.lines(opts.remove_trailing_blank_line))
+    Ok(counts)
 }
 
-/// The newlines, and optionally the UTF-8 characters, in bytes added in order, from which
-/// [`count_lines`]'s answer follows however the bytes were split.
+/// The newlines, and optionally the UTF-8 characters, in bytes added in order, which come out the
+/// same however the bytes were split.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct LineCounts {
     newlines: usize,
@@ -278,9 +275,8 @@ impl LineCounts {
         }
     }
 
-    /// What [`count_lines`] returns for the bytes added so far: the line count, less a trailing
-    /// newline's empty line when `remove_trailing_blank_line` is set, and the character count when
-    /// these counts take one.
+    /// The line count of the bytes added so far, less a trailing newline's empty line when
+    /// `remove_trailing_blank_line` is set, and the character count when these counts take one.
     pub(crate) fn lines(&self, remove_trailing_blank_line: bool) -> (usize, Option<usize>) {
         let trailing = remove_trailing_blank_line && self.last_byte == Some(b'\n');
         (1 + self.newlines - usize::from(trailing), self.chars)
