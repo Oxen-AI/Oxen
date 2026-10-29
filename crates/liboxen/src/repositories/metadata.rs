@@ -297,10 +297,14 @@ impl StoredBytes {
         }
         let offset = head.len() as u64;
         let rest = self.fetch_chunk(offset, len - offset).await?;
-        let mut joined = BytesMut::with_capacity(head.len() + rest.len());
-        joined.extend_from_slice(&head);
-        joined.extend_from_slice(&rest);
-        let joined = joined.freeze();
+        // A CSV's head grows toward 64 MiB, too large to copy on the runtime.
+        let joined = spawn_blocking(move || {
+            let mut joined = BytesMut::with_capacity(head.len() + rest.len());
+            joined.extend_from_slice(&head);
+            joined.extend_from_slice(&rest);
+            joined.freeze()
+        })
+        .await?;
         *self.head.lock() = joined.clone();
         Ok(joined)
     }
