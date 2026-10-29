@@ -1101,7 +1101,7 @@ pub fn staged_file_metadata(
 
 /// The file node to stage for `file`, keeping the column metadata `previous_metadata` records for a
 /// tabular file.
-fn version_file_node(
+pub(super) fn version_file_node(
     repo: &LocalRepository,
     file: InspectedVersionFile,
     previous_metadata: Option<&GenericMetadata>,

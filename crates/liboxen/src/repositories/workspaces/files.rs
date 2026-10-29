@@ -38,6 +38,8 @@ pub use crate::core::v_latest::workspaces::files::upload_zip;
 
 pub use crate::core::v_latest::workspaces::files::mv;
 
+pub use crate::core::v_latest::workspaces::files::copy;
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -45,7 +47,9 @@ mod tests {
     use crate::config::UserConfig;
     use crate::core::staged::staged_db_manager::get_staged_db_manager;
     use crate::error::OxenError;
-    use crate::model::{Commit, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace};
+    use crate::model::{
+        Commit, EntryDataType, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace,
+    };
     use crate::repositories::size;
     use crate::repositories::{self, workspaces};
     use crate::test;
@@ -316,6 +320,80 @@ mod tests {
             // Skip workspace moves and removals on windows
             if std::env::consts::OS == "windows" {
                 return Ok(());
+            }
+
+            // A copy commits beside its source with the source's content, takes the type an upload
+            // to its own name would get, and is refused where the source has staged changes or
+            // something is already at the destination.
+            let workspace = committing_workspace(&repo, &commit, "copy")?;
+            let table_copy = "out/table_copy.csv";
+            let copies = [
+                ("table.csv", table_copy, "csv", EntryDataType::Tabular),
+                ("other.txt", "other_copy.txt", "txt", EntryDataType::Text),
+                ("other.txt", "other_copy.md", "md", EntryDataType::Text),
+                // CSV bytes named as JSON lines parse as neither, as when they are uploaded so.
+                (
+                    "table.csv",
+                    "table_copy.jsonl",
+                    "jsonl",
+                    EntryDataType::Binary,
+                ),
+            ];
+            for (source, copy, _, _) in &copies {
+                workspaces::files::copy(&workspace, Path::new(source), Path::new(copy)).await?;
+            }
+            assert_eq!(
+                staged_status(&workspace, table_copy),
+                Some(StagedEntryStatus::Added)
+            );
+            assert_eq!(
+                staged_status(&workspace, "table.csv"),
+                None,
+                "the source stays as committed"
+            );
+            stage_new_file(&workspace, "data/a.txt").await?;
+            workspaces::files::rm(&workspace, &[PathBuf::from("data/sub/b.txt")]).await?;
+            for (source, dest, refusal) in [
+                ("data/a.txt", "a_copy.txt", "SourceHasStagedChanges"),
+                ("data/sub/b.txt", "b_copy.txt", "PathStagedForRemoval"),
+                ("data", "data_copy", "NotAFile"),
+                ("missing.txt", "missing_copy.txt", "PathDoesNotExist"),
+                ("table.csv", "other.txt", "DestinationExists"),
+                ("table.csv", "other_copy.txt", "DestinationAlreadyStaged"),
+                ("table.csv", "other.txt/table.csv", "NotADirectory"),
+            ] {
+                let result =
+                    workspaces::files::copy(&workspace, Path::new(source), Path::new(dest)).await;
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|err| format!("{err:?}").starts_with(refusal)),
+                    "copying {source} to {dest} should be refused with {refusal}, got {result:?}"
+                );
+            }
+            let committed = workspaces::commit(
+                &workspace,
+                &NewCommitBody::from_config(&user, "Copy files"),
+                "copy",
+            )
+            .await?;
+            let node = |path: &str| {
+                repositories::tree::get_file_by_path(&repo, &committed, path)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{path} should be in the commit"))
+            };
+            for (source, copy, extension, data_type) in copies {
+                let copied = node(copy);
+                assert_eq!(
+                    copied.hash(),
+                    node(source).hash(),
+                    "{copy} has {source}'s content"
+                );
+                assert_eq!(
+                    (copied.extension(), copied.data_type()),
+                    (extension, &data_type),
+                    "{copy} is typed by its own name"
+                );
             }
 
             // A committed directory moves with its nested subdirectory, and retrying the move

@@ -11,7 +11,7 @@ use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::staged::staged_db_manager::StagedDBManager;
 use crate::core::v_latest::workspaces::files::{
-    add, refuse_move_under_file, track_modified_data_frame,
+    add, refuse_destination_under_file, track_modified_data_frame,
 };
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
@@ -541,7 +541,7 @@ pub async fn rename(
             if staged_db_manager.exists(&new_path)? {
                 return Err(OxenError::DestinationAlreadyStaged(new_path.into()));
             }
-            refuse_move_under_file(&workspace, &new_path, |p| {
+            refuse_destination_under_file(&workspace, &new_path, |p| {
                 staged_db_manager.read_from_staged_db(p)
             })?;
 
