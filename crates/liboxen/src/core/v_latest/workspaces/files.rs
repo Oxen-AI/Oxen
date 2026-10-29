@@ -27,6 +27,7 @@ use crate::core::staged::staged_db_manager::{
 use crate::core::v_latest::add::{
     get_file_node, process_add_file_with_staged_db_manager, stage_version_file,
 };
+use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
@@ -94,8 +95,8 @@ pub async fn add_version_file(
 }
 
 /// Stage the version file `file_hash`, `size` bytes long, which the store has, at `dst_path`,
-/// reading what its metadata needs from the store. `lines` are its line counts, when they were
-/// taken as it arrived.
+/// reading what its metadata needs from the store unless the workspace's commit has it there.
+/// `lines` are its line counts, when they were taken as it arrived.
 pub(crate) async fn add_stored_version_file(
     workspace: &Workspace,
     dst_path: &Path,
@@ -104,31 +105,36 @@ pub(crate) async fn add_stored_version_file(
     lines: Option<LineCounts>,
 ) -> Result<PathBuf, OxenError> {
     let store = workspace.base_repo.version_store();
-    let dst_path_buf = dst_path.to_path_buf();
-    let file = match store.version_location(&file_hash.to_string()).await? {
-        VersionLocation::Local(data_path) => {
-            spawn_blocking(move || {
-                InspectedVersionFile::from_file(dst_path_buf, file_hash, &data_path)
-            })
-            .await??
-        }
-        VersionLocation::S3 {
-            url,
-            region,
-            endpoint_url,
-        } => {
-            let version = StoredVersion::new(
-                store,
-                file_hash,
-                size,
+    let inspect = |dst_path| async move {
+        match store.version_location(&file_hash.to_string()).await? {
+            VersionLocation::Local(data_path) => {
+                spawn_blocking(move || {
+                    InspectedVersionFile::from_file(dst_path, file_hash, &data_path)
+                })
+                .await?
+            }
+            VersionLocation::S3 {
                 url,
-                &region,
-                endpoint_url.as_deref(),
-            )
-            .await?;
-            InspectedVersionFile::from_stored(dst_path_buf, file_hash, version, lines).await?
+                region,
+                endpoint_url,
+            } => {
+                let version = StoredVersion::new(
+                    store,
+                    file_hash,
+                    size,
+                    url,
+                    &region,
+                    endpoint_url.as_deref(),
+                )
+                .await?;
+                InspectedVersionFile::from_stored(dst_path, file_hash, version, lines).await
+            }
         }
     };
+    let committed = CommittedFiles::load(workspace).await?;
+    let file =
+        VersionFileToStage::prepare_stored(&committed, dst_path.to_path_buf(), file_hash, inspect)
+            .await?;
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     stage_version_file(
         workspace,
@@ -139,6 +145,121 @@ pub(crate) async fn add_stored_version_file(
     .await?;
 
     Ok(dst_path.to_path_buf())
+}
+
+/// The files a workspace's commit has, for looking them up by path.
+pub struct CommittedFiles {
+    repo: LocalRepository,
+    dir_hashes: HashMap<PathBuf, MerkleHash>,
+}
+
+impl CommittedFiles {
+    /// Read the directories of `workspace`'s commit.
+    pub async fn load(workspace: &Workspace) -> Result<Arc<Self>, OxenError> {
+        let (repo, commit) = (workspace.base_repo.clone(), workspace.commit.clone());
+        spawn_blocking(move || {
+            let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &commit)?;
+            Ok(Arc::new(Self { repo, dir_hashes }))
+        })
+        .await?
+    }
+
+    /// The file the commit has at `dst_path` in the workspace.
+    async fn get(files: &Arc<Self>, dst_path: &Path) -> Result<Option<FileNode>, OxenError> {
+        let path = util::fs::path_relative_to_dir(dst_path, &files.repo.path)?;
+        let files = Arc::clone(files);
+        spawn_blocking(move || {
+            let node = CommitMerkleTree::read_file(&files.repo, &files.dir_hashes, &path)?;
+            Ok(node.and_then(|node| match node.node {
+                EMerkleTreeNode::File(file_node) => Some(file_node),
+                _ => None,
+            }))
+        })
+        .await?
+    }
+}
+
+/// A version file to stage at a path in a workspace, checked against the file the workspace's
+/// commit has there.
+pub enum VersionFileToStage {
+    /// The commit has this content at the path.
+    AlreadyCommitted { dst_path: PathBuf, hash: MerkleHash },
+    /// Content the commit does not have at the path, with `committed`, the file it has there.
+    Changed {
+        file: InspectedVersionFile,
+        committed: Option<Box<FileNode>>,
+    },
+}
+
+impl VersionFileToStage {
+    /// The version file `hash`, to stage at `dst_path` in the workspace whose commit `committed`
+    /// holds, stored and inspected by `store_and_inspect(dst_path)` only when the commit does not
+    /// have it at that path or the store has lost the commit's copy.
+    pub async fn prepare<F>(
+        committed: &Arc<CommittedFiles>,
+        dst_path: PathBuf,
+        hash: MerkleHash,
+        store_and_inspect: impl FnOnce(PathBuf) -> F,
+    ) -> Result<Self, OxenError>
+    where
+        F: Future<Output = Result<InspectedVersionFile, OxenError>>,
+    {
+        let node = CommittedFiles::get(committed, &dst_path).await?;
+        if node.as_ref().is_some_and(|node| *node.hash() == hash) {
+            // The upload restores a committed version file the store has lost.
+            if !committed
+                .repo
+                .version_store()
+                .version_exists(&hash.to_string())
+                .await?
+            {
+                store_and_inspect(dst_path.clone()).await?;
+            }
+            return Ok(Self::AlreadyCommitted { dst_path, hash });
+        }
+        Ok(Self::Changed {
+            file: store_and_inspect(dst_path).await?,
+            committed: node.map(Box::new),
+        })
+    }
+
+    /// The version file `hash`, which the store has, to stage at `dst_path` in the workspace whose
+    /// commit `committed` holds, inspected by `inspect(dst_path)` only when the commit does not
+    /// have it at that path.
+    pub(crate) async fn prepare_stored<F>(
+        committed: &Arc<CommittedFiles>,
+        dst_path: PathBuf,
+        hash: MerkleHash,
+        inspect: impl FnOnce(PathBuf) -> F,
+    ) -> Result<Self, OxenError>
+    where
+        F: Future<Output = Result<InspectedVersionFile, OxenError>>,
+    {
+        let node = CommittedFiles::get(committed, &dst_path).await?;
+        if node.as_ref().is_some_and(|node| *node.hash() == hash) {
+            return Ok(Self::AlreadyCommitted { dst_path, hash });
+        }
+        Ok(Self::Changed {
+            file: inspect(dst_path).await?,
+            committed: node.map(Box::new),
+        })
+    }
+
+    /// The path in the workspace to stage it at.
+    pub(crate) fn dst_path(&self) -> &Path {
+        match self {
+            Self::AlreadyCommitted { dst_path, .. } => dst_path,
+            Self::Changed { file, .. } => &file.dst_path,
+        }
+    }
+
+    /// The hash of its content.
+    pub(crate) fn hash(&self) -> MerkleHash {
+        match self {
+            Self::AlreadyCommitted { hash, .. } => *hash,
+            Self::Changed { file, .. } => file.hash,
+        }
+    }
 }
 
 /// A version file to stage at its destination path, with what staging records about its contents.
@@ -218,7 +339,7 @@ impl InspectedVersionFile {
 /// Returns the destination paths that staged, plus a per-file error for each that did not.
 pub async fn add_version_files(
     workspace: &Workspace,
-    files: Vec<InspectedVersionFile>,
+    files: Vec<VersionFileToStage>,
 ) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
@@ -226,7 +347,7 @@ pub async fn add_version_files(
     let mut staged_paths = Vec::with_capacity(files.len());
     let mut err_files = vec![];
     for file in files {
-        let (dst_path, hash) = (file.dst_path.clone(), file.hash);
+        let (dst_path, hash) = (file.dst_path().to_path_buf(), file.hash());
         match stage_version_file(workspace, file, &staged_db_manager, &seen_dirs).await {
             Ok(_) => staged_paths.push(dst_path),
             Err(e) => {
