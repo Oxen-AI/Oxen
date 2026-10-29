@@ -124,13 +124,9 @@ pub(crate) async fn add_stored_version_file(
                 url,
                 &region,
                 endpoint_url.as_deref(),
-                lines,
             )
             .await?;
-            spawn_blocking(move || {
-                InspectedVersionFile::from_stored(dst_path_buf, file_hash, version)
-            })
-            .await??
+            InspectedVersionFile::from_stored(dst_path_buf, file_hash, version, lines).await?
         }
     };
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
@@ -173,15 +169,17 @@ impl InspectedVersionFile {
         })
     }
 
-    /// Inspect `version`, the version file `hash` in an S3 store, to stage at `dst_path`. Blocks
-    /// while it reads what the metadata needs from the store.
-    pub(crate) fn from_stored(
+    /// Inspect `version`, the version file `hash` in an S3 store, to stage at `dst_path`, reading
+    /// what the metadata needs from the store and its line counts from `lines` when they were taken
+    /// as it arrived.
+    pub(crate) async fn from_stored(
         dst_path: PathBuf,
         hash: MerkleHash,
         version: StoredVersion,
+        lines: Option<LineCounts>,
     ) -> Result<Self, OxenError> {
         let num_bytes = version.size();
-        let (mime_type, data_type, metadata) = inspect_stored(&version, &dst_path)?;
+        let (mime_type, data_type, metadata) = inspect_stored(version, &dst_path, lines).await?;
         Ok(Self {
             dst_path,
             hash,

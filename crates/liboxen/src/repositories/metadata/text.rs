@@ -3,23 +3,19 @@
 
 use crate::error::OxenError;
 use crate::model::metadata::MetadataText;
-use crate::opts::CountLinesOpts;
-use crate::repositories::metadata::ByteSource;
+use crate::util::fs::{LineCounts, line_counts};
 
 use std::io::Read;
 
-/// Detects the text metadata of the file `data` reads, which holds `source`'s bytes.
-pub(crate) fn get_metadata(
-    data: impl Read,
-    source: &ByteSource,
-) -> Result<MetadataText, OxenError> {
-    let mut opts = CountLinesOpts::empty();
-    opts.with_chars = true;
+/// Detects the text metadata of the file `data` reads.
+pub(crate) fn get_metadata(data: impl Read) -> Result<MetadataText, OxenError> {
+    Ok(from_counts(&line_counts(data, true)?))
+}
 
-    let (lines_count, chars_count) = source.count_lines(data, opts)?;
-    let chars_count = chars_count.unwrap_or(0);
-
-    Ok(MetadataText::new(lines_count, chars_count))
+/// The text metadata of a file with `lines`, which counted its characters.
+pub(crate) fn from_counts(lines: &LineCounts) -> MetadataText {
+    let (lines_count, chars_count) = lines.lines(false);
+    MetadataText::new(lines_count, chars_count.unwrap_or(0))
 }
 
 #[cfg(test)]

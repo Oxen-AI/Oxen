@@ -22,11 +22,11 @@ use crate::model::DataFrameSize;
 use crate::model::LocalRepository;
 use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
-use crate::opts::{CountLinesOpts, DFOpts};
+use crate::opts::DFOpts;
 use crate::repositories;
 use crate::repositories::metadata::{ByteSource, MIN_FETCH, StoredVersion};
 use crate::storage::{VersionLocation, VersionStore};
-use crate::util::fs::{AtomicFile, read_first_n_bytes};
+use crate::util::fs::{AtomicFile, LineCounts, line_counts, read_first_n_bytes};
 use crate::util::hasher;
 use std::sync::Arc;
 
@@ -88,20 +88,16 @@ impl ByteSource<'_> {
     }
 }
 
-fn base_lazy_csv_reader(
-    sources: ScanSources,
-    delimiter: u8,
-    quote_char: Option<u8>,
-) -> LazyCsvReader {
+fn base_lazy_csv_reader(sources: ScanSources, dialect: CsvDialect) -> LazyCsvReader {
     let reader = LazyCsvReader::new_with_sources(sources);
     reader
         .with_infer_schema_length(Some(CSV_INFER_SCHEMA_LENGTH))
         .with_ignore_errors(true)
         .with_has_header(true)
         .with_truncate_ragged_lines(true)
-        .with_separator(delimiter)
+        .with_separator(dialect.delimiter)
         .with_eol_char(b'\n')
-        .with_quote_char(quote_char)
+        .with_quote_char(dialect.quote_char)
         .with_rechunk(true)
         .with_encoding(CsvEncoding::LossyUtf8)
 }
@@ -110,15 +106,10 @@ pub fn new_df() -> DataFrame {
     DataFrame::empty()
 }
 
-fn read_df_csv(
-    path: impl AsRef<Path>,
-    delimiter: u8,
-    quote_char: Option<u8>,
-) -> Result<LazyFrame, OxenError> {
+fn read_df_csv(path: impl AsRef<Path>, dialect: CsvDialect) -> Result<LazyFrame, OxenError> {
     let reader = base_lazy_csv_reader(
         ScanSource::Path(PlRefPath::try_from_path(path.as_ref())?).into_sources(),
-        delimiter,
-        quote_char,
+        dialect,
     );
     reader
         .finish()
@@ -192,43 +183,81 @@ pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))
 }
 
-/// A scan of `source`, a CSV. A stored version file's scan holds only its first rows, enough for its
-/// schema or as many as fit in [`MAX_CSV_HEAD_LEN`], fetched into memory.
+/// A scan of `source`, a CSV with `dialect`. A stored version file's CSV is scanned from its first
+/// bytes in memory, which [`stored_schema`] fetches.
 fn scan_df_csv(
     source: &ByteSource,
-    delimiter: u8,
-    quote_char: Option<u8>,
+    dialect: CsvDialect,
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
-    let sources = match source {
-        ByteSource::Stored(version) => {
-            ByteSource::Memory(csv_head(version, quote_char)?).scan_sources()?
-        }
-        ByteSource::Path(_) | ByteSource::Memory(_) => source.scan_sources()?,
-    };
-    base_lazy_csv_reader(sources, delimiter, quote_char)
+    if let ByteSource::Stored(_) = source {
+        return Err(OxenError::internal_error(format!(
+            "{source:?}: a stored CSV is scanned from its first bytes in memory"
+        )));
+    }
+    base_lazy_csv_reader(source.scan_sources()?, dialect)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
 }
 
+/// The schema of `version`, a stored data frame file with `extension` whose rows are counted from
+/// its lines. A CSV's schema is read from its first bytes, fetched on the async runtime. Fails when
+/// the store cannot give the bytes, and gives the read's error for content that cannot be parsed.
+pub(crate) async fn stored_schema(
+    version: &StoredVersion,
+    extension: &str,
+) -> Result<Result<SchemaRef, OxenError>, OxenError> {
+    let extension = extension.to_string();
+    if !matches!(extension.as_str(), "csv" | "tsv" | "data") {
+        let version = version.clone();
+        return Ok(task::spawn_blocking(move || {
+            scan_schema(&ByteSource::Stored(&version), Some(&extension)).map(|(_, schema)| schema)
+        })
+        .await?);
+    }
+    let sample = version.fetch_head(CSV_SNIFF_SAMPLE_BYTES).await?;
+    let dialect = task::spawn_blocking(move || {
+        CsvDialect::sniff(&ByteSource::Memory(sample), &extension, &DFOpts::empty())
+    })
+    .await?;
+    let dialect = match dialect {
+        Ok(dialect) => dialect,
+        Err(err) => return Ok(Err(err)),
+    };
+    let head = csv_head(version, dialect.quote_char).await?;
+    Ok(task::spawn_blocking(move || {
+        scan_df_csv(
+            &ByteSource::Memory(head),
+            dialect,
+            constants::DEFAULT_PAGE_SIZE,
+        )?
+        .collect_schema()
+        .map_err(|err| OxenError::basic_str(format!("{err:?}")))
+    })
+    .await?)
+}
+
 /// The first bytes of `version`, a CSV quoted with `quote_char`, holding every row its schema is
 /// inferred from or as many of them as fit in [`MAX_CSV_HEAD_LEN`], or all of it when it is shorter.
-/// Blocks while it fetches them.
-fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, OxenError> {
-    let mut head = version.head(MIN_FETCH)?;
+async fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, OxenError> {
+    let mut head = version.fetch_head(MIN_FETCH).await?;
     while (head.len() as u64) < version.size().min(MAX_CSV_HEAD_LEN) {
-        let rows = count_rows_from_slice_par(
-            Buffer::from_owner(head.clone()),
-            quote_char,
-            None,
-            b'\n',
-            true,
-            0,
-            0,
-            0,
-            false,
-        );
+        let counted = head.clone();
+        let rows = task::spawn_blocking(move || {
+            count_rows_from_slice_par(
+                Buffer::from_owner(counted),
+                quote_char,
+                None,
+                b'\n',
+                true,
+                0,
+                0,
+                0,
+                false,
+            )
+        })
+        .await?;
         // The last row counted can be cut short, so a row past those inference reads leaves them
         // whole.
         let len = match rows {
@@ -238,7 +267,9 @@ fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, Ox
             // No whole row past the header yet, or compressed bytes cut short, which do not count.
             Ok(_) | Err(_) => 0,
         };
-        head = version.head((len.max(2 * head.len()) as u64).min(MAX_CSV_HEAD_LEN))?;
+        head = version
+            .fetch_head((len.max(2 * head.len()) as u64).min(MAX_CSV_HEAD_LEN))
+            .await?;
     }
     Ok(head)
 }
@@ -1041,6 +1072,7 @@ pub fn df_hash_rows_on_cols(
     Ok(df)
 }
 
+#[derive(Clone, Copy)]
 struct CsvDialect {
     delimiter: u8,
     quote_char: Option<u8>,
@@ -1074,44 +1106,51 @@ fn parse_user_csv_opts(opts: &DFOpts) -> Result<(Option<u8>, Option<u8>), OxenEr
     Ok((user_delimiter, user_quote))
 }
 
-/// Combine sniffer output with the user overrides into a final dialect, falling back to RFC 4180
-/// defaults when sniffing failed.
-fn build_csv_dialect<E: std::fmt::Debug>(
-    sniffed: Result<qsv_sniffer::metadata::Metadata, E>,
-    user_delimiter: Option<u8>,
-    user_quote: Option<u8>,
-) -> CsvDialect {
-    match sniffed {
-        Ok(metadata) => {
-            log::debug!("Sniffed csv dialect: {:?}", metadata.dialect);
-            CsvDialect {
-                delimiter: user_delimiter.unwrap_or(metadata.dialect.delimiter),
-                quote_char: user_quote.or_else(|| Some(sniffed_quote(&metadata))),
-            }
-        }
-        Err(err) => {
-            log::warn!("Error sniffing csv -> {err:?}");
-            CsvDialect {
-                delimiter: user_delimiter.unwrap_or(DEFAULT_DELIMITER),
-                quote_char: user_quote.or(Some(DEFAULT_QUOTE_CHAR)),
-            }
-        }
+impl CsvDialect {
+    /// The dialect of `source`, a CSV with `extension`, whose fields a TSV delimits with tabs. The
+    /// delimiter and quote character `opts` sets win over the sniffed ones.
+    fn sniff(source: &ByteSource, extension: &str, opts: &DFOpts) -> Result<Self, OxenError> {
+        let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
+        let dialect = match user_delimiter {
+            Some(delimiter) if user_quote.is_some() => Self {
+                delimiter,
+                quote_char: user_quote,
+            },
+            _ => Self::from_sniffed(source.sniff(), user_delimiter, user_quote),
+        };
+        Ok(match extension {
+            "tsv" => Self {
+                delimiter: b'\t',
+                ..dialect
+            },
+            _ => dialect,
+        })
     }
-}
 
-fn sniff_csv_dialect(source: &ByteSource, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
-    let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
-    if let (Some(delimiter), Some(_)) = (user_delimiter, user_quote) {
-        return Ok(CsvDialect {
-            delimiter,
-            quote_char: user_quote,
-        });
+    /// Combine sniffer output with the user overrides into a final dialect, falling back to RFC
+    /// 4180 defaults when sniffing failed.
+    fn from_sniffed<E: std::fmt::Debug>(
+        sniffed: Result<qsv_sniffer::metadata::Metadata, E>,
+        user_delimiter: Option<u8>,
+        user_quote: Option<u8>,
+    ) -> Self {
+        match sniffed {
+            Ok(metadata) => {
+                log::debug!("Sniffed csv dialect: {:?}", metadata.dialect);
+                Self {
+                    delimiter: user_delimiter.unwrap_or(metadata.dialect.delimiter),
+                    quote_char: user_quote.or_else(|| Some(sniffed_quote(&metadata))),
+                }
+            }
+            Err(err) => {
+                log::warn!("Error sniffing csv -> {err:?}");
+                Self {
+                    delimiter: user_delimiter.unwrap_or(DEFAULT_DELIMITER),
+                    quote_char: user_quote.or(Some(DEFAULT_QUOTE_CHAR)),
+                }
+            }
+        }
     }
-    Ok(build_csv_dialect(
-        source.sniff(),
-        user_delimiter,
-        user_quote,
-    ))
 }
 
 const DEFAULT_QUOTE_CHAR: u8 = b'"';
@@ -1174,13 +1213,9 @@ async fn _read_lazy_df_with_extension(
         match extension.as_str() {
             "ndjson" | "jsonl" => read_df_jsonl(&path),
             "json" => read_df_json(&path),
-            "csv" | "data" => {
-                let dialect = sniff_csv_dialect(&ByteSource::Path(&path), &opts_clone)?;
-                read_df_csv(&path, dialect.delimiter, dialect.quote_char)
-            }
-            "tsv" => {
-                let dialect = sniff_csv_dialect(&ByteSource::Path(&path), &opts_clone)?;
-                read_df_csv(&path, b'\t', dialect.quote_char)
+            "csv" | "data" | "tsv" => {
+                let dialect = CsvDialect::sniff(&ByteSource::Path(&path), &extension, &opts_clone)?;
+                read_df_csv(&path, dialect)
             }
             "parquet" => read_df_parquet(&path),
             "arrow" => {
@@ -1308,10 +1343,7 @@ async fn read_s3_version_df(
             // `.tsv` pins the tab delimiter; only the quote character is sniffed.
             let force_delim = (extension == "tsv").then_some(b'\t');
             let dialect = resolve_s3_csv_dialect(version_store, hash, opts, force_delim).await?;
-            task::spawn_blocking(move || {
-                read_s3_csv(&url, cloud_opts, dialect.delimiter, dialect.quote_char)
-            })
-            .await??
+            task::spawn_blocking(move || read_s3_csv(&url, cloud_opts, dialect)).await??
         }
         "parquet" => task::spawn_blocking(move || read_s3_parquet(&url, cloud_opts)).await??,
         "arrow" => {
@@ -1379,7 +1411,7 @@ async fn resolve_s3_csv_dialect(
     let sniffed =
         task::spawn_blocking(move || qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(sample)))
             .await?;
-    Ok(build_csv_dialect(sniffed, delimiter, user_quote))
+    Ok(CsvDialect::from_sniffed(sniffed, delimiter, user_quote))
 }
 
 fn read_s3_parquet(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
@@ -1419,13 +1451,11 @@ fn read_s3_jsonl(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenE
 fn read_s3_csv(
     url: &str,
     cloud_opts: CloudOptions,
-    delimiter: u8,
-    quote_char: Option<u8>,
+    dialect: CsvDialect,
 ) -> Result<LazyFrame, OxenError> {
     base_lazy_csv_reader(
         ScanSource::Path(PlRefPath::new(url)).into_sources(),
-        delimiter,
-        quote_char,
+        dialect,
     )
     .with_cloud_options(Some(cloud_opts))
     .finish()
@@ -1478,14 +1508,11 @@ fn scan_df_with_extension(
             "ndjson" => scan_df_jsonl(source, total_rows),
             "jsonl" => scan_df_jsonl(source, total_rows),
             "json" => read_json(source),
-            "csv" | "data" => {
-                let dialect = sniff_csv_dialect(source, opts)?;
-                scan_df_csv(source, dialect.delimiter, dialect.quote_char, total_rows)
-            }
-            "tsv" => {
-                let dialect = sniff_csv_dialect(source, opts)?;
-                scan_df_csv(source, b'\t', dialect.quote_char, total_rows)
-            }
+            "csv" | "data" | "tsv" => scan_df_csv(
+                source,
+                CsvDialect::sniff(source, extension, opts)?,
+                total_rows,
+            ),
             "parquet" => scan_df_parquet(source, total_rows),
             "arrow" => scan_df_arrow(source, total_rows),
             _ => Err(OxenError::basic_str(err)),
@@ -1506,21 +1533,57 @@ pub(crate) fn get_size_and_schema_with_extension(
     source: &ByteSource,
     extension: Option<&str>,
 ) -> Result<(DataFrameSize, SchemaRef), OxenError> {
+    let (lazy_df, schema) = scan_schema(source, extension)?;
+    let height = match (header_lines(extension), extension) {
+        (Some(header), _) => height_from_lines(&line_counts(source.open()?, false)?, header),
+        (None, Some("parquet")) => ParquetReader::new(source.open()?).num_rows()?,
+        (None, Some("arrow")) => {
+            // With no columns projected, the reader counts the rows from the record batches'
+            // headers and reads none of their data.
+            let reader = IpcReader::new(source.open()?).with_projection(Some(vec![]));
+            reader.finish()?.height()
+        }
+        (None, Some("json")) => {
+            let df = lazy_df
+                .collect()
+                .map_err(|_| OxenError::basic_str("Could not collect json df"))?;
+            df.height()
+        }
+        _ => {
+            return Err(OxenError::basic_str(format!(
+                "Unknown file type get_size {source:?} {extension:?}"
+            )));
+        }
+    };
+    Ok((
+        DataFrameSize {
+            width: schema.len(),
+            height,
+        },
+        schema,
+    ))
+}
+
+/// The lines before the first row of a data frame file with `extension` whose rows are counted from
+/// its lines: 1 for CSV and TSV, and 0 for `.data` and JSON lines. `None` for any other format.
+pub(crate) fn header_lines(extension: Option<&str>) -> Option<usize> {
+    match extension {
+        Some("csv" | "tsv") => Some(1),
+        Some("data" | "jsonl" | "ndjson") => Some(0),
+        _ => None,
+    }
+}
+
+/// A scan of `source`, a data frame file with `extension`, and its schema.
+fn scan_schema(
+    source: &ByteSource,
+    extension: Option<&str>,
+) -> Result<(LazyFrame, SchemaRef), OxenError> {
     tracing::debug!(
         oxen.data_frame_source = ?source,
         file.extension = ?extension,
-        "Measuring a data frame's size"
+        "Reading a data frame's schema"
     );
-
-    let mut opts = CountLinesOpts::empty();
-    opts.remove_trailing_blank_line = true;
-    // A stored file downloads to count its lines while the scan reads its schema.
-    let line_count = match extension {
-        Some("csv" | "tsv" | "data" | "jsonl" | "ndjson") => {
-            Some(source.start_counting_lines(opts))
-        }
-        _ => None,
-    };
 
     // Don't need that many rows to get the width
     let num_scan_rows = constants::DEFAULT_PAGE_SIZE;
@@ -1529,44 +1592,12 @@ pub(crate) fn get_size_and_schema_with_extension(
         source.record_scan_error(&err);
         OxenError::basic_str(format!("{err:?}"))
     })?;
-    let width = schema.len();
+    Ok((lazy_df, schema))
+}
 
-    let err = format!("Unknown file type get_size {source:?} {extension:?}");
-
-    match (extension, line_count) {
-        (Some("csv" | "tsv"), Some(line_count)) => {
-            // Remove one line to account for CSV/TSV headers
-            let (mut height, _) = line_count.finish(source.open()?)?;
-            height -= 1; // Adjusting for header
-
-            Ok((DataFrameSize { width, height }, schema))
-        }
-        (Some("data" | "jsonl" | "ndjson"), Some(line_count)) => {
-            let (height, _) = line_count.finish(source.open()?)?;
-
-            Ok((DataFrameSize { width, height }, schema))
-        }
-        (Some("parquet"), _) => {
-            let mut reader = ParquetReader::new(source.open()?);
-            let height = reader.num_rows()?;
-            Ok((DataFrameSize { width, height }, schema))
-        }
-        (Some("arrow"), _) => {
-            // With no columns projected, the reader counts the rows from the record batches'
-            // headers and reads none of their data.
-            let reader = IpcReader::new(source.open()?).with_projection(Some(vec![]));
-            let height = reader.finish()?.height();
-            Ok((DataFrameSize { width, height }, schema))
-        }
-        (Some("json"), _) => {
-            let df = lazy_df
-                .collect()
-                .map_err(|_| OxenError::basic_str("Could not collect json df"))?;
-            let height = df.height();
-            Ok((DataFrameSize { width, height }, schema))
-        }
-        _ => Err(OxenError::basic_str(err)),
-    }
+/// The rows of a data frame file with `lines`, whose first `header` lines come before its rows.
+pub(crate) fn height_from_lines(lines: &LineCounts, header: usize) -> usize {
+    lines.lines(true).0 - header
 }
 
 pub fn write_df_json<P: AsRef<Path>>(df: &mut DataFrame, output: P) -> Result<(), OxenError> {
@@ -2197,13 +2228,14 @@ mod tests {
 
     #[test]
     fn test_sniff_csv_dialect_detects_quote_char() -> Result<(), OxenError> {
-        let dialect = sniff_csv_dialect(
+        let dialect = CsvDialect::sniff(
             &ByteSource::Path(
                 &TEST_DATA_DIR
                     .join("test")
                     .join("csvs")
                     .join("quoted_fields.csv"),
             ),
+            "csv",
             &DFOpts::empty(),
         )?;
         assert_eq!(dialect.delimiter, b',');
@@ -2213,13 +2245,14 @@ mod tests {
 
     #[test]
     fn test_reject_empty_quote() -> Result<(), OxenError> {
-        let r = sniff_csv_dialect(
+        let r = CsvDialect::sniff(
             &ByteSource::Path(
                 &TEST_DATA_DIR
                     .join("test")
                     .join("csvs")
                     .join("quoted_fields.csv"),
             ),
+            "csv",
             &{
                 let mut opts = DFOpts::empty();
                 opts.quote_char = Some("".to_string());

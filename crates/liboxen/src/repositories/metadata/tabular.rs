@@ -6,6 +6,7 @@ use crate::error::OxenError;
 use crate::model::Schema;
 use crate::model::metadata::MetadataTabular;
 use crate::repositories::metadata::ByteSource;
+use polars::prelude::SchemaRef;
 
 use std::path::Path;
 
@@ -23,11 +24,12 @@ pub(crate) fn get_metadata_with_extension(
     extension: &str,
 ) -> Result<MetadataTabular, OxenError> {
     let (size, schema) = tabular::get_size_and_schema_with_extension(source, Some(extension))?;
-    Ok(MetadataTabular::new(
-        size.width,
-        size.height,
-        Schema::from_polars(&schema),
-    ))
+    Ok(from_schema(&schema, size.height))
+}
+
+/// The tabular metadata of a data frame with `schema` and `height` rows.
+pub(crate) fn from_schema(schema: &SchemaRef, height: usize) -> MetadataTabular {
+    MetadataTabular::new(schema.len(), height, Schema::from_polars(schema))
 }
 
 #[cfg(test)]
