@@ -262,13 +262,23 @@ impl StoredBytes {
     /// The `len` bytes at `offset`, which must lie before the file's end, fetched from the store.
     /// Blocks.
     fn fetch(&self, offset: u64, len: u64) -> io::Result<Bytes> {
-        let hash = self.hash.to_string();
-        let fetch = self.store.get_version_chunk(&hash, offset, len);
+        self.runtime
+            .block_on(self.fetch_chunk(offset, len))
+            .map_err(|err| self.record_error(err))
+    }
+
+    /// What [`StoredBytes::fetch`] gives, without blocking.
+    async fn fetch_chunk(&self, offset: u64, len: u64) -> Result<Bytes, OxenError> {
         let chunk = self
-            .runtime
-            .block_on(fetch)
-            .map_err(|err| self.record_error(err))?;
-        nonempty(chunk)
+            .store
+            .get_version_chunk(&self.hash.to_string(), offset, len)
+            .await?;
+        if chunk.is_empty() {
+            return Err(OxenError::internal_error(
+                "the version store returned no bytes before the file's end",
+            ));
+        }
+        Ok(Bytes::from(chunk))
     }
 
     /// What [`StoredVersion::fetch_head`] gives, blocking while it fetches.
@@ -285,13 +295,8 @@ impl StoredBytes {
         if head.len() as u64 >= len {
             return Ok(head);
         }
-        let hash = self.hash.to_string();
         let offset = head.len() as u64;
-        let rest = nonempty(
-            self.store
-                .get_version_chunk(&hash, offset, len - offset)
-                .await?,
-        )?;
+        let rest = self.fetch_chunk(offset, len - offset).await?;
         let mut joined = BytesMut::with_capacity(head.len() + rest.len());
         joined.extend_from_slice(&head);
         joined.extend_from_slice(&rest);
@@ -325,17 +330,6 @@ impl StoredBytes {
     fn take_error(&self) -> Option<OxenError> {
         self.fetch_error.lock().take()
     }
-}
-
-/// `chunk`, a range the store returned from before the file's end, which holds at least one byte.
-fn nonempty(chunk: Vec<u8>) -> io::Result<Bytes> {
-    if chunk.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "the version store returned no bytes before the file's end",
-        ));
-    }
-    Ok(Bytes::from(chunk))
 }
 
 /// The fewest bytes a [`VersionReader`] fetches at once, 64 KiB.
