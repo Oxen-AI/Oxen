@@ -1340,10 +1340,19 @@ async fn read_s3_version_df(
             task::spawn_blocking(move || read_json(&ByteSource::Memory(bytes))).await??
         }
         "csv" | "data" | "tsv" => {
-            // `.tsv` pins the tab delimiter; only the quote character is sniffed.
-            let force_delim = (extension == "tsv").then_some(b'\t');
-            let dialect = resolve_s3_csv_dialect(version_store, hash, opts, force_delim).await?;
-            task::spawn_blocking(move || read_s3_csv(&url, cloud_opts, dialect)).await??
+            // The dialect is sniffed from the file's first bytes, as for a file on disk.
+            let sample = Bytes::from(
+                version_store
+                    .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
+                    .await?,
+            );
+            let extension = extension.to_string();
+            let opts = opts.clone();
+            task::spawn_blocking(move || {
+                let dialect = CsvDialect::sniff(&ByteSource::Memory(sample), &extension, &opts)?;
+                read_s3_csv(&url, cloud_opts, dialect)
+            })
+            .await??
         }
         "parquet" => task::spawn_blocking(move || read_s3_parquet(&url, cloud_opts)).await??,
         "arrow" => {
@@ -1381,37 +1390,6 @@ pub(crate) fn s3_cloud_options(
         CloudScheme::from_path(url),
         config,
     )?)
-}
-
-/// Resolve the CSV/TSV dialect for an S3 version file: honor explicit `DFOpts` overrides, otherwise
-/// sniff a head sample fetched through the store's `get_version_chunk` (full parity with the local
-/// path, which also samples only the head). `force_delim` pins the delimiter for `.tsv` while still
-/// sniffing the quote character.
-async fn resolve_s3_csv_dialect(
-    version_store: &Arc<dyn VersionStore>,
-    hash: &str,
-    opts: &DFOpts,
-    force_delim: Option<u8>,
-) -> Result<CsvDialect, OxenError> {
-    let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
-    let delimiter = force_delim.or(user_delimiter);
-    if let (Some(delimiter), Some(_)) = (delimiter, user_quote) {
-        return Ok(CsvDialect {
-            delimiter,
-            quote_char: user_quote,
-        });
-    }
-    // Fixed-size head sample. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
-    // consume the forward-only `get_version_stream` directly; a buffer (hence a byte cap) is
-    // required. If huge first lines sniff wrong, raise this cap.
-    let sample = version_store
-        .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
-        .await?;
-    // Sniffing parses the sample (CPU-bound); keep it off the async runtime.
-    let sniffed =
-        task::spawn_blocking(move || qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(sample)))
-            .await?;
-    Ok(CsvDialect::from_sniffed(sniffed, delimiter, user_quote))
 }
 
 fn read_s3_parquet(url: &str, cloud_opts: CloudOptions) -> Result<LazyFrame, OxenError> {
