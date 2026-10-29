@@ -247,8 +247,8 @@ mod tests {
             assert!(workspaces::files::exists(&workspace, other)?);
             assert!(!workspaces::files::exists(&workspace, nonexistent)?);
 
-            // Adding a file with the content the commit has at its path stores it again when the
-            // store has lost the commit's copy.
+            // Adding a file with the content the commit has at its path drops its staged edit, and
+            // stores it again when the store has lost the commit's copy.
             let other_hash = repositories::tree::get_file_by_path(&repo, &commit, other)?
                 .expect("other.txt is committed")
                 .hash()
@@ -259,6 +259,11 @@ mod tests {
             assert!(
                 repo.version_store().version_exists(&other_hash).await?,
                 "other.txt added with its committed content restores the copy the store lost"
+            );
+            assert_eq!(
+                staged_status(&workspace, "other.txt"),
+                None,
+                "other.txt added with its committed content drops its staged edit"
             );
 
             // Import refuses every URL that does not reach a public HTTP host.
@@ -331,6 +336,22 @@ mod tests {
             if std::env::consts::OS == "windows" {
                 return Ok(());
             }
+
+            // Adding a file back with its committed content drops its staged removal.
+            let workspace = repositories::workspaces::create(&repo, &commit, "restored", true)?;
+            workspaces::files::rm(&workspace, &[other.to_path_buf()]).await?;
+            assert_eq!(
+                staged_status(&workspace, "other.txt"),
+                Some(StagedEntryStatus::Removed)
+            );
+            let workspace_file = workspace.workspace_repo.path.join(other);
+            fs::write_to_path(&workspace_file, "Other")?;
+            workspaces::files::add(&workspace, &workspace_file).await?;
+            assert_eq!(
+                staged_status(&workspace, "other.txt"),
+                None,
+                "other.txt added back with its committed content drops its staged removal"
+            );
 
             // A committed directory moves with its nested subdirectory, and retrying the move
             // finds its source staged for removal.

@@ -949,10 +949,10 @@ pub fn process_add_file_with_staged_db_manager(
         repositories::merge::mark_conflict_as_resolved(repo, &relative_path)?;
     }
 
-    // Don't have to add the file to the staged db if it hasn't changed
+    // A file that matches HEAD is not staged, and drops a staged removal or a staged edit of it
     if status == StagedEntryStatus::Unmodified {
-        log::debug!("file has not changed - skipping add");
-        return Ok(());
+        let staged_db_manager = get_staged_db_manager(repo)?;
+        return unstage_reverted(&staged_db_manager, &relative_path, hash, seen_dirs);
     }
 
     let (mime_type, data_type, metadata) =
@@ -1023,22 +1023,7 @@ pub(crate) async fn stage_version_file(
     tokio::task::spawn_blocking(move || {
         let (file, status, previous_metadata) = match file {
             VersionFileToStage::AlreadyCommitted { hash, .. } => {
-                if let Some(staged) = staged_db_manager.read_from_staged_db(&relative_path)?
-                    && !keeps_staged_entry(&staged, &hash)?
-                {
-                    tracing::debug!(
-                        oxen.file_path = %relative_path.display(),
-                        "Unstaging a workspace file uploaded with its committed content"
-                    );
-                    staged_db_manager.delete_entry_and_empty_ancestors(&relative_path)?;
-                    // The deletion may remove these directories' entries, so a later file under
-                    // them in the batch stages them again.
-                    let mut seen_dirs = seen_dirs.lock();
-                    for dir in relative_path.ancestors().skip(1) {
-                        seen_dirs.remove(dir);
-                    }
-                }
-                return Ok(());
+                return unstage_reverted(&staged_db_manager, &relative_path, hash, &seen_dirs);
             }
             VersionFileToStage::Changed {
                 file,
@@ -1061,6 +1046,32 @@ pub(crate) async fn stage_version_file(
         )
     })
     .await?
+}
+
+/// Unstage the entry staged at `relative_path` in a workspace for a file whose content `hash`
+/// matches HEAD, unless the entry stages that content.
+fn unstage_reverted(
+    staged_db_manager: &StagedDBManager,
+    relative_path: &Path,
+    hash: MerkleHash,
+    seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
+) -> Result<(), OxenError> {
+    if let Some(staged) = staged_db_manager.read_from_staged_db(relative_path)?
+        && !keeps_staged_entry(&staged, &hash)?
+    {
+        tracing::debug!(
+            oxen.file_path = %relative_path.display(),
+            "Unstaging a workspace file added with its committed content"
+        );
+        staged_db_manager.delete_entry_and_empty_ancestors(relative_path)?;
+        // The deletion may remove these directories' entries, so a later file under them in the
+        // batch stages them again.
+        let mut seen_dirs = seen_dirs.lock();
+        for dir in relative_path.ancestors().skip(1) {
+            seen_dirs.remove(dir);
+        }
+    }
+    Ok(())
 }
 
 /// Whether `staged`, the entry staged for a file whose content `hash` matches HEAD, stays staged.
