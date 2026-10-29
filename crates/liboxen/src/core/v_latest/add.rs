@@ -37,7 +37,9 @@ use std::ops::AddAssign;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::rm;
-use crate::core::v_latest::workspaces::files::{InspectedVersionFile, VersionFileToStage};
+use crate::core::v_latest::workspaces::files::{
+    InspectedVersionFile, VersionFileToStage, unindex_if_staged_table,
+};
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
@@ -914,17 +916,17 @@ fn process_add_file(
 
 /// Add this function in replace of process_add_file for workspaces staged db to handle concurrent add_file calls
 /// TODO: Migrate all staged db actions to use the manager
-pub fn process_add_file_with_staged_db_manager(
-    repo: &LocalRepository,
-    repo_path: &Path,         // Path to the repository
+pub(crate) fn process_add_file_with_staged_db_manager(
+    workspace: &Workspace,
     file_status: &FileStatus, // All the metadata including if the file is added, modified, or deleted
     path: &Path,              // Path to the file in the repository, or path defined by the user
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
     merge_conflicts: &HashSet<PathBuf>,
 ) -> Result<(), OxenError> {
     log::debug!("process_add_file {path:?}");
-    let relative_path = util::fs::path_relative_to_dir(path, repo_path)?;
-    let full_path = repo_path.join(&relative_path);
+    let repo = &workspace.workspace_repo;
+    let relative_path = util::fs::path_relative_to_dir(path, &repo.path)?;
+    let full_path = repo.path.join(&relative_path);
 
     if !full_path.is_file() {
         // If it's not a file - no need to add it
@@ -952,7 +954,13 @@ pub fn process_add_file_with_staged_db_manager(
     // A file that matches HEAD is not staged, and drops a staged removal or a staged edit of it
     if status == StagedEntryStatus::Unmodified {
         let staged_db_manager = get_staged_db_manager(repo)?;
-        return unstage_reverted(&staged_db_manager, &relative_path, hash, seen_dirs);
+        return unstage_reverted(
+            workspace,
+            &staged_db_manager,
+            &relative_path,
+            hash,
+            seen_dirs,
+        );
     }
 
     let (mime_type, data_type, metadata) =
@@ -1018,12 +1026,18 @@ pub(crate) async fn stage_version_file(
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
     let relative_path = path_relative_to_dir(file.dst_path(), &workspace.base_repo.path)?;
-    let workspace_repo = workspace.workspace_repo.clone();
+    let workspace = workspace.clone();
     let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
     tokio::task::spawn_blocking(move || {
         let (file, status, previous_metadata) = match file {
             VersionFileToStage::AlreadyCommitted { hash, .. } => {
-                return unstage_reverted(&staged_db_manager, &relative_path, hash, &seen_dirs);
+                return unstage_reverted(
+                    &workspace,
+                    &staged_db_manager,
+                    &relative_path,
+                    hash,
+                    &seen_dirs,
+                );
             }
             VersionFileToStage::Changed {
                 file,
@@ -1036,7 +1050,8 @@ pub(crate) async fn stage_version_file(
         };
         let previous_metadata =
             staged_file_metadata(&staged_db_manager, &relative_path)?.or(previous_metadata);
-        let file_node = version_file_node(&workspace_repo, file, previous_metadata.as_ref())?;
+        let file_node =
+            version_file_node(&workspace.workspace_repo, file, previous_metadata.as_ref())?;
         add_file_node_and_parent_dir(
             &file_node,
             status,
@@ -1048,9 +1063,10 @@ pub(crate) async fn stage_version_file(
     .await?
 }
 
-/// Unstage the entry staged at `relative_path` in a workspace for a file whose content `hash`
-/// matches HEAD, unless the entry stages that content.
+/// Unstage the entry staged at `relative_path` in a workspace, along with a data frame's staged
+/// edits, for a file whose content `hash` matches HEAD, unless the entry stages that content.
 fn unstage_reverted(
+    workspace: &Workspace,
     staged_db_manager: &StagedDBManager,
     relative_path: &Path,
     hash: MerkleHash,
@@ -1063,6 +1079,7 @@ fn unstage_reverted(
             oxen.file_path = %relative_path.display(),
             "Unstaging a workspace file added with its committed content"
         );
+        unindex_if_staged_table(workspace, relative_path)?;
         staged_db_manager.delete_entry_and_empty_ancestors(relative_path)?;
         // The deletion may remove these directories' entries, so a later file under them in the
         // batch stages them again.

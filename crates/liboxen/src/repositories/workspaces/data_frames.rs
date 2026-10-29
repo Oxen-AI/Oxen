@@ -1610,6 +1610,38 @@ mod tests {
                 "only the row added after the unstage should be committed"
             );
 
+            // Adding a data frame's committed file over a staged replacement of it unstages the
+            // replacement, and discards the row edits its index holds, as unstaging does.
+            let workspace = indexed_workspace(&repo, &commit, "add-reverts").await?;
+            rows::add(
+                &repo,
+                &workspace,
+                &path,
+                &json!({"file": "images/reverted.jpg", "label": "cat"}),
+            )?;
+            let workspace_file = workspace.workspace_repo.path.join(&path);
+            write_to_path(&workspace_file, "file,label\nreplaced.jpg,dog\n")?;
+            files::add(&workspace, &workspace_file).await?;
+            util::fs::copy(repo.path.join(&path), &workspace_file)?;
+            files::add(&workspace, &workspace_file).await?;
+            {
+                let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+                assert!(
+                    staged_db_manager.read_from_staged_db(&path)?.is_none(),
+                    "adding the committed file drops the staged entry"
+                );
+            }
+            assert!(
+                !is_indexed(&workspace, &path)?,
+                "adding the committed file drops the index holding the discarded edits"
+            );
+            index(&repo, &workspace, &path).await?;
+            assert_eq!(
+                count(&workspace, &path)?,
+                committed_rows,
+                "the discarded row must not survive into a fresh index"
+            );
+
             // Staging a data frame for removal drops its DuckDB index. If the index survived, then
             // the frame stayed editable and the next row edit re-staged it as `Modified`, so the
             // removal silently never happened.

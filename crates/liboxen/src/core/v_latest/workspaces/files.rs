@@ -52,15 +52,12 @@ const MAX_COMPRESSION_RATIO: u64 = 100; // Maximum allowed
 // TODO: Do we depreciate this, if we always upload to version store?
 pub async fn add(workspace: &Workspace, filepath: impl AsRef<Path>) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
-    let workspace_repo = &workspace.workspace_repo;
-    let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
-    let commit = workspace.commit.clone();
-    p_add_file(base_repo, workspace_repo, &Some(commit), filepath).await?;
+    p_add_file(workspace, filepath).await?;
 
     // Return the relative path of the file in the workspace
-    let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
+    let relative_path = util::fs::path_relative_to_dir(filepath, &workspace.workspace_repo.path)?;
     Ok(relative_path)
 }
 
@@ -1076,24 +1073,16 @@ fn extract_zip(zip_filepath: &Path) -> Result<Vec<PathBuf>, OxenError> {
     Ok(files)
 }
 
-async fn p_add_file(
-    base_repo: &LocalRepository,
-    workspace_repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
-    path: &Path,
-) -> Result<(), OxenError> {
+async fn p_add_file(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    let (base_repo, workspace_repo) = (&workspace.base_repo, &workspace.workspace_repo);
     let version_store = base_repo.version_store();
-    let mut maybe_dir_node = None;
-    if let Some(head_commit) = maybe_head_commit {
-        let path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
-        let parent_path = path.parent().unwrap_or(Path::new(""));
-        maybe_dir_node =
-            repositories::tree::get_dir_with_children(base_repo, head_commit, parent_path, None)?;
-    }
+    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
+    let parent_path = relative_path.parent().unwrap_or(Path::new(""));
+    let maybe_dir_node =
+        repositories::tree::get_dir_with_children(base_repo, &workspace.commit, parent_path, None)?;
 
     // Skip if it's not a file
     let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-    let relative_path = util::fs::path_relative_to_dir(path, &workspace_repo.path)?;
     let full_path = workspace_repo.path.join(&relative_path);
     if !full_path.is_file() {
         log::debug!("is not a file - skipping add on {full_path:?}");
@@ -1137,11 +1126,10 @@ async fn p_add_file(
         file_status.previous_metadata = Some(metadata);
     }
 
-    let (workspace_repo, path) = (workspace_repo.clone(), path.to_path_buf());
+    let (workspace, path) = (workspace.clone(), path.to_path_buf());
     tokio::task::spawn_blocking(move || {
         process_add_file_with_staged_db_manager(
-            &workspace_repo,
-            &workspace_repo.path,
+            &workspace,
             &file_status,
             &path,
             &seen_dirs,
@@ -1266,11 +1254,14 @@ fn prune_empty_staged_dirs(
 }
 
 /// Drop the staged DuckDB table of the data frame at `path`, if it has one. A path staged for
-/// removal must not keep an editable index: a later row or column edit would re-stage the file as
-/// `Modified`, which would undo the removal.
-fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+/// removal or unstaged must not keep an editable index: a later row or column edit would re-stage
+/// the file as `Modified`, which would undo the removal or bring back the discarded edits.
+pub(crate) fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     if repositories::workspaces::data_frames::has_staged_table(workspace, path)? {
-        log::debug!("p_rm: dropping staged data frame index for {path:?}");
+        tracing::debug!(
+            oxen.file_path = %path.display(),
+            "Dropping the staged index of a data frame"
+        );
         repositories::workspaces::data_frames::unindex(workspace, path)?;
     }
     Ok(())
