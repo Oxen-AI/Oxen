@@ -21,8 +21,8 @@ pub fn get_metadata(mut data: impl Read + Seek) -> Result<MetadataVideo, OxenErr
                 .ok_or_else(|| OxenError::internal_error("Could not get video duration"))?;
             let duration = Duration::from_millis(millis).as_secs_f64();
 
-            // The video track with the lowest ID, passing over tracks whose type the reader cannot
-            // name, such as timecode tracks
+            // The video track with the lowest ID, passing over tracks of a type the reader does not
+            // recognize, such as timecode tracks
             let track = video
                 .tracks()
                 .values()
@@ -73,10 +73,11 @@ mod tests {
         assert_eq!(metadata.video.height, 176);
         assert_relative_eq!(metadata.video.num_seconds, 1.6);
 
-        // A video with timecode tracks, whose type the MP4 reader cannot name, gets the metadata
+        // A video with timecode tracks, a type the MP4 reader does not recognize, gets the metadata
         // of its first video track: track 1 is 32x24 and track 2 is 16x16.
         let file = test::test_video_file_with_name("two_videos_timecode.mp4");
-        let metadata = repositories::metadata::get(file).unwrap();
+        let metadata = repositories::metadata::get(file)
+            .expect("two_videos_timecode.mp4 is readable and has a recognized video type");
         let Some(GenericMetadata::MetadataVideo(metadata)) = metadata.metadata else {
             panic!(
                 "two_videos_timecode.mp4 has video metadata, not {:?}",
@@ -89,7 +90,8 @@ mod tests {
         // A video whose movie header has a timescale of 0 fails to give metadata rather than
         // panicking. In a version 0 header the timescale follows the version and flags and two
         // 4-byte timestamps.
-        let mut bytes = std::fs::read(test::test_video_file_with_name("basketball.mp4")).unwrap();
+        let mut bytes = std::fs::read(test::test_video_file_with_name("basketball.mp4"))
+            .expect("basketball.mp4 is readable");
         let mvhd = (bytes.windows(4))
             .position(|fourcc| fourcc == b"mvhd")
             .expect("basketball.mp4 has a movie header");
