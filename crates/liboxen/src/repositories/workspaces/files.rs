@@ -247,6 +247,20 @@ mod tests {
             assert!(workspaces::files::exists(&workspace, other)?);
             assert!(!workspaces::files::exists(&workspace, nonexistent)?);
 
+            // Adding a file with the content the commit has at its path stores it again when the
+            // store has lost the commit's copy.
+            let other_hash = repositories::tree::get_file_by_path(&repo, &commit, other)?
+                .expect("other.txt is committed")
+                .hash()
+                .to_string();
+            repo.version_store().delete_version(&other_hash).await?;
+            fs::write_to_path(&workspace_file, "Other")?;
+            workspaces::files::add(&workspace, &workspace_file).await?;
+            assert!(
+                repo.version_store().version_exists(&other_hash).await?,
+                "other.txt added with its committed content restores the copy the store lost"
+            );
+
             // Import refuses every URL that does not reach a public HTTP host.
             let workspace = repositories::workspaces::create_temporary(&repo, &commit).await?;
             let private = "private/reserved IP address";
