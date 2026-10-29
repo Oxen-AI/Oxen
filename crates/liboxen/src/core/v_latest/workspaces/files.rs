@@ -1,4 +1,4 @@
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use filetime::FileTime;
 use futures::StreamExt;
 use parking_lot::{Mutex, RwLockWriteGuard};
@@ -16,6 +16,7 @@ use std::iter::successors;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tokio::task::spawn_blocking;
 use url::{Host, Url};
 use zip::ZipArchive;
 
@@ -24,18 +25,21 @@ use crate::core::staged::staged_db_manager::{
     StagedWriteBatch, get_staged_db_manager, read_from_db, staged_entries_under,
 };
 use crate::core::v_latest::add::{
-    get_file_node, process_add_file_with_staged_db_manager, stage_file_with_hash,
+    get_file_node, process_add_file_with_staged_db_manager, stage_version_file,
 };
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
 use crate::model::merkle_tree::node::{MerkleTreeNode, StagedMerkleTreeNode};
+use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::user::User;
 use crate::model::workspace::Workspace;
-use crate::model::{Branch, Commit, MerkleHash, StagedEntryStatus};
+use crate::model::{Branch, Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
+use crate::repositories::metadata::{inspect_bytes, inspect_file};
 use crate::util;
+use crate::util::fs::metadata as fs_metadata;
 use crate::view::ErrorFileInfo;
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
@@ -101,12 +105,15 @@ pub(crate) async fn add_version_file_from(
     dst_path: &Path,
     file_hash: MerkleHash,
 ) -> Result<PathBuf, OxenError> {
+    let (data_path, dst_path_buf) = (data_path.to_path_buf(), dst_path.to_path_buf());
+    let file = spawn_blocking(move || {
+        InspectedVersionFile::from_file(dst_path_buf, file_hash, &data_path)
+    })
+    .await??;
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-    stage_file_with_hash(
+    stage_version_file(
         workspace,
-        data_path,
-        dst_path,
-        file_hash,
+        file,
         &staged_db_manager,
         &Arc::new(Mutex::new(HashSet::new())),
     )
@@ -115,20 +122,62 @@ pub(crate) async fn add_version_file_from(
     Ok(dst_path.to_path_buf())
 }
 
-/// A version file to stage at `dst_path`, whose bytes are in a local copy at `data_path`.
-pub struct VersionFileCopy {
-    pub dst_path: PathBuf,
-    pub hash: MerkleHash,
-    pub data_path: PathBuf,
+/// A version file to stage at its destination path, with what staging records about its contents.
+pub struct InspectedVersionFile {
+    pub(crate) dst_path: PathBuf,
+    pub(crate) hash: MerkleHash,
+    pub(crate) num_bytes: u64,
+    pub(crate) mtime: FileTime,
+    pub(crate) mime_type: String,
+    pub(crate) data_type: EntryDataType,
+    pub(crate) metadata: Option<GenericMetadata>,
 }
 
-/// Stage a batch of version files into the workspace, reading each one's bytes from its local
-/// copy. The version store must already hold every file.
+impl InspectedVersionFile {
+    /// Inspect `data`, the bytes of the version file `hash`, to stage at `dst_path`. Blocks while
+    /// it reads them.
+    pub fn from_bytes(dst_path: PathBuf, hash: MerkleHash, data: Bytes) -> Result<Self, OxenError> {
+        let num_bytes = data.len() as u64;
+        let (mime_type, data_type, metadata) = inspect_bytes(data, &dst_path)?;
+        Ok(Self {
+            dst_path,
+            hash,
+            num_bytes,
+            mtime: FileTime::now(),
+            mime_type,
+            data_type,
+            metadata,
+        })
+    }
+
+    /// Inspect `data_path`, a local copy of the version file `hash`, to stage at `dst_path`.
+    /// Blocks while it reads the file.
+    pub fn from_file(
+        dst_path: PathBuf,
+        hash: MerkleHash,
+        data_path: &Path,
+    ) -> Result<Self, OxenError> {
+        let file_metadata = fs_metadata(data_path)?;
+        let (mime_type, data_type, metadata) = inspect_file(data_path, &dst_path)?;
+        Ok(Self {
+            dst_path,
+            hash,
+            num_bytes: file_metadata.len(),
+            mtime: FileTime::from_last_modification_time(&file_metadata),
+            mime_type,
+            data_type,
+            metadata,
+        })
+    }
+}
+
+/// Stage a batch of version files into the workspace. The version store must already hold every
+/// file.
 ///
 /// Returns the destination paths that staged, plus a per-file error for each that did not.
-pub async fn add_version_files_from(
+pub async fn add_version_files(
     workspace: &Workspace,
-    files: Vec<VersionFileCopy>,
+    files: Vec<InspectedVersionFile>,
 ) -> Result<(Vec<PathBuf>, Vec<ErrorFileInfo>), OxenError> {
     let seen_dirs = Arc::new(Mutex::new(HashSet::new()));
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
@@ -136,23 +185,15 @@ pub async fn add_version_files_from(
     let mut staged_paths = Vec::with_capacity(files.len());
     let mut err_files = vec![];
     for file in files {
-        let staged = stage_file_with_hash(
-            workspace,
-            &file.data_path,
-            &file.dst_path,
-            file.hash,
-            &staged_db_manager,
-            &seen_dirs,
-        )
-        .await;
-        match staged {
-            Ok(_) => staged_paths.push(file.dst_path),
+        let (dst_path, hash) = (file.dst_path.clone(), file.hash);
+        match stage_version_file(workspace, file, &staged_db_manager, &seen_dirs).await {
+            Ok(_) => staged_paths.push(dst_path),
             Err(e) => {
                 let error = format!("Failed to add file to staged db: {e}");
                 log::error!("{error}");
                 err_files.push(ErrorFileInfo {
-                    hash: file.hash.to_string(),
-                    path: Some(file.dst_path),
+                    hash: hash.to_string(),
+                    path: Some(dst_path),
                     error,
                 });
             }

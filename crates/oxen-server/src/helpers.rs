@@ -5,16 +5,17 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use actix_web::http::header;
-use actix_web::web::Bytes;
+use actix_web::web::{Bytes, BytesMut};
 use actix_web::{HttpResponse, HttpResponseBuilder};
 use futures_util::stream::{self, Stream, StreamExt as _};
 use liboxen::api::requests::RepoNew;
-use liboxen::constants::STREAMING_BUF_SIZE;
+use liboxen::constants::{STREAMING_BUF_SIZE, stream_segment_size};
 use liboxen::error::OxenError;
 use liboxen::model::{LocalRepository, MerkleHash, User};
 use liboxen::repositories;
 use liboxen::util;
-use liboxen::util::hasher::HashingWriter;
+use liboxen::util::compression::decompress_gzip_capped;
+use liboxen::util::hasher::{HashingWriter, hash_buffer_128bit};
 use liboxen::view::StatusMessage;
 use serde::Serialize;
 use tempfile::NamedTempFile;
@@ -287,6 +288,63 @@ pub(crate) async fn spool_to_temp_file<E: Into<actix_web::Error>>(
     writer
         .await
         .map_err(|e| OxenError::internal_error(format!("spool task panicked: {e}")).into())
+}
+
+/// A request body received in memory or written to a temporary file.
+pub(crate) enum ReceivedBody {
+    /// The body's bytes, after any gunzipping, and their hash.
+    Memory {
+        data: Bytes,
+        hash: MerkleHash,
+    },
+    Spooled(SpooledBody),
+}
+
+impl ReceivedBody {
+    /// The hash of the body's bytes, after any gunzipping.
+    pub(crate) fn hash(&self) -> MerkleHash {
+        match self {
+            ReceivedBody::Memory { hash, .. } => *hash,
+            ReceivedBody::Spooled(spooled) => spooled.hash,
+        }
+    }
+}
+
+/// Receive `body`, keeping it in memory when it arrives in at most `stream_segment_size()` bytes,
+/// gunzipping it when it is gzipped, and hashing it. A longer body is written to a temporary file
+/// in `dir`, as [`spool_to_temp_file`] writes it. The outer error is a failure to read the body, or
+/// a body of more than `max_len` bytes. The inner one is a failure to gunzip the body or to write
+/// the file.
+pub(crate) async fn receive_body<E: Into<actix_web::Error>>(
+    mut body: impl Stream<Item = Result<Bytes, E>> + Unpin,
+    dir: PathBuf,
+    max_len: u64,
+    encoding: BodyEncoding,
+) -> Result<Result<ReceivedBody, OxenError>, OxenHttpError> {
+    let mut received = BytesMut::new();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(Into::<actix_web::Error>::into)?;
+        if (received.len() + chunk.len()) as u64 > stream_segment_size() {
+            let head = stream::iter([Ok(received.freeze()), Ok(chunk)]);
+            let spooled = spool_to_temp_file(head.chain(body), dir, max_len, encoding).await?;
+            return Ok(spooled.map(ReceivedBody::Spooled));
+        }
+        received.extend_from_slice(&chunk);
+    }
+    let received = received.freeze();
+    let decoded = tasks::spawn_blocking_per_item(move || -> Result<ReceivedBody, OxenError> {
+        let data = match encoding {
+            BodyEncoding::Plain => received,
+            BodyEncoding::Gzip { max_decompressed } => {
+                Bytes::from(decompress_gzip_capped(&received, max_decompressed)?)
+            }
+        };
+        let hash = MerkleHash::new(hash_buffer_128bit(&data));
+        Ok(ReceivedBody::Memory { data, hash })
+    });
+    decoded
+        .await
+        .map_err(|e| OxenError::internal_error(format!("decode task panicked: {e}")).into())
 }
 
 #[cfg(test)]

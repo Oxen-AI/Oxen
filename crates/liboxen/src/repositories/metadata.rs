@@ -1,6 +1,7 @@
 //! Helper functions to get metadata from the local filesystem.
 //!
 
+use crate::core::df::tabular::DataFrameSource;
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
@@ -10,8 +11,9 @@ use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, LocalRepository, MetadataEntry};
 use crate::repositories;
 use crate::util;
+use crate::util::fs::{data_type_from_head, file_extension, mime_type_from_head, read_head};
 
-use std::fs::File;
+use bytes::Bytes;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
@@ -139,36 +141,49 @@ pub(crate) fn inspect_file(
     data_path: &Path,
     file_path: &Path,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-    let mut file =
-        File::open(data_path).map_err(|err| OxenError::file_open_error(data_path, err))?;
-    let head =
-        util::fs::read_head(&mut file).map_err(|err| OxenError::file_read_error(data_path, err))?;
-    let mime_type = util::fs::mime_type_from_head(&head, file_path);
-    let data_type = util::fs::data_type_from_head(&head, file_path, &mime_type);
-    let metadata = get_file_metadata_with_extension(
-        &mut file,
-        data_path,
-        &data_type,
-        &util::fs::file_extension(file_path),
-    )?;
+    inspect(&DataFrameSource::Path(data_path), file_path)
+}
+
+/// Reads the MIME type, data type, and metadata of `data`, the bytes of a file named `file_path`.
+/// Gives no metadata for content that cannot be parsed.
+pub(crate) fn inspect_bytes(
+    data: Bytes,
+    file_path: &Path,
+) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
+    inspect(&DataFrameSource::Memory(data), file_path)
+}
+
+fn inspect(
+    source: &DataFrameSource,
+    file_path: &Path,
+) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
+    let mut reader = source.open()?;
+    let head = read_head(&mut reader).map_err(|err| match source {
+        DataFrameSource::Path(data_path) => OxenError::file_read_error(data_path, err),
+        DataFrameSource::Memory(_) => err.into(),
+    })?;
+    let mime_type = mime_type_from_head(&head, file_path);
+    let data_type = data_type_from_head(&head, file_path, &mime_type);
+    let metadata = get_file_metadata(&mut reader, source, file_path, &data_type)?;
     Ok((mime_type, data_type, metadata))
 }
 
-/// Returns the metadata of a file of `data_type`, read from `data` and named with `extension`. A
-/// tabular file's metadata is read from `path` instead, which holds the same bytes as `data`.
-fn get_file_metadata_with_extension(
+/// Returns the metadata of `data`, the bytes of a file of `data_type` named `file_path`. A tabular
+/// file's metadata is read from `data_frame` instead, which holds the same bytes as `data`.
+fn get_file_metadata(
     data: &mut (impl Read + Seek),
-    path: &Path,
+    data_frame: &DataFrameSource,
+    file_path: &Path,
     data_type: &EntryDataType,
-    extension: &str,
 ) -> Result<Option<GenericMetadata>, OxenError> {
+    let extension = file_extension(file_path);
     data.rewind()?;
     match data_type {
         EntryDataType::Text => match text::get_metadata(data) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataText(metadata))),
             Err(err) => {
                 tracing::error!(
-                    file.path = %path.display(),
+                    oxen.file_path = %file_path.display(),
                     exception.message = %err,
                     "Could not compute text metadata"
                 );
@@ -179,7 +194,7 @@ fn get_file_metadata_with_extension(
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataImage(metadata))),
             Err(err) => {
                 tracing::error!(
-                    file.path = %path.display(),
+                    oxen.file_path = %file_path.display(),
                     exception.message = %err,
                     "Could not compute image metadata"
                 );
@@ -190,46 +205,54 @@ fn get_file_metadata_with_extension(
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataVideo(metadata))),
             Err(err) => {
                 tracing::error!(
-                    file.path = %path.display(),
+                    oxen.file_path = %file_path.display(),
                     exception.message = %err,
                     "Could not compute video metadata"
                 );
                 Ok(None)
             }
         },
-        EntryDataType::Audio => match audio::get_metadata(data, extension) {
+        EntryDataType::Audio => match audio::get_metadata(data, &extension) {
             Ok(metadata) => Ok(Some(GenericMetadata::MetadataAudio(metadata))),
             Err(err) => {
                 tracing::error!(
-                    file.path = %path.display(),
+                    oxen.file_path = %file_path.display(),
                     exception.message = %err,
                     "Could not compute audio metadata"
                 );
                 Ok(None)
             }
         },
-        EntryDataType::Tabular => match tabular::get_metadata_with_extension(path, extension) {
-            Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
-            Err(err) => {
-                tracing::error!(
-                    file.path = %path.display(),
-                    exception.message = %err,
-                    "Could not compute tabular metadata"
-                );
-                Ok(None)
+        EntryDataType::Tabular => {
+            match tabular::get_metadata_with_extension(data_frame, &extension) {
+                Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
+                Err(err) => {
+                    tracing::error!(
+                        oxen.file_path = %file_path.display(),
+                        exception.message = %err,
+                        "Could not compute tabular metadata"
+                    );
+                    Ok(None)
+                }
             }
-        },
+        }
         _ => Ok(None),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{inspect_bytes, inspect_file};
+    use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::model::EntryDataType;
     use crate::repositories;
     use crate::test;
     use crate::util;
+    use crate::util::hasher::maybe_get_metadata_hash;
+    use bytes::Bytes;
+    use polars::df;
+    use std::fs;
     use std::path::Path;
 
     #[tokio::test]
@@ -242,6 +265,46 @@ mod tests {
         assert_eq!(metadata.size, 37096);
         assert_eq!(metadata.data_type, EntryDataType::Audio);
         assert_eq!(metadata.mime_type, "audio/x-flac");
+    }
+
+    #[test]
+    fn test_inspect_bytes_matches_inspect_file() -> Result<(), OxenError> {
+        test::run_empty_dir_test(|dir| {
+            let arrow = dir.join("frame.arrow");
+            tabular::write_df(
+                &mut df!("id" => [1, 2, 3], "label" => ["a", "b", "c"])?,
+                &arrow,
+            )?;
+            let files = [
+                test::test_csv_file_with_name("mixed_data_types.csv"),
+                test::test_spam_ham(),
+                test::test_text_jsonl(),
+                test::test_text_json(),
+                test::test_1k_parquet(),
+                arrow,
+                test::test_img_file_with_name("cat_1.jpg"),
+                test::test_audio_file_with_name("121-121726-0005.wav"),
+                test::test_video_file_with_name("basketball.mp4"),
+                test::test_text_file_with_name("hello.txt"),
+            ];
+            for file in files {
+                let (mime_type, data_type, metadata) = inspect_file(&file, &file)?;
+                assert!(metadata.is_some(), "{file:?} has metadata to compare");
+                let (bytes_mime_type, bytes_data_type, bytes_metadata) =
+                    inspect_bytes(Bytes::from(fs::read(&file)?), &file)?;
+                assert_eq!(
+                    (bytes_mime_type, bytes_data_type),
+                    (mime_type, data_type),
+                    "{file:?}"
+                );
+                assert_eq!(
+                    maybe_get_metadata_hash(&bytes_metadata)?,
+                    maybe_get_metadata_hash(&metadata)?,
+                    "{file:?} gets the same metadata from memory as from the file"
+                );
+            }
+            Ok(())
+        })
     }
 
     #[tokio::test]

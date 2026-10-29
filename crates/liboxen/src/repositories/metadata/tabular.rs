@@ -1,7 +1,7 @@
 //! Helper functions to get metadata from tabular files.
 //!
 
-use crate::core::df::tabular;
+use crate::core::df::tabular::{self, DataFrameSource};
 use crate::error::OxenError;
 use crate::model::metadata::MetadataTabular;
 
@@ -15,13 +15,13 @@ pub fn get_metadata(path: impl AsRef<Path>) -> Result<MetadataTabular, OxenError
     Ok(MetadataTabular::new(size.width, size.height, schema))
 }
 
-pub fn get_metadata_with_extension(
-    path: impl AsRef<Path>,
+/// Detects the tabular metadata of `source`, a file with `extension`.
+pub(crate) fn get_metadata_with_extension(
+    source: &DataFrameSource,
     extension: &str,
 ) -> Result<MetadataTabular, OxenError> {
-    let path = path.as_ref();
-    let size = tabular::get_size_with_extension(path, Some(extension))?;
-    let schema = tabular::get_schema_with_extension(path, Some(extension))?;
+    let size = tabular::get_size_with_extension(source, Some(extension))?;
+    let schema = tabular::get_schema_with_extension(source, Some(extension))?;
     Ok(MetadataTabular::new(size.width, size.height, schema))
 }
 
