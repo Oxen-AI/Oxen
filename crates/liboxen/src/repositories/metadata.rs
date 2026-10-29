@@ -468,6 +468,27 @@ pub(crate) async fn inspect_stored(
                 "Could not compute tabular metadata",
             )?
         }
+        // A JSON data frame is parsed whole, so its bytes are fetched on the runtime.
+        (EntryDataType::Tabular, None) if extension == "json" => {
+            let data = Bytes::from(
+                version
+                    .bytes
+                    .store
+                    .get_version(&version.bytes.hash.to_string())
+                    .await?,
+            );
+            let tabular = spawn_blocking(move || {
+                tabular::get_metadata_with_extension(&ByteSource::Memory(data), "json")
+            })
+            .await?
+            .map(GenericMetadata::MetadataTabular);
+            settle(
+                tabular,
+                &ByteSource::Stored(&version),
+                file_path,
+                "Could not compute tabular metadata",
+            )?
+        }
         (
             EntryDataType::Image
             | EntryDataType::Video
