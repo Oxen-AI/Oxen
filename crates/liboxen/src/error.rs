@@ -1348,8 +1348,8 @@ impl OxenError {
     }
 
     pub fn must_supply_valid_api_key() -> OxenError {
-        OxenError::basic_str(
-            "Must supply valid API key. Create an account at https://oxen.ai and then set the API key with:\n\n  oxen config --auth hub.oxen.ai <API_KEY>\n",
+        OxenError::authentication(
+            "Must supply a valid API key. Obtain one at https://oxen.ai or ask your system admin.",
         )
     }
 
