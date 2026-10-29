@@ -1,7 +1,6 @@
 use bytes::Bytes;
 use duckdb::ToSql;
 use polars::io::cloud::CloudOptions;
-use polars::io::mmap::MmapBytesReader;
 use polars::polars_utils::slice_enum::Slice;
 use polars::prelude::DataType as PolarsDataType;
 use polars::prelude::*;
@@ -10,8 +9,6 @@ use qsv_sniffer::error::SnifferError;
 use qsv_sniffer::metadata::Metadata as SniffedCsv;
 use serde_json::json;
 use std::collections::HashSet;
-use std::fmt;
-use std::fs::File;
 use std::num::NonZeroUsize;
 use tokio::task;
 
@@ -27,6 +24,7 @@ use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::opts::{CountLinesOpts, DFOpts};
 use crate::repositories;
+use crate::repositories::metadata::ByteSource;
 use crate::storage::{VersionLocation, VersionStore};
 use crate::util::fs;
 use crate::util::fs::AtomicFile;
@@ -44,19 +42,13 @@ use super::filter::{DFFilterExp, DFFilterOp, DFFilterVal};
 
 const READ_ERROR: &str = "Could not read tabular data";
 
-/// The bytes of a data frame, in a file or in memory.
-pub(crate) enum DataFrameSource<'a> {
-    Path(&'a Path),
-    Memory(Bytes),
-}
-
-impl DataFrameSource<'_> {
+impl ByteSource<'_> {
     fn scan_sources(&self) -> Result<ScanSources, OxenError> {
         match self {
-            DataFrameSource::Path(path) => {
+            ByteSource::Path(path) => {
                 Ok(ScanSource::Path(PlRefPath::try_from_path(path)?).into_sources())
             }
-            DataFrameSource::Memory(data) => {
+            ByteSource::Memory(data) => {
                 Ok(ScanSource::Buffer(Buffer::from_owner(data.clone())).into_sources())
             }
         }
@@ -65,35 +57,17 @@ impl DataFrameSource<'_> {
     /// The hive partitioning to scan with: as for any file, or off for bytes in memory.
     fn hive_options(&self) -> HiveOptions {
         match self {
-            DataFrameSource::Path(_) => HiveOptions::default(),
-            DataFrameSource::Memory(_) => HiveOptions::new_disabled(),
-        }
-    }
-
-    pub(crate) fn open(&self) -> Result<Box<dyn MmapBytesReader>, OxenError> {
-        match self {
-            DataFrameSource::Path(path) => Ok(Box::new(
-                File::open(path).map_err(|err| OxenError::file_open_error(path, err))?,
-            )),
-            DataFrameSource::Memory(data) => Ok(Box::new(Cursor::new(data.clone()))),
+            ByteSource::Path(_) => HiveOptions::default(),
+            ByteSource::Memory(_) => HiveOptions::new_disabled(),
         }
     }
 
     fn sniff(&self) -> Result<SniffedCsv, SnifferError> {
         match self {
-            DataFrameSource::Path(path) => qsv_sniffer::Sniffer::new().sniff_path(path),
-            DataFrameSource::Memory(data) => {
+            ByteSource::Path(path) => qsv_sniffer::Sniffer::new().sniff_path(path),
+            ByteSource::Memory(data) => {
                 qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(data.clone()))
             }
-        }
-    }
-}
-
-impl fmt::Debug for DataFrameSource<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DataFrameSource::Path(path) => write!(f, "{path:?}"),
-            DataFrameSource::Memory(data) => write!(f, "{} bytes in memory", data.len()),
         }
     }
 }
@@ -148,11 +122,11 @@ fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
 }
 
 fn read_df_json(path: &Path) -> Result<LazyFrame, OxenError> {
-    read_json(&DataFrameSource::Path(path))
+    read_json(&ByteSource::Path(path))
 }
 
 /// Read a JSON array, which cannot be scanned lazily, so the whole array is read.
-fn read_json(source: &DataFrameSource) -> Result<LazyFrame, OxenError> {
+fn read_json(source: &ByteSource) -> Result<LazyFrame, OxenError> {
     let df = JsonReader::new(source.open()?)
         .infer_schema_len(Some(NonZeroUsize::new(10000).unwrap()))
         .finish()
@@ -203,7 +177,7 @@ pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
 }
 
 fn scan_df_csv(
-    source: &DataFrameSource,
+    source: &ByteSource,
     delimiter: u8,
     quote_char: Option<u8>,
     total_rows: usize,
@@ -214,14 +188,14 @@ fn scan_df_csv(
         .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
 }
 
-fn scan_df_jsonl(source: &DataFrameSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
+fn scan_df_jsonl(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
     lazy_jsonl_reader(source.scan_sources()?)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
 }
 
-fn scan_df_parquet(source: &DataFrameSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
+fn scan_df_parquet(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
     let args = ScanArgsParquet {
         n_rows: Some(total_rows),
         hive_options: source.hive_options(),
@@ -234,7 +208,7 @@ fn scan_df_parquet(source: &DataFrameSource, total_rows: usize) -> Result<LazyFr
     })
 }
 
-fn scan_df_arrow(source: &DataFrameSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
+fn scan_df_arrow(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
     LazyFrame::scan_ipc_sources(
         source.scan_sources()?,
         IpcScanOptions::default(),
@@ -1068,7 +1042,7 @@ fn build_csv_dialect<E: std::fmt::Debug>(
     }
 }
 
-fn sniff_csv_dialect(source: &DataFrameSource, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
+fn sniff_csv_dialect(source: &ByteSource, opts: &DFOpts) -> Result<CsvDialect, OxenError> {
     let (user_delimiter, user_quote) = parse_user_csv_opts(opts)?;
     if let (Some(delimiter), Some(_)) = (user_delimiter, user_quote) {
         return Ok(CsvDialect {
@@ -1144,11 +1118,11 @@ async fn _read_lazy_df_with_extension(
             "ndjson" | "jsonl" => read_df_jsonl(&path),
             "json" => read_df_json(&path),
             "csv" | "data" => {
-                let dialect = sniff_csv_dialect(&DataFrameSource::Path(&path), &opts_clone)?;
+                let dialect = sniff_csv_dialect(&ByteSource::Path(&path), &opts_clone)?;
                 read_df_csv(&path, dialect.delimiter, dialect.quote_char)
             }
             "tsv" => {
-                let dialect = sniff_csv_dialect(&DataFrameSource::Path(&path), &opts_clone)?;
+                let dialect = sniff_csv_dialect(&ByteSource::Path(&path), &opts_clone)?;
                 read_df_csv(&path, b'\t', dialect.quote_char)
             }
             "parquet" => read_df_parquet(&path),
@@ -1284,7 +1258,7 @@ async fn read_s3_version_df(
             // `JsonReader` is byte-stream only (no cloud reader), so pull the bytes through the
             // store and parse them in memory.
             let bytes = Bytes::from(version_store.get_version(hash).await?);
-            task::spawn_blocking(move || read_json(&DataFrameSource::Memory(bytes))).await??
+            task::spawn_blocking(move || read_json(&ByteSource::Memory(bytes))).await??
         }
         "csv" | "data" | "tsv" => {
             // `.tsv` pins the tab delimiter; only the quote character is sniffed.
@@ -1422,16 +1396,11 @@ pub fn scan_df(
     let input_path = path.as_ref();
     log::debug!("Scanning df {input_path:?}");
     let extension = input_path.extension().and_then(OsStr::to_str);
-    scan_df_with_extension(
-        &DataFrameSource::Path(input_path),
-        extension,
-        opts,
-        total_rows,
-    )
+    scan_df_with_extension(&ByteSource::Path(input_path), extension, opts, total_rows)
 }
 
 fn scan_df_with_extension(
-    source: &DataFrameSource,
+    source: &ByteSource,
     extension: Option<&str>,
     opts: &DFOpts,
     total_rows: usize,
@@ -1466,11 +1435,11 @@ fn scan_df_with_extension(
 pub fn get_size(path: impl AsRef<Path>) -> Result<DataFrameSize, OxenError> {
     let input_path = path.as_ref();
     let extension = input_path.extension().and_then(OsStr::to_str);
-    get_size_with_extension(&DataFrameSource::Path(input_path), extension)
+    get_size_with_extension(&ByteSource::Path(input_path), extension)
 }
 
 pub(crate) fn get_size_with_extension(
-    source: &DataFrameSource,
+    source: &ByteSource,
     extension: Option<&str>,
 ) -> Result<DataFrameSize, OxenError> {
     tracing::debug!(
@@ -1669,7 +1638,7 @@ pub async fn show_path(input: impl AsRef<Path>, opts: DFOpts) -> Result<DataFram
 }
 
 pub(crate) fn get_schema_with_extension(
-    source: &DataFrameSource,
+    source: &ByteSource,
     extension: Option<&str>,
 ) -> Result<crate::model::Schema, OxenError> {
     let opts = DFOpts::empty();
@@ -2016,7 +1985,7 @@ mod tests {
 
             // A row limit is pushed down as the same kind of slice.
             let scanned = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-                tabular::scan_df_jsonl(&DataFrameSource::Path(&path), 3)?
+                tabular::scan_df_jsonl(&ByteSource::Path(&path), 3)?
                     .collect()
                     .map_err(OxenError::from)
             })
@@ -2087,7 +2056,7 @@ mod tests {
     async fn test_slice_parquet_lazy() -> Result<(), OxenError> {
         let mut opts = DFOpts::empty();
         opts.slice = Some(SliceRange::new(329, 333)?);
-        let df = tabular::scan_df_parquet(&DataFrameSource::Path(&test::test_1k_parquet()), 333)?;
+        let df = tabular::scan_df_parquet(&ByteSource::Path(&test::test_1k_parquet()), 333)?;
         let df = tabular::transform_lazy(df, opts.clone()).await?;
 
         let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
@@ -2174,7 +2143,7 @@ mod tests {
     #[test]
     fn test_sniff_csv_dialect_detects_quote_char() -> Result<(), OxenError> {
         let dialect = sniff_csv_dialect(
-            &DataFrameSource::Path(
+            &ByteSource::Path(
                 &TEST_DATA_DIR
                     .join("test")
                     .join("csvs")
@@ -2190,7 +2159,7 @@ mod tests {
     #[test]
     fn test_reject_empty_quote() -> Result<(), OxenError> {
         let r = sniff_csv_dialect(
-            &DataFrameSource::Path(
+            &ByteSource::Path(
                 &TEST_DATA_DIR
                     .join("test")
                     .join("csvs")

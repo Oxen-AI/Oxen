@@ -1,7 +1,6 @@
 //! Helper functions to get metadata from the local filesystem.
 //!
 
-use crate::core::df::tabular::DataFrameSource;
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
@@ -14,7 +13,10 @@ use crate::util;
 use crate::util::fs::{data_type_from_head, file_extension, mime_type_from_head, read_head};
 
 use bytes::Bytes;
-use std::io::{Read, Seek};
+use polars::io::mmap::MmapBytesReader;
+use std::fmt;
+use std::fs::File;
+use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 
 pub mod audio;
@@ -134,6 +136,32 @@ pub fn get_file_size(path: impl AsRef<Path>) -> Result<u64, OxenError> {
     Ok(metadata.len())
 }
 
+/// A file's bytes, in a file at a path or in memory.
+pub(crate) enum ByteSource<'a> {
+    Path(&'a Path),
+    Memory(Bytes),
+}
+
+impl ByteSource<'_> {
+    pub(crate) fn open(&self) -> Result<Box<dyn MmapBytesReader>, OxenError> {
+        match self {
+            ByteSource::Path(path) => Ok(Box::new(
+                File::open(path).map_err(|err| OxenError::file_open_error(path, err))?,
+            )),
+            ByteSource::Memory(data) => Ok(Box::new(Cursor::new(data.clone()))),
+        }
+    }
+}
+
+impl fmt::Debug for ByteSource<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ByteSource::Path(path) => write!(f, "{path:?}"),
+            ByteSource::Memory(data) => write!(f, "{} bytes in memory", data.len()),
+        }
+    }
+}
+
 /// Reads the MIME type, data type, and metadata of the file at `data_path`, whose name is
 /// `file_path`. Fails when the file cannot be opened or read, and gives no metadata for content
 /// that cannot be parsed.
@@ -141,7 +169,7 @@ pub(crate) fn inspect_file(
     data_path: &Path,
     file_path: &Path,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-    inspect(&DataFrameSource::Path(data_path), file_path)
+    inspect(&ByteSource::Path(data_path), file_path)
 }
 
 /// Reads the MIME type, data type, and metadata of `data`, the bytes of a file named `file_path`.
@@ -150,17 +178,17 @@ pub(crate) fn inspect_bytes(
     data: Bytes,
     file_path: &Path,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-    inspect(&DataFrameSource::Memory(data), file_path)
+    inspect(&ByteSource::Memory(data), file_path)
 }
 
 fn inspect(
-    source: &DataFrameSource,
+    source: &ByteSource,
     file_path: &Path,
 ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
     let mut reader = source.open()?;
     let head = read_head(&mut reader).map_err(|err| match source {
-        DataFrameSource::Path(data_path) => OxenError::file_read_error(data_path, err),
-        DataFrameSource::Memory(_) => err.into(),
+        ByteSource::Path(data_path) => OxenError::file_read_error(data_path, err),
+        ByteSource::Memory(_) => err.into(),
     })?;
     let mime_type = mime_type_from_head(&head, file_path);
     let data_type = data_type_from_head(&head, file_path, &mime_type);
@@ -169,10 +197,10 @@ fn inspect(
 }
 
 /// Returns the metadata of `data`, the bytes of a file of `data_type` named `file_path`. A tabular
-/// file's metadata is read from `data_frame` instead, which holds the same bytes as `data`.
+/// file's metadata is read from `source` instead, which holds the same bytes as `data`.
 fn get_file_metadata(
     data: &mut (impl Read + Seek),
-    data_frame: &DataFrameSource,
+    source: &ByteSource,
     file_path: &Path,
     data_type: &EntryDataType,
 ) -> Result<Option<GenericMetadata>, OxenError> {
@@ -223,19 +251,17 @@ fn get_file_metadata(
                 Ok(None)
             }
         },
-        EntryDataType::Tabular => {
-            match tabular::get_metadata_with_extension(data_frame, &extension) {
-                Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
-                Err(err) => {
-                    tracing::error!(
-                        oxen.file_path = %file_path.display(),
-                        exception.message = %err,
-                        "Could not compute tabular metadata"
-                    );
-                    Ok(None)
-                }
+        EntryDataType::Tabular => match tabular::get_metadata_with_extension(source, &extension) {
+            Ok(metadata) => Ok(Some(GenericMetadata::MetadataTabular(metadata))),
+            Err(err) => {
+                tracing::error!(
+                    oxen.file_path = %file_path.display(),
+                    exception.message = %err,
+                    "Could not compute tabular metadata"
+                );
+                Ok(None)
             }
-        }
+        },
         _ => Ok(None),
     }
 }
