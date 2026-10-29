@@ -37,9 +37,10 @@ use crate::model::workspace::Workspace;
 use crate::model::{Branch, Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
-use crate::repositories::metadata::{inspect_bytes, inspect_file};
+use crate::repositories::metadata::{StoredVersion, inspect_bytes, inspect_file, inspect_stored};
+use crate::storage::VersionLocation;
 use crate::util;
-use crate::util::fs::metadata as fs_metadata;
+use crate::util::fs::{LineCounts, metadata as fs_metadata};
 use crate::view::ErrorFileInfo;
 
 const BUFFER_SIZE_THRESHOLD: usize = 262144; // 256kb
@@ -84,32 +85,54 @@ pub async fn add_version_file(
     dst_path: impl AsRef<Path>,
     file_hash: &str,
 ) -> Result<PathBuf, OxenError> {
-    let dst_path = dst_path.as_ref();
-    let hash = file_hash.parse()?;
-
-    // Materialize the version blob so the staging metadata computation has a local file to read.
-    // The returned guard cleans up any temp file once staging has read it.
-    let version_path = workspace
+    let size = workspace
         .base_repo
         .version_store()
-        .materialize(file_hash, &workspace.dir())
+        .get_version_size(file_hash)
         .await?;
-    add_version_file_from(workspace, &version_path, dst_path, hash).await
+    add_stored_version_file(workspace, dst_path.as_ref(), file_hash.parse()?, size, None).await
 }
 
-/// Stage the version file `file_hash` at `dst_path`, reading its bytes from `data_path`, a local
-/// copy of them.
-pub(crate) async fn add_version_file_from(
+/// Stage the version file `file_hash`, `size` bytes long, which the store has, at `dst_path`,
+/// reading what its metadata needs from the store. `lines` are its line counts, when they were
+/// taken as it arrived.
+pub(crate) async fn add_stored_version_file(
     workspace: &Workspace,
-    data_path: &Path,
     dst_path: &Path,
     file_hash: MerkleHash,
+    size: u64,
+    lines: Option<LineCounts>,
 ) -> Result<PathBuf, OxenError> {
-    let (data_path, dst_path_buf) = (data_path.to_path_buf(), dst_path.to_path_buf());
-    let file = spawn_blocking(move || {
-        InspectedVersionFile::from_file(dst_path_buf, file_hash, &data_path)
-    })
-    .await??;
+    let store = workspace.base_repo.version_store();
+    let dst_path_buf = dst_path.to_path_buf();
+    let file = match store.version_location(&file_hash.to_string()).await? {
+        VersionLocation::Local(data_path) => {
+            spawn_blocking(move || {
+                InspectedVersionFile::from_file(dst_path_buf, file_hash, &data_path)
+            })
+            .await??
+        }
+        VersionLocation::S3 {
+            url,
+            region,
+            endpoint_url,
+        } => {
+            let version = StoredVersion::new(
+                store,
+                file_hash,
+                size,
+                url,
+                &region,
+                endpoint_url.as_deref(),
+                lines,
+            )
+            .await?;
+            spawn_blocking(move || {
+                InspectedVersionFile::from_stored(dst_path_buf, file_hash, version)
+            })
+            .await??
+        }
+    };
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     stage_version_file(
         workspace,
@@ -139,6 +162,26 @@ impl InspectedVersionFile {
     pub fn from_bytes(dst_path: PathBuf, hash: MerkleHash, data: Bytes) -> Result<Self, OxenError> {
         let num_bytes = data.len() as u64;
         let (mime_type, data_type, metadata) = inspect_bytes(data, &dst_path)?;
+        Ok(Self {
+            dst_path,
+            hash,
+            num_bytes,
+            mtime: FileTime::now(),
+            mime_type,
+            data_type,
+            metadata,
+        })
+    }
+
+    /// Inspect `version`, the version file `hash` in an S3 store, to stage at `dst_path`. Blocks
+    /// while it reads what the metadata needs from the store.
+    pub(crate) fn from_stored(
+        dst_path: PathBuf,
+        hash: MerkleHash,
+        version: StoredVersion,
+    ) -> Result<Self, OxenError> {
+        let num_bytes = version.size();
+        let (mime_type, data_type, metadata) = inspect_stored(&version, &dst_path)?;
         Ok(Self {
             dst_path,
             hash,

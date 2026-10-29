@@ -19,7 +19,6 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::future::join_all;
 use parking_lot::Mutex;
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -30,7 +29,7 @@ use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 use crate::repositories::workspaces;
 use crate::storage::{StorageKind, VersionLocation, VersionUpload, s3};
-use crate::util;
+use crate::util::fs::LineCounts;
 use crate::view::versions::WorkspaceDestination;
 
 /// The most memory one upload's parts take at once, 1 GiB. It always admits one part, the largest
@@ -77,9 +76,6 @@ pub struct Upload {
     /// needs a part may arrive.
     part_window: u64,
     destination: Option<WorkspaceDestination>,
-    /// A copy of the file on the data volume to stage from, kept when the upload stages into a
-    /// workspace and its storage keeps the file somewhere other than the local disk.
-    staging_copy: Option<Arc<NamedTempFile>>,
     storage: Box<dyn VersionUpload>,
     progress: Mutex<Progress>,
     _write: WriteInFlight,
@@ -87,7 +83,7 @@ pub struct Upload {
 
 struct Progress {
     /// `None` while a run of parts is being hashed.
-    hasher: Option<Xxh3>,
+    tally: Option<Tally>,
     /// The first part not yet in the hash.
     hashed_to: u64,
     /// The first part not yet taken for hashing. Every part before it was received.
@@ -97,6 +93,13 @@ struct Progress {
     early: BTreeMap<u64, Bytes>,
     last_active_at: Instant,
     ended: bool,
+}
+
+/// What an upload works out from its bytes in order: their hash, and their line counts when it
+/// stages into a workspace from storage that keeps the file off the local disk.
+struct Tally {
+    hasher: Xxh3,
+    lines: Option<LineCounts>,
 }
 
 /// A part of an upload admitted for storing. While it lives, the upload is not idle and no other
@@ -156,9 +159,21 @@ impl Upload {
         let write = repo_locks::begin_write(repo)?;
         let store = repo.version_store();
         let hash = expected_hash.to_string();
-        if store.version_exists(&hash).await? {
+        let stored_size = match store.get_version_size(&hash).await {
+            Ok(stored_size) => Some(stored_size),
+            Err(OxenError::VersionStoreBlobMissing { .. }) => None,
+            Err(err) => return Err(err),
+        };
+        if let Some(stored_size) = stored_size {
             if let (Some(workspace), Some(destination)) = (&workspace, &destination) {
-                files::add_version_file(workspace, &destination.path, &hash).await?;
+                files::add_stored_version_file(
+                    workspace,
+                    &destination.path,
+                    expected_hash,
+                    stored_size,
+                    None,
+                )
+                .await?;
             }
             return Ok(UploadStart::AlreadyStored);
         }
@@ -173,20 +188,7 @@ impl Upload {
             store.version_location(&hash).await?,
             VersionLocation::Local(_)
         );
-        let staging_copy = match workspace {
-            Some(workspace) if !stored_locally => {
-                let dir = workspace.dir();
-                let copy = tokio::task::spawn_blocking(move || {
-                    util::fs::create_dir_all(&dir)?;
-                    let copy = NamedTempFile::new_in(&dir)?;
-                    copy.as_file().set_len(size)?;
-                    Ok::<_, OxenError>(copy)
-                })
-                .await??;
-                Some(Arc::new(copy))
-            }
-            _ => None,
-        };
+        let lines = (workspace.is_some() && !stored_locally).then(|| LineCounts::new(true));
         let storage = store
             .begin_version_upload(expected_hash, size, part_size)
             .await?;
@@ -199,10 +201,12 @@ impl Upload {
             num_parts: size.div_ceil(part_size),
             part_window: (memory / part_size).max(1),
             destination,
-            staging_copy,
             storage,
             progress: Mutex::new(Progress {
-                hasher: Some(Xxh3::new()),
+                tally: Some(Tally {
+                    hasher: Xxh3::new(),
+                    lines,
+                }),
                 hashed_to: 1,
                 taken_to: 1,
                 in_flight: HashSet::new(),
@@ -291,12 +295,18 @@ impl Upload {
     }
 
     /// Hash `taken`, a run of parts that continues the hash, and every run that continues it in
-    /// turn. Returns the digest of the whole file once every part is hashed.
-    fn hash_runs(&self, taken: (Xxh3, Vec<Bytes>)) -> Result<Option<MerkleHash>, OxenError> {
-        let (mut hasher, mut run) = taken;
+    /// turn. Returns the digest of the whole file and its line counts once every part is hashed.
+    fn hash_runs(
+        &self,
+        taken: (Tally, Vec<Bytes>),
+    ) -> Result<Option<(MerkleHash, Option<LineCounts>)>, OxenError> {
+        let (mut tally, mut run) = taken;
         loop {
             for part in &run {
-                hasher.update(part);
+                tally.hasher.update(part);
+                if let Some(lines) = &mut tally.lines {
+                    lines.add(part);
+                }
             }
             let mut progress = self.progress.lock();
             if progress.ended {
@@ -305,18 +315,26 @@ impl Upload {
             progress.hashed_to = progress.taken_to;
             if progress.hashed_to > self.num_parts {
                 progress.ended = true;
-                return Ok(Some(MerkleHash::new(hasher.digest128())));
+                return Ok(Some((
+                    MerkleHash::new(tally.hasher.digest128()),
+                    tally.lines,
+                )));
             }
-            progress.hasher = Some(hasher);
+            progress.tally = Some(tally);
             match progress.take_run() {
-                Some(next) => (hasher, run) = next,
+                Some(next) => (tally, run) = next,
                 None => return Ok(None),
             }
         }
     }
 
-    /// Publish the file once its digest is known, and stage it at the upload's destination.
-    async fn complete(&self, actual_hash: MerkleHash) -> Result<(), OxenError> {
+    /// Publish the file once its digest is known, and stage it at the upload's destination, with
+    /// `lines`, its line counts, when they were taken.
+    async fn complete(
+        &self,
+        actual_hash: MerkleHash,
+        lines: Option<LineCounts>,
+    ) -> Result<(), OxenError> {
         UPLOADS.lock().remove(&self.id);
         if actual_hash != self.expected_hash {
             self.abort().await;
@@ -332,21 +350,14 @@ impl Upload {
         let workspace = workspaces::get_async(&self.repo, &destination.workspace_id)
             .await?
             .ok_or_else(|| OxenError::WorkspaceNotFound(destination.workspace_id.clone().into()))?;
-        match &self.staging_copy {
-            Some(copy) => {
-                files::add_version_file_from(
-                    &workspace,
-                    copy.path(),
-                    &destination.path,
-                    self.expected_hash,
-                )
-                .await?
-            }
-            None => {
-                let hash = self.expected_hash.to_string();
-                files::add_version_file(&workspace, &destination.path, &hash).await?
-            }
-        };
+        files::add_stored_version_file(
+            &workspace,
+            &destination.path,
+            self.expected_hash,
+            self.size,
+            lines,
+        )
+        .await?;
         Ok(())
     }
 
@@ -405,19 +416,10 @@ impl ReceivingPart {
             )));
         }
 
-        let offset = (part_number - 1) * upload.part_size;
-        let copied = async {
-            let Some(copy) = upload.staging_copy.clone() else {
-                return Ok(());
-            };
-            let data = data.clone();
-            tokio::task::spawn_blocking(move || util::fs::write_at(copy.path(), offset, &data))
-                .await?
-        };
-        tokio::try_join!(
-            upload.storage.upload_part(part_number, data.clone()),
-            copied
-        )?;
+        upload
+            .storage
+            .upload_part(part_number, data.clone())
+            .await?;
 
         // Hash the part, and any parts that arrived early that it unblocks, off the async worker.
         let taken = {
@@ -434,8 +436,8 @@ impl ReceivingPart {
         let hashing = Arc::clone(upload);
         match tokio::task::spawn_blocking(move || hashing.hash_runs(taken)).await?? {
             None => Ok(PartStored::Pending),
-            Some(actual_hash) => {
-                upload.complete(actual_hash).await?;
+            Some((actual_hash, lines)) => {
+                upload.complete(actual_hash, lines).await?;
                 Ok(PartStored::Completed)
             }
         }
@@ -443,20 +445,20 @@ impl ReceivingPart {
 }
 
 impl Progress {
-    /// Take the hasher and the run of early parts that continues the hash, when the hasher is
-    /// free and the run is not empty.
-    fn take_run(&mut self) -> Option<(Xxh3, Vec<Bytes>)> {
-        let hasher = self.hasher.take()?;
+    /// Take the tally and the run of early parts that continues the hash, when the tally is free
+    /// and the run is not empty.
+    fn take_run(&mut self) -> Option<(Tally, Vec<Bytes>)> {
+        let tally = self.tally.take()?;
         let mut run = Vec::new();
         while let Some(part) = self.early.remove(&self.taken_to) {
             run.push(part);
             self.taken_to += 1;
         }
         if run.is_empty() {
-            self.hasher = Some(hasher);
+            self.tally = Some(tally);
             return None;
         }
-        Some((hasher, run))
+        Some((tally, run))
     }
 }
 

@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use duckdb::ToSql;
 use polars::io::cloud::CloudOptions;
+use polars::io::csv::read::count_rows_from_slice_par;
 use polars::polars_utils::slice_enum::Slice;
 use polars::prelude::DataType as PolarsDataType;
 use polars::prelude::*;
 use polars_buffer::Buffer;
-use qsv_sniffer::error::SnifferError;
 use qsv_sniffer::metadata::Metadata as SniffedCsv;
 use serde_json::json;
 use std::collections::HashSet;
@@ -24,10 +24,9 @@ use crate::model::data_frame::schema::DataType;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::opts::{CountLinesOpts, DFOpts};
 use crate::repositories;
-use crate::repositories::metadata::ByteSource;
+use crate::repositories::metadata::{ByteSource, MIN_FETCH, StoredVersion};
 use crate::storage::{VersionLocation, VersionStore};
-use crate::util::fs;
-use crate::util::fs::AtomicFile;
+use crate::util::fs::{AtomicFile, read_first_n_bytes};
 use crate::util::hasher;
 use std::sync::Arc;
 
@@ -42,6 +41,11 @@ use super::filter::{DFFilterExp, DFFilterOp, DFFilterVal};
 
 const READ_ERROR: &str = "Could not read tabular data";
 
+/// How many rows a CSV's schema is inferred from.
+const CSV_INFER_SCHEMA_LENGTH: usize = 10_000;
+/// The most of a stored CSV fetched into memory to infer its schema from, 64 MiB.
+const MAX_CSV_HEAD_LEN: u64 = 64 * 1024 * 1024;
+
 impl ByteSource<'_> {
     fn scan_sources(&self) -> Result<ScanSources, OxenError> {
         match self {
@@ -51,24 +55,36 @@ impl ByteSource<'_> {
             ByteSource::Memory(data) => {
                 Ok(ScanSource::Buffer(Buffer::from_owner(data.clone())).into_sources())
             }
+            ByteSource::Stored(version) => {
+                Ok(ScanSource::Path(PlRefPath::new(&version.url)).into_sources())
+            }
         }
     }
 
-    /// The hive partitioning to scan with: as for any file, or off for bytes in memory.
+    /// The options a scan needs to reach the bytes, for a version file in S3.
+    fn cloud_options(&self) -> Option<CloudOptions> {
+        match self {
+            ByteSource::Stored(version) => Some(version.cloud_options.clone()),
+            ByteSource::Path(_) | ByteSource::Memory(_) => None,
+        }
+    }
+
+    /// The hive partitioning to scan with: as for any file, or off for bytes in memory or in S3.
     fn hive_options(&self) -> HiveOptions {
         match self {
             ByteSource::Path(_) => HiveOptions::default(),
-            ByteSource::Memory(_) => HiveOptions::new_disabled(),
+            ByteSource::Memory(_) | ByteSource::Stored(_) => HiveOptions::new_disabled(),
         }
     }
 
-    fn sniff(&self) -> Result<SniffedCsv, SnifferError> {
-        match self {
-            ByteSource::Path(path) => qsv_sniffer::Sniffer::new().sniff_path(path),
-            ByteSource::Memory(data) => {
-                qsv_sniffer::Sniffer::new().sniff_reader(Cursor::new(data.clone()))
-            }
-        }
+    /// The CSV dialect sniffed from the first [`CSV_SNIFF_SAMPLE_BYTES`] of the bytes.
+    fn sniff(&self) -> Result<SniffedCsv, OxenError> {
+        let sample = read_first_n_bytes(&mut self.open()?, CSV_SNIFF_SAMPLE_BYTES)?;
+        qsv_sniffer::Sniffer::new()
+            .sniff_reader(Cursor::new(sample))
+            .map_err(|err| {
+                OxenError::internal_error(format!("Could not sniff a CSV dialect: {err}"))
+            })
     }
 }
 
@@ -79,7 +95,7 @@ fn base_lazy_csv_reader(
 ) -> LazyCsvReader {
     let reader = LazyCsvReader::new_with_sources(sources);
     reader
-        .with_infer_schema_length(Some(10000))
+        .with_infer_schema_length(Some(CSV_INFER_SCHEMA_LENGTH))
         .with_ignore_errors(true)
         .with_has_header(true)
         .with_truncate_ragged_lines(true)
@@ -176,20 +192,60 @@ pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
         .map_err(|e| OxenError::basic_str(format!("{e:?}")))
 }
 
+/// A scan of `source`, a CSV. A stored version file's scan holds only its first rows, enough for its
+/// schema or as many as fit in [`MAX_CSV_HEAD_LEN`], fetched into memory.
 fn scan_df_csv(
     source: &ByteSource,
     delimiter: u8,
     quote_char: Option<u8>,
     total_rows: usize,
 ) -> Result<LazyFrame, OxenError> {
-    base_lazy_csv_reader(source.scan_sources()?, delimiter, quote_char)
+    let sources = match source {
+        ByteSource::Stored(version) => {
+            ByteSource::Memory(csv_head(version, quote_char)?).scan_sources()?
+        }
+        ByteSource::Path(_) | ByteSource::Memory(_) => source.scan_sources()?,
+    };
+    base_lazy_csv_reader(sources, delimiter, quote_char)
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
 }
 
+/// The first bytes of `version`, a CSV quoted with `quote_char`, holding every row its schema is
+/// inferred from or as many of them as fit in [`MAX_CSV_HEAD_LEN`], or all of it when it is shorter.
+/// Blocks while it fetches them.
+fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Bytes, OxenError> {
+    let mut head = version.head(MIN_FETCH)?;
+    while (head.len() as u64) < version.size().min(MAX_CSV_HEAD_LEN) {
+        let rows = count_rows_from_slice_par(
+            Buffer::from_owner(head.clone()),
+            quote_char,
+            None,
+            b'\n',
+            true,
+            0,
+            0,
+            0,
+            false,
+        );
+        // The last row counted can be cut short, so a row past those inference reads leaves them
+        // whole.
+        let len = match rows {
+            Ok(rows) if rows > CSV_INFER_SCHEMA_LENGTH + 1 => break,
+            // Where the rows counted so far put enough of them, with a quarter to spare.
+            Ok(rows) if rows > 0 => head.len() * (CSV_INFER_SCHEMA_LENGTH + 2) / rows * 5 / 4,
+            // No whole row past the header yet, or compressed bytes cut short, which do not count.
+            Ok(_) | Err(_) => 0,
+        };
+        head = version.head((len.max(2 * head.len()) as u64).min(MAX_CSV_HEAD_LEN))?;
+    }
+    Ok(head)
+}
+
 fn scan_df_jsonl(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, OxenError> {
     lazy_jsonl_reader(source.scan_sources()?)
+        .with_cloud_options(source.cloud_options())
         .with_n_rows(Some(total_rows))
         .finish()
         .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
@@ -199,6 +255,7 @@ fn scan_df_parquet(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, 
     let args = ScanArgsParquet {
         n_rows: Some(total_rows),
         hive_options: source.hive_options(),
+        cloud_options: source.cloud_options(),
         ..Default::default()
     };
     LazyFrame::scan_parquet_sources(source.scan_sources()?, args).map_err(|_| {
@@ -214,7 +271,7 @@ fn scan_df_arrow(source: &ByteSource, total_rows: usize) -> Result<LazyFrame, Ox
         IpcScanOptions::default(),
         UnifiedScanArgs {
             hive_options: source.hive_options(),
-            ..ipc_scan_args(Some(total_rows), None)
+            ..ipc_scan_args(Some(total_rows), source.cloud_options())
         },
     )
     .map_err(|_| OxenError::internal_error(format!("{READ_ERROR}: {source:?}")))
@@ -1177,7 +1234,7 @@ pub(crate) async fn collect_with_opts(
     }
 }
 
-/// Head bytes fetched as the CSV/TSV dialect sniff sample. qsv_sniffer reads whole lines and stops
+/// Head bytes a CSV/TSV dialect is sniffed from. qsv_sniffer reads whole lines and stops
 /// once the cumulative size passes its 16 KiB default sample, so it normally inspects ~16 KiB; the
 /// extra headroom here covers wide rows. If we have trouble sniffing wide rows, we can try
 /// increasing this value.
@@ -1234,20 +1291,7 @@ async fn read_s3_version_df(
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
     log::debug!("Reading S3 version df {url} with extension {extension}");
-    let cloud_opts = {
-        let region: &str = region;
-        let endpoint_url = endpoint_url.as_deref();
-        let mut config = vec![("aws_region", region.to_string())];
-        if let Some(endpoint) = endpoint_url {
-            config.push(("aws_endpoint_url", endpoint.to_string()));
-            config.push(("aws_allow_http", "true".to_string()));
-            config.push(("aws_virtual_hosted_style_request", "false".to_string()));
-        }
-        CloudOptions::from_untyped_config(
-            CloudScheme::from_path(url),
-            config.iter().map(|(k, v)| (*k, v.as_str())),
-        )
-    }?;
+    let cloud_opts = s3_cloud_options(url, region, endpoint_url.as_deref())?;
     let url = url.to_string();
 
     let df_lazy = match extension {
@@ -1288,6 +1332,25 @@ async fn read_s3_version_df(
     collect_with_opts(df_lazy, opts.clone()).await
 }
 
+/// The options a Polars scan of `url` needs to reach an S3 bucket in `region`, behind
+/// `endpoint_url` when the bucket is not on AWS.
+pub(crate) fn s3_cloud_options(
+    url: &str,
+    region: &str,
+    endpoint_url: Option<&str>,
+) -> Result<CloudOptions, OxenError> {
+    let mut config = vec![("aws_region", region)];
+    if let Some(endpoint) = endpoint_url {
+        config.push(("aws_endpoint_url", endpoint));
+        config.push(("aws_allow_http", "true"));
+        config.push(("aws_virtual_hosted_style_request", "false"));
+    }
+    Ok(CloudOptions::from_untyped_config(
+        CloudScheme::from_path(url),
+        config,
+    )?)
+}
+
 /// Resolve the CSV/TSV dialect for an S3 version file: honor explicit `DFOpts` overrides, otherwise
 /// sniff a head sample fetched through the store's `get_version_chunk` (full parity with the local
 /// path, which also samples only the head). `force_delim` pins the delimiter for `.tsv` while still
@@ -1308,8 +1371,7 @@ async fn resolve_s3_csv_dialect(
     }
     // Fixed-size head sample. `sniff_reader` needs Read+Seek and rewinds per pass, so it can't
     // consume the forward-only `get_version_stream` directly; a buffer (hence a byte cap) is
-    // required. If huge first lines sniff wrong, raise this cap. Streaming whole lines would match
-    // local exactly but reintroduces local's unbounded single-line memory cost.
+    // required. If huge first lines sniff wrong, raise this cap.
     let sample = version_store
         .get_version_chunk(hash, 0, CSV_SNIFF_SAMPLE_BYTES)
         .await?;
@@ -1435,70 +1497,75 @@ fn scan_df_with_extension(
 pub fn get_size(path: impl AsRef<Path>) -> Result<DataFrameSize, OxenError> {
     let input_path = path.as_ref();
     let extension = input_path.extension().and_then(OsStr::to_str);
-    get_size_with_extension(&ByteSource::Path(input_path), extension)
+    let (size, _) = get_size_and_schema_with_extension(&ByteSource::Path(input_path), extension)?;
+    Ok(size)
 }
 
-pub(crate) fn get_size_with_extension(
+/// The size and schema of `source`, a data frame file with `extension`.
+pub(crate) fn get_size_and_schema_with_extension(
     source: &ByteSource,
     extension: Option<&str>,
-) -> Result<DataFrameSize, OxenError> {
+) -> Result<(DataFrameSize, SchemaRef), OxenError> {
     tracing::debug!(
         oxen.data_frame_source = ?source,
         file.extension = ?extension,
         "Measuring a data frame's size"
     );
 
+    let mut opts = CountLinesOpts::empty();
+    opts.remove_trailing_blank_line = true;
+    // A stored file downloads to count its lines while the scan reads its schema.
+    let line_count = match extension {
+        Some("csv" | "tsv" | "data" | "jsonl" | "ndjson") => {
+            Some(source.start_counting_lines(opts))
+        }
+        _ => None,
+    };
+
     // Don't need that many rows to get the width
     let num_scan_rows = constants::DEFAULT_PAGE_SIZE;
     let mut lazy_df = scan_df_with_extension(source, extension, &DFOpts::empty(), num_scan_rows)?;
-    let schema = lazy_df
-        .collect_schema()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
+    let schema = lazy_df.collect_schema().map_err(|err| {
+        source.record_scan_error(&err);
+        OxenError::basic_str(format!("{err:?}"))
+    })?;
     let width = schema.len();
 
     let err = format!("Unknown file type get_size {source:?} {extension:?}");
 
-    match extension {
-        Some(extension) => match extension {
-            "csv" | "tsv" => {
-                let mut opts = CountLinesOpts::empty();
-                opts.remove_trailing_blank_line = true;
+    match (extension, line_count) {
+        (Some("csv" | "tsv"), Some(line_count)) => {
+            // Remove one line to account for CSV/TSV headers
+            let (mut height, _) = line_count.finish(source.open()?)?;
+            height -= 1; // Adjusting for header
 
-                // Remove one line to account for CSV/TSV headers
-                let (mut height, _) = fs::count_lines(source.open()?, opts)?;
-                height -= 1; // Adjusting for header
+            Ok((DataFrameSize { width, height }, schema))
+        }
+        (Some("data" | "jsonl" | "ndjson"), Some(line_count)) => {
+            let (height, _) = line_count.finish(source.open()?)?;
 
-                Ok(DataFrameSize { width, height })
-            }
-            "data" | "jsonl" | "ndjson" => {
-                let mut opts = CountLinesOpts::empty();
-                opts.remove_trailing_blank_line = true;
-
-                let (height, _) = fs::count_lines(source.open()?, opts)?;
-
-                Ok(DataFrameSize { width, height })
-            }
-            "parquet" => {
-                let mut reader = ParquetReader::new(source.open()?);
-                let height = reader.num_rows()?;
-                Ok(DataFrameSize { width, height })
-            }
-            "arrow" => {
-                // arrow is fast to .finish() so we can just do it here
-                let reader = IpcReader::new(source.open()?);
-                let height = reader.finish()?.height();
-                Ok(DataFrameSize { width, height })
-            }
-            "json" => {
-                let df = lazy_df
-                    .collect()
-                    .map_err(|_| OxenError::basic_str("Could not collect json df"))?;
-                let height = df.height();
-                Ok(DataFrameSize { width, height })
-            }
-            _ => Err(OxenError::basic_str(err)),
-        },
-        None => Err(OxenError::basic_str(err)),
+            Ok((DataFrameSize { width, height }, schema))
+        }
+        (Some("parquet"), _) => {
+            let mut reader = ParquetReader::new(source.open()?);
+            let height = reader.num_rows()?;
+            Ok((DataFrameSize { width, height }, schema))
+        }
+        (Some("arrow"), _) => {
+            // With no columns projected, the reader counts the rows from the record batches'
+            // headers and reads none of their data.
+            let reader = IpcReader::new(source.open()?).with_projection(Some(vec![]));
+            let height = reader.finish()?.height();
+            Ok((DataFrameSize { width, height }, schema))
+        }
+        (Some("json"), _) => {
+            let df = lazy_df
+                .collect()
+                .map_err(|_| OxenError::basic_str("Could not collect json df"))?;
+            let height = df.height();
+            Ok((DataFrameSize { width, height }, schema))
+        }
+        _ => Err(OxenError::basic_str(err)),
     }
 }
 
@@ -1637,19 +1704,6 @@ pub async fn show_path(input: impl AsRef<Path>, opts: DFOpts) -> Result<DataFram
     Ok(df)
 }
 
-pub(crate) fn get_schema_with_extension(
-    source: &ByteSource,
-    extension: Option<&str>,
-) -> Result<crate::model::Schema, OxenError> {
-    let opts = DFOpts::empty();
-    let total_rows = constants::DEFAULT_PAGE_SIZE;
-    let mut df = scan_df_with_extension(source, extension, &opts, total_rows)?;
-    let schema = df
-        .collect_schema()
-        .map_err(|e| OxenError::basic_str(format!("{e:?}")))?;
-    Ok(crate::model::Schema::from_polars(&schema))
-}
-
 pub fn get_schema(input: impl AsRef<Path>) -> Result<crate::model::Schema, OxenError> {
     let opts = DFOpts::empty();
     // don't need many rows to get schema
@@ -1733,6 +1787,7 @@ mod tests {
     use super::*;
     use crate::core::df::{filter, tabular};
     use crate::test::{self, TEST_DATA_DIR};
+    use crate::util::fs;
     use crate::view::JsonDataFrameView;
     use crate::{
         error::OxenError,

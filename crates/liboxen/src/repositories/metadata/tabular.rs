@@ -3,6 +3,7 @@
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
+use crate::model::Schema;
 use crate::model::metadata::MetadataTabular;
 use crate::repositories::metadata::ByteSource;
 
@@ -21,9 +22,12 @@ pub(crate) fn get_metadata_with_extension(
     source: &ByteSource,
     extension: &str,
 ) -> Result<MetadataTabular, OxenError> {
-    let size = tabular::get_size_with_extension(source, Some(extension))?;
-    let schema = tabular::get_schema_with_extension(source, Some(extension))?;
-    Ok(MetadataTabular::new(size.width, size.height, schema))
+    let (size, schema) = tabular::get_size_and_schema_with_extension(source, Some(extension))?;
+    Ok(MetadataTabular::new(
+        size.width,
+        size.height,
+        Schema::from_polars(&schema),
+    ))
 }
 
 #[cfg(test)]
