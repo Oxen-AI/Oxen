@@ -47,6 +47,7 @@ mod tests {
     use crate::config::UserConfig;
     use crate::core::staged::staged_db_manager::get_staged_db_manager;
     use crate::error::OxenError;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::model::{
         Commit, EntryDataType, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace,
     };
@@ -54,6 +55,7 @@ mod tests {
     use crate::repositories::{self, workspaces};
     use crate::test;
     use crate::util::fs;
+    use serde_json::json;
 
     #[tokio::test]
     async fn test_mv_file_in_workspace() -> Result<(), OxenError> {
@@ -351,6 +353,16 @@ mod tests {
                 None,
                 "the source stays as committed"
             );
+            // A copy indexes from its staged entry, and a row added to it commits to the copy.
+            let edited = Path::new("edited.csv");
+            workspaces::files::copy(&workspace, Path::new("table.csv"), edited).await?;
+            workspaces::data_frames::index(&repo, &workspace, edited).await?;
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                edited,
+                &json!({"x": 3, "y": 4}),
+            )?;
             stage_new_file(&workspace, "data/a.txt").await?;
             workspaces::files::rm(&workspace, &[PathBuf::from("data/sub/b.txt")]).await?;
             for (source, dest, refusal) in [
@@ -395,6 +407,15 @@ mod tests {
                     "{copy} is typed by its own name"
                 );
             }
+            let rows = |path: &str| match node(path).metadata() {
+                Some(GenericMetadata::MetadataTabular(m)) => m.tabular.height,
+                other => panic!("{path} should have tabular metadata, got {other:?}"),
+            };
+            assert_eq!(
+                (rows("table.csv"), rows("edited.csv")),
+                (1, 2),
+                "the row added to the copy commits to the copy alone"
+            );
 
             // A committed directory moves with its nested subdirectory, and retrying the move
             // finds its source staged for removal.

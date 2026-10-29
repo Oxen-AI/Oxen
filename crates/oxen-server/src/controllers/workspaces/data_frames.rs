@@ -157,9 +157,17 @@ pub async fn get(
         .map_err(OxenError::from)??
     };
 
-    let Some(df_schema) = get_by_path_async(&repo, &workspace.commit, &file_path).await? else {
-        log::warn!("Failed to get schema for data frame {file_path:?}");
-        return Err(OxenHttpError::NotFound);
+    let new_schema =
+        get_staged_schema_with_staged_db_manager_async(&workspace.workspace_repo, &file_path)
+            .await?;
+    let df_schema = match get_by_path_async(&repo, &workspace.commit, &file_path).await {
+        Ok(Some(schema)) => schema,
+        // A data frame only the workspace has, such as a copy, has no committed schema.
+        Ok(None) | Err(OxenError::PathDoesNotExist(_)) => new_schema.clone().ok_or_else(|| {
+            log::warn!("Failed to get schema for data frame {file_path:?}");
+            OxenHttpError::NotFound
+        })?,
+        Err(err) => return Err(err.into()),
     };
 
     let resource = ResourceVersion {
@@ -170,9 +178,6 @@ pub async fn get(
     let mut df_views =
         JsonDataFrameViews::from_df_and_opts_unpaginated(df, df_schema, count, &opts).await?;
 
-    let new_schema =
-        get_staged_schema_with_staged_db_manager_async(&workspace.workspace_repo, &file_path)
-            .await?;
     repositories::workspaces::data_frames::columns::update_column_schemas(
         new_schema,
         &mut df_views,
@@ -985,6 +990,32 @@ mod tests {
             assert_eq!(pagination.total_entries, 15);
             assert_eq!(pagination.total_pages, 2);
         }
+
+        // A copy that exists only in the workspace indexes and pages like the frame it copies.
+        let copy_path = "data/history_copy.csv";
+        repositories::workspaces::files::copy(
+            &workspace,
+            std::path::Path::new(file_path),
+            std::path::Path::new(copy_path),
+        )
+        .await?;
+        repositories::workspaces::data_frames::index(
+            &repo,
+            &workspace,
+            std::path::Path::new(copy_path),
+        )
+        .await?;
+        let copy_page = get_data_frame_page(
+            &sync_dir,
+            namespace,
+            repo_name,
+            &workspace_id,
+            copy_path,
+            page_query(3, 10, None),
+        )
+        .await;
+        assert!(copy_page.is_indexed);
+        assert_eq!(page_ids(&copy_page), (20..25).collect::<Vec<i64>>());
 
         drop((app, workspace));
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;

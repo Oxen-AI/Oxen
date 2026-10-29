@@ -222,13 +222,22 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
         let path = path.to_path_buf();
         spawn_blocking(move || -> Result<_, OxenError> {
             let path = path.as_path();
-            // Is tabular just looks at the file extensions
-            let file_node = repositories::tree::get_file_by_path(
+            let file_node = match repositories::tree::get_file_by_path(
                 &workspace.base_repo,
                 &workspace.commit,
                 path,
-            )?
-            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+            )? {
+                Some(file_node) => file_node,
+                None => {
+                    let staged = get_staged_db_manager(&workspace.workspace_repo)?
+                        .read_from_staged_db(path)?
+                        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+                    let EMerkleTreeNode::File(file_node) = staged.node.node else {
+                        return Err(OxenError::NotAFile(path.to_path_buf().into()));
+                    };
+                    file_node
+                }
+            };
             if *file_node.data_type() != EntryDataType::Tabular {
                 return Err(OxenError::basic_str(
                     "File format not supported, must be tabular.",
@@ -237,22 +246,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
 
             log::debug!("core::v_latest::workspaces::data_frames::index({path:?})");
 
-            let repo = &workspace.base_repo;
-            let commit = &workspace.commit;
-
-            log::debug!(
-                "core::v_latest::workspaces::data_frames::index({path:?}) got commit {commit:?}"
-            );
-
-            let Ok(Some(commit_merkle_tree)) =
-                repositories::tree::get_node_by_path_with_children(repo, commit, path)
-            else {
-                return Err(OxenError::basic_str(format!(
-                    "Merkle tree for commit {commit} not found"
-                )));
-            };
-
-            let file_hash = commit_merkle_tree.hash;
+            let file_hash = *file_node.hash();
 
             log::debug!(
                 "core::v_latest::workspaces::data_frames::index({path:?}) got file hash {file_hash:?}"
@@ -267,14 +261,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
             };
             util::fs::create_dir_all(&parent)?;
 
-            let extension = match &commit_merkle_tree.node {
-                EMerkleTreeNode::File(file_node) => file_node.extension().to_string(),
-                _ => {
-                    return Err(OxenError::basic_str("File node is not a file node"));
-                }
-            };
-
-            Ok((file_hash, extension, db_path, parent))
+            Ok((file_hash, file_node.extension().to_string(), db_path, parent))
         })
         .await??
     };
