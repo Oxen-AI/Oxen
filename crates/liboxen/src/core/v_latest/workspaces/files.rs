@@ -1426,43 +1426,36 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
 /// and metadata an upload of the same bytes to `new_path` would. Refused when the workspace has
 /// changes staged for `path`, or when anything is at `new_path` already.
 pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
-    let (path, new_path) = (path.to_path_buf(), new_path.to_path_buf());
-    let source = {
-        let (workspace, path) = (workspace.clone(), path.clone());
-        spawn_blocking(move || committed_file(&workspace, &path)).await??
+    let source =
+        repositories::tree::get_node_by_path_async(&workspace.base_repo, &workspace.commit, path)
+            .await?
+            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+    let EMerkleTreeNode::File(source) = source.node else {
+        return Err(OxenError::NotAFile(path.to_path_buf().into()));
     };
-    let inspected = if util::fs::file_extension(&path) != util::fs::file_extension(&new_path) {
-        let (hash, size) = (*source.hash(), source.num_bytes());
-        let mut file =
-            inspect_stored_version(workspace, new_path.clone(), hash, size, None).await?;
-        file.mtime = FileTime::from_unix_time(
+    let copy = if util::fs::file_extension(path) != util::fs::file_extension(new_path) {
+        let mut file = inspect_stored_version(
+            workspace,
+            new_path.to_path_buf(),
+            *source.hash(),
+            source.num_bytes(),
+            None,
+        )
+        .await?;
+        file.mtime = util::fs::last_modified_time(
             source.last_modified_seconds(),
             source.last_modified_nanoseconds(),
         );
-        Some(file)
+        version_file_node(&workspace.workspace_repo, file, None)?
     } else {
-        None
+        source
     };
-    let workspace = workspace.clone();
-    spawn_blocking(move || {
-        let copy = match inspected {
-            Some(file) => version_file_node(&workspace.workspace_repo, file, None)?,
-            None => source,
-        };
-        stage_copy(&workspace, &path, &new_path, copy)
-    })
-    .await?
-}
-
-/// The file at `path` in the workspace's base commit.
-fn committed_file(workspace: &Workspace, path: &Path) -> Result<FileNode, OxenError> {
-    let source =
-        repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, path)?
-            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
-    let EMerkleTreeNode::File(file_node) = source.node else {
-        return Err(OxenError::NotAFile(path.to_path_buf().into()));
-    };
-    Ok(file_node)
+    let (workspace, path, new_path) = (
+        workspace.clone(),
+        path.to_path_buf(),
+        new_path.to_path_buf(),
+    );
+    spawn_blocking(move || stage_copy(&workspace, &path, &new_path, copy)).await?
 }
 
 /// Stage `file_node` at `new_path` as a copy of the committed file at `path`, refusing the copy
