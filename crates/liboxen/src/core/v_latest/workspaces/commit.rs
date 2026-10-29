@@ -632,7 +632,9 @@ async fn compute_staged_merkle_tree_node(
 mod tests {
     use super::*;
     use crate::core::v_latest::add::stage_version_file;
-    use crate::core::v_latest::workspaces::files::InspectedVersionFile;
+    use crate::core::v_latest::workspaces::files::{
+        CommittedFiles, InspectedVersionFile, VersionFileToStage,
+    };
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -903,8 +905,12 @@ mod tests {
     ) -> Result<(), OxenError> {
         let path = workspace.workspace_repo.path.join(name);
         util::fs::write_to_path(&path, name)?;
-        let hash = hasher::hash_file_contents(&path)?;
-        let file = InspectedVersionFile::from_file(name.into(), hash.parse()?, &path)?;
+        let hash = hasher::hash_file_contents(&path)?.parse()?;
+        let committed = CommittedFiles::load(workspace).await?;
+        let file = VersionFileToStage::prepare(&committed, name.into(), hash, |dst_path| async {
+            InspectedVersionFile::from_file(dst_path, hash, &path)
+        })
+        .await?;
         let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
         stage_version_file(workspace, file, &staged_db_manager, seen_dirs).await
     }

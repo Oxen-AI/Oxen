@@ -8,9 +8,11 @@ use crate::tasks;
 use liboxen::constants::{MAX_FILE_SIZE, stream_segment_size};
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
-use liboxen::core::v_latest::workspaces::files::{InspectedVersionFile, add_version_files};
+use liboxen::core::v_latest::workspaces::files::{
+    CommittedFiles, InspectedVersionFile, VersionFileToStage, add_version_files,
+};
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
+use liboxen::model::Workspace;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
@@ -217,7 +219,7 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let received = save_parts(payload, &repo, &directory, &workspace.dir()).await?;
+    let received = save_parts(payload, &workspace, &directory).await?;
     log::debug!("Stored {} files", received.len());
 
     let (ret_files, stage_err_files) = add_version_files(&workspace, received).await?;
@@ -382,9 +384,9 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
-/// A file received in a multipart upload, stored, and inspected for staging.
+/// A file received in a multipart upload and prepared for staging.
 struct ReceivedFile {
-    file: InspectedVersionFile,
+    file: VersionFileToStage,
     /// The part's position among the upload's file parts.
     part_index: usize,
 }
@@ -392,17 +394,20 @@ struct ReceivedFile {
 /// Receive each file part of `payload`, gunzipping a gzipped part, and store the files in the
 /// repository's version store, several at once. A part that arrives in at most
 /// `stream_segment_size()` bytes stays in memory until it is stored and inspected, and a longer one
-/// is written to a temporary file in `dir`. A part's filename is its path relative to `directory`.
+/// is written to a temporary file in `workspace`'s directory. A part's filename is its path in
+/// `workspace` relative to `directory`, and a part whose content `workspace`'s commit has at that
+/// path is neither stored nor inspected, unless the store has lost the commit's copy.
 ///
-/// Returns the files stored, in the order their parts arrived. A part that fails to arrive, to
+/// Returns the files to stage, in the order their parts arrived. A part that fails to arrive, to
 /// store, or to be inspected is logged and left out.
 async fn save_parts(
     mut payload: Multipart,
-    repo: &LocalRepository,
+    workspace: &Workspace,
     directory: &str,
-    dir: &Path,
-) -> Result<Vec<InspectedVersionFile>, OxenHttpError> {
-    let version_store = repo.version_store();
+) -> Result<Vec<VersionFileToStage>, OxenHttpError> {
+    let version_store = workspace.base_repo.version_store();
+    let committed = CommittedFiles::load(workspace).await?;
+    let dir = workspace.dir();
     let max_in_flight = util::concurrency::default_num_threads() * 4;
     let mut in_flight: JoinSet<Option<ReceivedFile>> = JoinSet::new();
     let mut received = vec![];
@@ -447,7 +452,7 @@ async fn save_parts(
             BodyEncoding::Plain
         };
 
-        let body = match receive_body(field, dir.to_path_buf(), MAX_FILE_SIZE, encoding).await? {
+        let body = match receive_body(field, dir.clone(), MAX_FILE_SIZE, encoding).await? {
             Ok(body) => body,
             Err(e) => {
                 tracing::error!(
@@ -466,10 +471,11 @@ async fn save_parts(
             }
         }
 
-        let version_store = Arc::clone(&version_store);
+        let (version_store, committed) = (Arc::clone(&version_store), Arc::clone(&committed));
         in_flight.spawn(tasks::inherit_hub(async move {
             let hash = body.hash();
-            match store_and_inspect(version_store, body, dst_path.clone()).await {
+            let stored = |dst_path| store_and_inspect(version_store, body, dst_path);
+            match VersionFileToStage::prepare(&committed, dst_path.clone(), hash, stored).await {
                 Ok(file) => Some(ReceivedFile { file, part_index }),
                 Err(e) => {
                     tracing::error!(
@@ -735,6 +741,9 @@ mod tests {
         // A CSV over `stream_segment_size()` is spooled to disk, a smaller one stays in memory, and
         // both are staged with the rows they hold. A file uploaded again with the content its
         // commit has is not staged, even after a change to it was, and leaves no directory staged.
+        // When the store has lost the committed copy, the upload stores it again.
+        let rows_hash = util::hasher::hash_buffer(rows.as_bytes());
+        repo.version_store().delete_version(&rows_hash).await?;
         let mut big = String::from("id,label\n");
         let mut big_rows = 0;
         while big.len() as u64 <= stream_segment_size() {
@@ -797,6 +806,10 @@ mod tests {
                 "{path} is not staged once rows.csv is uploaded again with its committed content"
             );
         }
+        assert!(
+            repo.version_store().version_exists(&rows_hash).await?,
+            "rows.csv uploaded with its committed content restores the copy the store lost"
+        );
         drop(staged_db_manager);
         drop(workspace);
 
@@ -897,6 +910,19 @@ mod tests {
             "a stored file needs no parts: {:?}",
             again.file
         );
+        // Beginning an upload of a committed file at its committed path stages nothing.
+        let req = TestRequest::post()
+            .uri(&uploads)
+            .set_json(BeginVersionUploadRequest {
+                hash: rows_hash.clone(),
+                size: rows.len() as u64,
+                destination: Some(WorkspaceDestination {
+                    workspace_id: workspace_id.clone(),
+                    path: "tables/rows.csv".into(),
+                }),
+            })
+            .to_request();
+        assert_eq!(call_service(&app, req).await.status(), StatusCode::OK);
         let workspace = repositories::workspaces::get(&repo, &workspace_id)?
             .ok_or_else(|| OxenError::WorkspaceNotFound(workspace_id.clone().into()))?;
         let status = repositories::workspaces::status::status(&workspace)?;
@@ -906,6 +932,13 @@ mod tests {
                 .staged_files
                 .contains_key(Path::new("data/again.bin")),
             "a stored file is staged at the destination it is begun with: {:?}",
+            status.staged_files.keys()
+        );
+        assert!(
+            !status
+                .staged_files
+                .contains_key(Path::new("tables/rows.csv")),
+            "a committed file begun at its committed path is not staged: {:?}",
             status.staged_files.keys()
         );
 

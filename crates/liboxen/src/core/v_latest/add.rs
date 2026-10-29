@@ -37,11 +37,10 @@ use std::ops::AddAssign;
 
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::core::v_latest::rm;
-use crate::core::v_latest::workspaces::files::InspectedVersionFile;
+use crate::core::v_latest::workspaces::files::{InspectedVersionFile, VersionFileToStage};
 use crate::model::merkle_tree::node::{
     EMerkleTreeNode, FileNode, MerkleTreeNode, StagedMerkleTreeNode,
 };
-use crate::repositories::tree::get_file_by_path;
 use crate::util::fs::path_relative_to_dir;
 
 const FILE_BATCH_SIZE: usize = 64;
@@ -1014,20 +1013,18 @@ pub fn add_file_node_to_staged_db(
 /// is not staged, and drops a staged removal or a staged edit of that path.
 pub(crate) async fn stage_version_file(
     workspace: &Workspace,
-    file: InspectedVersionFile,
+    file: VersionFileToStage,
     staged_db_manager: &StagedDBManager,
     seen_dirs: &Arc<Mutex<HashSet<PathBuf>>>,
 ) -> Result<(), OxenError> {
-    let relative_path = path_relative_to_dir(&file.dst_path, &workspace.base_repo.path)?;
-    let (base_repo, commit) = (workspace.base_repo.clone(), workspace.commit.clone());
+    let relative_path = path_relative_to_dir(file.dst_path(), &workspace.base_repo.path)?;
     let workspace_repo = workspace.workspace_repo.clone();
     let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
     tokio::task::spawn_blocking(move || {
-        let committed = get_file_by_path(&base_repo, &commit, &relative_path)?;
-        let (status, previous_metadata) = match committed {
-            Some(file_node) if *file_node.hash() == file.hash => {
+        let (file, status, previous_metadata) = match file {
+            VersionFileToStage::AlreadyCommitted { hash, .. } => {
                 if let Some(staged) = staged_db_manager.read_from_staged_db(&relative_path)?
-                    && !keeps_staged_entry(&staged, &file.hash)?
+                    && !keeps_staged_entry(&staged, &hash)?
                 {
                     tracing::debug!(
                         oxen.file_path = %relative_path.display(),
@@ -1043,8 +1040,14 @@ pub(crate) async fn stage_version_file(
                 }
                 return Ok(());
             }
-            Some(file_node) => (StagedEntryStatus::Modified, file_node.metadata()),
-            None => (StagedEntryStatus::Added, None),
+            VersionFileToStage::Changed {
+                file,
+                committed: Some(file_node),
+            } => (file, StagedEntryStatus::Modified, file_node.metadata()),
+            VersionFileToStage::Changed {
+                file,
+                committed: None,
+            } => (file, StagedEntryStatus::Added, None),
         };
         let previous_metadata =
             staged_file_metadata(&staged_db_manager, &relative_path)?.or(previous_metadata);
