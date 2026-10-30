@@ -41,11 +41,13 @@ BAD: `cargo check --package liboxen`
 cargo build --workspace                           # Debug build
 cargo build --workspace --bins --tests            # Debug build that a later `cargo test` reuses
 ```
+
 A `cargo build` that a `cargo test` follows, in a script or a CI job, builds `--bins --tests` with the same packages and features the test command selects, as `bin/test` and the Rust Tests jobs do. Dev-dependencies add features to crates such as `hyper` and `getrandom`, so a plain `cargo build` resolves a different feature set, and the `cargo test` after it compiles a second copy of every dependency above them, DuckDB, RocksDB, polars, and the AWS SDK included.
 
 ### Testing
 
 Run tests with `bin/test`, never `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is in a comment at the top of the script. `cargo test` alone works only after reproducing that setup by hand (the "Manual Test Setup" section of `crates/liboxen/README.md`).
+
 ```bash
 bin/test                         # Build and run all Rust tests
 bin/test test_function_name      # Run only Rust tests matching test_function_name
@@ -54,6 +56,7 @@ bin/test -p                      # Run the Python test suite (via pytest + matur
 bin/test -p -k test_init         # Run Python tests matching test_init
 env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test --no-capture test_name  # Debug output
 ```
+
 - It does not install prerequisites by default. If a dependency is missing, ask the user to run `bin/install-prereqs`, or re-run with `bin/test --install-deps`.
 - If the ramdisk cannot be mounted, pass `--no-ramdisk` to run against the regular filesystem.
 - Arguments after the script's own flags are forwarded after `--` to the libtest binaries (or `pytest` under `-p`).
@@ -72,10 +75,12 @@ pre-commit run --all-files                         # Run pre-commit hooks (runs 
 ### Benchmarks
 
 The `liboxen::test` helper module is gated behind the `test-utils` feature, so it isn't compiled into release builds. Benches that use it (`download`, `fetch`, `push`, `workspace_add`) declare `required-features = ["test-utils"]` and are skipped unless the feature is enabled:
+
 ```bash
 cargo bench --features liboxen/test-utils           # Run all benches
 cargo bench --features liboxen/test-utils --bench push
 ```
+
 `oxen-cli` and `oxen-server` enable `test-utils` through their dev-dependencies, so their own tests can call `liboxen::test::*`.
 
 ### Server Development
