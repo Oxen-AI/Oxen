@@ -1,0 +1,4 @@
+# `oxen-python/`
+
+- **The Python API pages on docs.oxen.ai are generated from these docstrings** by `generate-python-docs.sh` in the `docs` repo, so a docstring change is not published until those pages are regenerated. After editing a docstring under `python/oxen/`, or adding a method or property to one of those classes, regenerate them as a separate `docs`-repo change by running `<docs-checkout>/generate-python-docs.sh <docs-checkout>/` from this directory. The script rewrites all of its pages and has no per-page flag, so that change carries every page whose docstrings moved.
+- **Write each docstring for what pydoc-markdown does with it.** An indented `word: value` line inside an argument's description starts a new argument on the generated page, so a `Default: False` on its own line publishes a `Default` argument that does not exist. Keep such a sentence on the same line as the description it belongs to.
