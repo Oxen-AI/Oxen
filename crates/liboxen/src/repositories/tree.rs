@@ -1696,15 +1696,38 @@ pub fn print_tree_depth(
 /// The sizes file nodes declare for one version blob, each mapped to a path declaring it. More
 /// than one entry means nodes disagree about the size of the same content, of which at most one
 /// can match the stored blob.
-pub type DeclaredSizes = HashMap<u64, PathBuf>;
+pub(crate) type DeclaredSizes = HashMap<u64, PathBuf>;
+
+/// How [`added_objects`] records the version blobs that added files reference.
+pub(crate) trait AddedVersions: Default {
+    /// Record that the file at `path` references `version` and declares `num_bytes` for it.
+    fn add(&mut self, version: String, num_bytes: u64, path: impl FnOnce() -> PathBuf);
+}
+
+/// Content hashes alone.
+impl AddedVersions for HashSet<String> {
+    fn add(&mut self, version: String, _num_bytes: u64, _path: impl FnOnce() -> PathBuf) {
+        self.insert(version);
+    }
+}
+
+/// Content hashes mapped to every size declared for each.
+impl AddedVersions for HashMap<String, DeclaredSizes> {
+    fn add(&mut self, version: String, num_bytes: u64, path: impl FnOnce() -> PathBuf) {
+        self.entry(version)
+            .or_default()
+            .entry(num_bytes)
+            .or_insert_with(path);
+    }
+}
 
 /// The merkle nodes and version blobs a commit's tree introduces relative to a base.
 #[derive(Debug, Default)]
-pub struct AddedObjects {
+pub(crate) struct AddedObjects<V> {
     /// Merkle tree node hashes (dirs and vnodes) reachable from the added subtrees.
     pub nodes: HashSet<MerkleHash>,
-    /// The version blobs the added files reference, keyed by content hash.
-    pub versions: HashMap<String, DeclaredSizes>,
+    /// The version blobs the added files reference.
+    pub versions: V,
     /// Nodes the store holds but could not read, mapped to the failure. Whatever each one contains
     /// is absent from `nodes` and `versions`.
     pub unreadable: HashMap<MerkleHash, String>,
@@ -1719,11 +1742,11 @@ pub struct AddedObjects {
 /// The walk descends only into subtrees whose hashes differ between `base` and `head`
 /// (content-addressed nodes with equal hashes are identical and skipped), so cost scales with the
 /// changed set rather than the whole tree. `base = None` treats every object in `head` as added.
-pub fn added_objects(
+pub(crate) fn added_objects<V: AddedVersions>(
     repo: &LocalRepository,
     base: Option<&Commit>,
     head: &Commit,
-) -> Result<Option<AddedObjects>, OxenError> {
+) -> Result<Option<AddedObjects<V>>, OxenError> {
     let Some(head_root) = root_dir_hash(repo, head)? else {
         return Ok(None);
     };
@@ -1774,7 +1797,8 @@ pub async fn find_missing_added_objects(
     let head = head.clone();
     let (missing_nodes, added_versions) =
         tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), OxenError> {
-            let Some(added) = added_objects(&walk_repo, base.as_ref(), &head)? else {
+            let Some(added) = added_objects::<HashSet<String>>(&walk_repo, base.as_ref(), &head)?
+            else {
                 // No root dir node for head means the commit's tree wasn't uploaded at all.
                 return Ok((vec![head.hash()?.to_string()], vec![]));
             };
@@ -1798,7 +1822,7 @@ pub async fn find_missing_added_objects(
                 }
             }
 
-            Ok((missing_nodes, added.versions.into_keys().collect()))
+            Ok((missing_nodes, added.versions.into_iter().collect()))
         })
         .await??;
 
@@ -1826,12 +1850,12 @@ fn root_dir_hash(repo: &LocalRepository, commit: &Commit) -> Result<Option<Merkl
 /// Recursively collect the node hashes and version hashes that `head_dir` adds relative to
 /// `base_dir`. Identical subtrees (equal node hash) are pruned, so only changed directories are
 /// flattened and compared.
-fn collect_added_from_dir(
+fn collect_added_from_dir<V: AddedVersions>(
     repo: &LocalRepository,
     base_dir: Option<MerkleHash>,
     head_dir: MerkleHash,
     head_dir_path: &Path,
-    added: &mut AddedObjects,
+    added: &mut AddedObjects<V>,
 ) -> Result<(), OxenError> {
     added.nodes.insert(head_dir);
 
@@ -1846,6 +1870,8 @@ fn collect_added_from_dir(
     };
     added.nodes.extend(head.vnodes);
     added.unreadable.extend(head.unreadable);
+
+    let child_path = |name: &str| head_dir_path.join(name);
 
     // Damage on the base side prunes nothing: an entry it could not read is absent from
     // `base_entries`, so the head entry of that name counts as added.
@@ -1877,25 +1903,14 @@ fn collect_added_from_dir(
             EntryKind::File { version, num_bytes } => {
                 // A file node lives inline in its parent vnode's DB (which we just read), not as a
                 // standalone node, so its presence is already covered. Verify its content blob.
-                added
-                    .versions
-                    .entry(version)
-                    .or_default()
-                    .entry(num_bytes)
-                    .or_insert_with(|| head_dir_path.join(&name));
+                added.versions.add(version, num_bytes, || child_path(&name));
             }
             EntryKind::Dir => {
                 let base_sub = base_entries
                     .get(&name)
                     .filter(|base_entry| matches!(base_entry.kind, EntryKind::Dir))
                     .map(|base_entry| base_entry.hash);
-                collect_added_from_dir(
-                    repo,
-                    base_sub,
-                    entry.hash,
-                    &head_dir_path.join(&name),
-                    added,
-                )?;
+                collect_added_from_dir(repo, base_sub, entry.hash, &child_path(&name), added)?;
             }
         }
     }
@@ -2130,7 +2145,8 @@ mod tests {
             repositories::add(&repo, &a_path).await?;
             let commit = repositories::commit(&repo, "add a.txt")?;
 
-            let added = added_objects(&repo, Some(&commit), &commit)?.expect("head tree present");
+            let added = added_objects::<HashSet<String>>(&repo, Some(&commit), &commit)?
+                .expect("head tree present");
             assert!(
                 added.nodes.is_empty() && added.versions.is_empty(),
                 "identical base/head must add nothing, got: {added:?}"
@@ -2142,9 +2158,13 @@ mod tests {
             repositories::add(&repo, &repo.path).await?;
             let head = repositories::commit(&repo, "add data/.OXEN/config.toml")?;
             let result = find_missing_added_objects(&repo, Some(&commit), &head).await;
-            assert!(
-                matches!(result, Err(OxenError::InvalidTreePath(_))),
-                "the gate accepted a path a working tree cannot hold: {result:?}"
+            let Err(OxenError::InvalidTreePath(path)) = result else {
+                panic!("the gate accepted a path a working tree cannot hold: {result:?}");
+            };
+            assert_eq!(
+                path.to_string(),
+                Path::new("data").join(".OXEN").to_string_lossy(),
+                "the error carries the invalid entry's full path"
             );
 
             Ok(())

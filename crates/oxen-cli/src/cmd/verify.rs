@@ -88,6 +88,11 @@ fn print_report(report: &VerifyReport) {
         &report.misaddressed_commits,
         |c| format!("{} hashes to {}", c.recorded_id, c.computed_id),
     );
+    print_findings(
+        "Commits missing their directory index",
+        &report.missing_dir_hash_indexes,
+        |id| id.clone(),
+    );
     print_findings("Merkle nodes missing", &report.missing_nodes, |h| h.clone());
     print_findings(
         "Merkle nodes that could not be read",

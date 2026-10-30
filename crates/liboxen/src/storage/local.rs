@@ -1,4 +1,5 @@
 use std;
+use std::fs::metadata as sync_metadata;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -17,6 +18,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use log;
 use parking_lot::Mutex;
+use rayon::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -178,6 +180,27 @@ impl VersionStore for LocalVersionStore {
             .await
             .map_err(|source| version_read_error(hash, &path, source))?;
         Ok(metadata.len())
+    }
+
+    async fn get_version_sizes(
+        &self,
+        hashes: Vec<String>,
+    ) -> Result<Vec<(String, Result<u64, OxenError>)>, OxenError> {
+        let store = LocalVersionStore::new(&self.root_path);
+        let sizes = spawn_blocking(move || {
+            hashes
+                .into_par_iter()
+                .map(|hash| {
+                    let path = store.version_path(&hash);
+                    let size = sync_metadata(&path)
+                        .map(|metadata| metadata.len())
+                        .map_err(|source| version_read_error(&hash, &path, source));
+                    (hash, size)
+                })
+                .collect()
+        })
+        .await?;
+        Ok(sizes)
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {

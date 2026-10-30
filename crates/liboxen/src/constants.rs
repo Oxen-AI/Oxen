@@ -203,7 +203,7 @@ pub const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 1024;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
-/// Cap on parallel `version_exists` probes used when bulk operations need to
+/// Cap on parallel version-store probes (existence or size) used when bulk operations need to
 /// check many hashes at once. Sized for network HEAD operations rather than
 /// CPU work, so it's higher than `DEFAULT_NUM_WORKERS`.
 pub const MAX_CONCURRENT_VERSION_PROBES: usize = 32;
