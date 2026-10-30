@@ -769,28 +769,26 @@ async fn walk_target_tree<'a>(
                 // replaced a dir with a file). Stage it for replacement instead of removing
                 // eagerly.
                 if full_dir_path.exists() && !full_dir_path.is_dir() {
-                    // Only block when the from tree had a *file* at this path and the disk
-                    // copy diverges from it — the case where eager removal would silently
-                    // destroy committed-then-locally-modified work. Other shapes (untracked
-                    // content, or a tracked directory the user destructively replaced with a
-                    // file) were silently overwritten before this fix; preserve that
-                    // contract since `partial_nodes` only tracks file paths and we cannot
-                    // cheaply distinguish those cases here.
+                    // Under `OnConflict::Abort`, replace the entry only when it is the from
+                    // tree's file at this path, unmodified. Anything else (an untracked file,
+                    // or a tracked one with local edits) has no other copy and blocks the
+                    // checkout.
                     let from = partial_nodes.get(&dir_path);
-                    if let Some(from) = from {
-                        let meta = util::fs::metadata(&full_dir_path)?;
-                        let disk_mtime = FileTime::from_last_modification_time(&meta);
-                        let disk_size = meta.len();
-                        let unmodified = if repo.mtime_matches(disk_mtime, from.last_modified).await
-                            && disk_size == from.size
-                        {
-                            true
-                        } else {
-                            let working_hash =
-                                util::hasher::get_hash_given_metadata(&full_dir_path, &meta)?;
-                            working_hash == from.hash.to_u128()
+                    if on_conflict.is_abort() {
+                        let unmodified = match from {
+                            Some(from) => {
+                                let meta = util::fs::metadata(&full_dir_path)?;
+                                let disk_mtime = FileTime::from_last_modification_time(&meta);
+                                meta.len() == from.size
+                                    && (repo.mtime_matches(disk_mtime, from.last_modified).await
+                                        || util::hasher::get_hash_given_metadata(
+                                            &full_dir_path,
+                                            &meta,
+                                        )? == from.hash.to_u128())
+                            }
+                            None => false,
                         };
-                        if !unmodified && on_conflict.is_abort() {
+                        if !unmodified {
                             results.cannot_overwrite_entries.push(dir_path.clone());
                             // Skip the children walk: the checkout will abort, so queueing
                             // restorations under this path would be wasted work.
