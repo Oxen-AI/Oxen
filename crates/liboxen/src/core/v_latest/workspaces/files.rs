@@ -381,8 +381,7 @@ pub fn track_modified_data_frame(
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
-    let commit = workspace.commit.clone();
-    p_modify_file(base_repo, workspace_repo, &Some(commit), filepath)?;
+    p_modify_file(base_repo, workspace_repo, &workspace.commit, filepath)?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -1282,38 +1281,40 @@ fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Result<(), Oxe
 fn p_modify_file(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
+    commit: &Commit,
     path: &Path,
 ) -> Result<(), OxenError> {
-    let mut maybe_file_node = None;
-    if let Some(head_commit) = maybe_head_commit {
-        maybe_file_node = repositories::tree::get_file_by_path(base_repo, head_commit, path)?;
-    }
-    let Some(mut file_node) = maybe_file_node else {
-        return Err(OxenError::basic_str("file not found in head commit"));
-    };
-    file_node.set_name(path.to_str().unwrap());
+    let committed = repositories::tree::get_file_by_path(base_repo, commit, path)?;
     // Stamping each edit's time changes the staged node, so a commit that read it before this edit
     // leaves the path staged for the next commit.
     let edited_at = FileTime::now();
-    file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
-    log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     staged_db_manager.edit_staged_node(path, |staged| {
-        // The committed node knows nothing of workspace metadata edits. When
-        // the staged node holds the same content with different metadata,
-        // carry that metadata over so re-staging doesn't discard it.
-        if let Some(staged) = staged
-            && let Ok(staged_file) = staged.node.file()
-            && staged_file.hash() == file_node.hash()
-            && let Some(metadata) = staged_file.metadata()
-        {
-            file_node.set_metadata(Some(metadata));
-            file_node.recompute_metadata_hashes()?;
-        }
+        let (mut file_node, status) = match (committed, staged) {
+            (Some(mut file_node), staged) => {
+                file_node.set_name(path.to_str().unwrap());
+                // The committed node knows nothing of workspace metadata edits. When
+                // the staged node holds the same content with different metadata,
+                // carry that metadata over so re-staging doesn't discard it.
+                if let Some(staged) = staged
+                    && let Ok(staged_file) = staged.node.file()
+                    && staged_file.hash() == file_node.hash()
+                    && let Some(metadata) = staged_file.metadata()
+                {
+                    file_node.set_metadata(Some(metadata));
+                    file_node.recompute_metadata_hashes()?;
+                }
+                (file_node, StagedEntryStatus::Modified)
+            }
+            // A file only the workspace has, such as a copy, stays staged as it was added.
+            (None, Some(staged)) => (staged.node.file()?, staged.status),
+            (None, None) => return Err(OxenError::basic_str("file not found in head commit")),
+        };
+        file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
+        log::debug!("p_modify_file file_node: {file_node}");
         Ok(StagedMerkleTreeNode {
-            status: StagedEntryStatus::Modified,
+            status,
             node: MerkleTreeNode::from_file(file_node),
         })
     })?;
