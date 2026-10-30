@@ -1109,14 +1109,19 @@ async fn p_add_file(
     )
     .await?;
 
-    // Store the file in the version store using the hash as the key
+    // Store the file in the version store using the hash as the key. A file the commit has at this
+    // path is stored only when the store has lost the commit's copy.
     let hash_str = file_status.hash.to_string();
-    let file = tokio::fs::File::open(&full_path).await?;
-    let size = file.metadata().await?.len();
-    let reader = tokio::io::BufReader::new(file);
-    version_store
-        .store_version_from_reader(&hash_str, Box::new(reader), size)
-        .await?;
+    if file_status.status != StagedEntryStatus::Unmodified
+        || !version_store.version_exists(&hash_str).await?
+    {
+        let file = tokio::fs::File::open(&full_path).await?;
+        let size = file.metadata().await?.len();
+        let reader = tokio::io::BufReader::new(file);
+        version_store
+            .store_version_from_reader(&hash_str, Box::new(reader), size)
+            .await?;
+    }
     let conflicts: HashSet<PathBuf> = repositories::merge::list_conflicts(workspace_repo)?
         .into_iter()
         .map(|conflict| conflict.merge_entry.path)
