@@ -138,6 +138,45 @@ if [ "$(uname)" = "Darwin" ] && [ -z "${DYLD_LIBRARY_PATH:-}" ] && command -v py
         export DYLD_LIBRARY_PATH="$_pylib"
     fi
 fi
+# The export alone doesn't reach the tests when `cargo` is itself a `#!/bin/bash` wrapper, as
+# Homebrew's rustup installs, since SIP strips it again there. Cargo sets its `[env]` config on the
+# test binaries it starts, so hand the path to cargo as config too. Doctest binaries are started by
+# rustdoc rather than cargo and don't get `[env]`, so they carry the path as an rpath instead.
+
+# `$1` as a TOML basic string, for a `--config` value.
+toml_str() {
+    local s="${1//\\/\\\\}"
+    printf '"%s"' "${s//\"/\\\"}"
+}
+
+CARGO_ENV_ARGS=()
+if [ "$(uname)" = "Darwin" ] && [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
+    CARGO_ENV_ARGS=(--config "env.DYLD_LIBRARY_PATH=$(toml_str "$DYLD_LIBRARY_PATH")")
+    # One rpath per directory, since a caller's DYLD_LIBRARY_PATH may list several.
+    _rpaths=""
+    _encoded_rpaths=""
+    IFS=: read -r -a _dyld_dirs <<< "$DYLD_LIBRARY_PATH"
+    for _dir in ${_dyld_dirs[@]+"${_dyld_dirs[@]}"}; do
+        if [ -n "$_dir" ]; then
+            _rpaths+="\"-C\", $(toml_str "link-arg=-Wl,-rpath,$_dir"), "
+            _encoded_rpaths+=$'\x1f'"-C"$'\x1f'"link-arg=-Wl,-rpath,$_dir"
+        fi
+    done
+    # Either flags variable replaces `build.rustdocflags`, so a caller's flags get the rpaths
+    # appended there instead. The encoded form separates arguments with 0x1f, which keeps a
+    # directory containing a space whole.
+    if [ -n "${CARGO_ENCODED_RUSTDOCFLAGS:-}" ]; then
+        export CARGO_ENCODED_RUSTDOCFLAGS="$CARGO_ENCODED_RUSTDOCFLAGS$_encoded_rpaths"
+    elif [ -n "${RUSTDOCFLAGS:-}" ]; then
+        read -r -a _caller_flags <<< "$RUSTDOCFLAGS"
+        _encoded="$(IFS=$'\x1f'; echo "${_caller_flags[*]+"${_caller_flags[*]}"}")"
+        export CARGO_ENCODED_RUSTDOCFLAGS="${_encoded}${_encoded_rpaths}"
+        # A RUSTDOCFLAGS of only whitespace leaves nothing before the first separator.
+        CARGO_ENCODED_RUSTDOCFLAGS="${CARGO_ENCODED_RUSTDOCFLAGS#$'\x1f'}"
+    else
+        CARGO_ENV_ARGS+=(--config "build.rustdocflags=[$_rpaths]")
+    fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
@@ -233,8 +272,9 @@ fi
 # the `cargo test` below reuses this build instead of compiling the dependencies a second time.
 phase "Build"
 echo "==> Building oxen (cargo build --workspace --bins --tests $FEATURE_ARGS)..."
+# The `+` expansion keeps an empty array from tripping `set -u` in macOS's bash 3.2.
 # shellcheck disable=SC2086
-cargo build --workspace --bins --tests $FEATURE_ARGS
+cargo ${CARGO_ENV_ARGS[@]+"${CARGO_ENV_ARGS[@]}"} build --workspace --bins --tests $FEATURE_ARGS
 
 phase "Server start"
 
@@ -369,14 +409,21 @@ else
     if [ "$TIMINGS" = true ]; then
         # --report-time needs RUSTC_BOOTSTRAP; the runner sets it for the test binaries only,
         # leaving the build untouched. Doctests reject the flag, so they are left out.
+        # The runner is /usr/bin/env, which SIP strips `DYLD_LIBRARY_PATH` from, so it sets that
+        # again too.
         HOST_TRIPLE=$(rustc -vV | awk '/^host:/{print $2}')
-        export "CARGO_TARGET_$(echo "$HOST_TRIPLE" | tr 'a-z-' 'A-Z_')_RUNNER=env RUSTC_BOOTSTRAP=1"
+        RUNNER="\"env\", \"RUSTC_BOOTSTRAP=1\""
+        if [ -n "${DYLD_LIBRARY_PATH:-}" ]; then
+            RUNNER+=", $(toml_str "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH")"
+        fi
+        CARGO_ENV_ARGS+=(--config "target.$HOST_TRIPLE.runner=[$RUNNER]")
         TARGET_ARGS="--lib --bins --tests"
         set -- "$@" -Z unstable-options --report-time
     fi
     echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
     # shellcheck disable=SC2086
-    cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
+    cargo ${CARGO_ENV_ARGS[@]+"${CARGO_ENV_ARGS[@]}"} test --workspace --no-fail-fast \
+        $FEATURE_ARGS $TARGET_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
 fi
 
 # cleanup handled via the trapped cleanup function
