@@ -35,7 +35,7 @@ use indicatif::ProgressBar;
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::filter::{DFFilterExp, DFFilterOp, DFFilterVal};
 
@@ -109,30 +109,9 @@ pub fn new_df() -> DataFrame {
     DataFrame::empty()
 }
 
-fn read_df_csv(path: impl AsRef<Path>, dialect: CsvDialect) -> Result<LazyFrame, OxenError> {
-    let reader = base_lazy_csv_reader(
-        ScanSource::Path(PlRefPath::try_from_path(path.as_ref())?).into_sources(),
-        dialect,
-    );
-    reader
-        .finish()
-        .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
-}
-
 fn lazy_jsonl_reader(sources: ScanSources) -> LazyJsonLineReader {
     LazyJsonLineReader::new_with_sources(sources)
         .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
-}
-
-fn read_df_jsonl(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    let path = path.as_ref();
-    lazy_jsonl_reader(ScanSource::Path(PlRefPath::try_from_path(path)?).into_sources())
-        .finish()
-        .map_err(|_| OxenError::basic_str(format!("{READ_ERROR}: {path:?}")))
-}
-
-fn read_df_json(path: &Path) -> Result<LazyFrame, OxenError> {
-    read_json(&ByteSource::Path(path))
 }
 
 /// Read a JSON array, which cannot be scanned lazily, so the whole array is read.
@@ -148,34 +127,6 @@ fn read_json(source: &ByteSource) -> Result<LazyFrame, OxenError> {
             OxenError::internal_error(format!("Could not read json data from {source:?}: {e}"))
         })?;
     Ok(df.lazy())
-}
-
-pub fn read_df_parquet(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    let args = ScanArgsParquet {
-        n_rows: None,
-        ..Default::default()
-    };
-    // log::debug!(
-    //     "scan_df_parquet_n_rows path: {:?} n_rows: {:?}",
-    //     path.as_ref(),
-    //     args.n_rows
-    // )
-    LazyFrame::scan_parquet(PlRefPath::try_from_path(path.as_ref())?, args).map_err(|_| {
-        OxenError::basic_str(format!(
-            "Error scanning parquet file {}: {:?}",
-            READ_ERROR,
-            path.as_ref()
-        ))
-    })
-}
-
-fn read_df_arrow(path: impl AsRef<Path>) -> Result<LazyFrame, OxenError> {
-    LazyFrame::scan_ipc(
-        PlRefPath::try_from_path(path.as_ref())?,
-        IpcScanOptions::default(),
-        ipc_scan_args(None, None),
-    )
-    .map_err(|_| OxenError::basic_str(format!("{}: {:?}", READ_ERROR, path.as_ref())))
 }
 
 pub fn take(df: LazyFrame, indices: Vec<u32>) -> Result<DataFrame, OxenError> {
@@ -1230,21 +1181,20 @@ pub async fn read_df(path: impl AsRef<Path>, opts: DFOpts) -> Result<DataFrame, 
 /// Read a tabular file from a local filesystem path. For version files held by a `VersionStore`,
 /// use [`read_version_df`] instead so access goes through the store's byte interface.
 pub async fn read_df_with_extension(
-    path: impl AsRef<Path>,
-    extension: impl AsRef<str>,
+    path: &Path,
+    extension: &str,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
-    let path = path.as_ref().to_path_buf();
-    p_read_df_with_extension(path, extension.as_ref(), opts.clone()).await
+    let df_lazy = _read_lazy_df_with_extension(path.to_path_buf(), extension, opts).await?;
+    collect_with_opts(df_lazy, opts.clone()).await
 }
 
 async fn _read_lazy_df_with_extension(
-    path: impl AsRef<Path> + Send + 'static,
-    extension: impl AsRef<str>,
+    path: PathBuf,
+    extension: &str,
     opts: &DFOpts,
 ) -> Result<LazyFrame, OxenError> {
-    let path = path.as_ref().to_path_buf();
-    let extension = extension.as_ref().to_string();
+    let extension = extension.to_string();
     let opts_clone = opts.clone();
 
     task::spawn_blocking(move || {
@@ -1252,43 +1202,15 @@ async fn _read_lazy_df_with_extension(
             return Err(OxenError::entry_does_not_exist(&path));
         }
 
-        log::debug!("Reading df with extension {:?} {:?}", extension, path);
-
-        match extension.as_str() {
-            "ndjson" | "jsonl" => read_df_jsonl(&path),
-            "json" => read_df_json(&path),
-            "csv" | "data" | "tsv" => {
-                let dialect = CsvDialect::sniff(&ByteSource::Path(&path), &extension, &opts_clone)?;
-                read_df_csv(&path, dialect)
-            }
-            "parquet" => read_df_parquet(&path),
-            "arrow" => {
-                if opts_clone.sql.is_some() {
-                    return Err(OxenError::basic_str(
-                        "Error: SQL queries are not supported for .arrow files",
-                    ));
-                }
-                read_df_arrow(&path)
-            }
-            _ => {
-                let err = format!(
-                    "Could not load data frame with path: {path:?} and extension: {extension}"
-                );
-                Err(OxenError::basic_str(err))
-            }
-        }
+        scan_df_with_extension(
+            &ByteSource::Path(&path),
+            Some(&extension),
+            &opts_clone,
+            None,
+        )
     })
     .await
     .map_err(|e| OxenError::basic_str(format!("Task panicked: {e}")))?
-}
-
-pub async fn p_read_df_with_extension(
-    path: impl AsRef<Path> + Send + 'static,
-    extension: impl AsRef<str>,
-    opts: DFOpts,
-) -> Result<DataFrame, OxenError> {
-    let df_lazy = _read_lazy_df_with_extension(path, extension.as_ref(), &opts).await?;
-    collect_with_opts(df_lazy, opts).await
 }
 
 /// Apply any `DFOpts` transform to a lazy frame and collect it into a `DataFrame` off the async
@@ -1327,20 +1249,13 @@ pub async fn read_version_df(
     extension: &str,
     opts: &DFOpts,
 ) -> Result<DataFrame, OxenError> {
-    match version_store.version_location(&hash.to_string()).await? {
-        VersionLocation::Local(path) => {
-            p_read_df_with_extension(path, extension, opts.clone()).await
-        }
+    let df_lazy = match version_store.version_location(&hash.to_string()).await? {
+        VersionLocation::Local(path) => _read_lazy_df_with_extension(path, extension, opts).await?,
         VersionLocation::S3 {
             url,
             region,
             endpoint_url,
         } => {
-            if extension == "arrow" && opts.sql.is_some() {
-                return Err(OxenError::internal_error(
-                    "SQL queries are not supported for .arrow files",
-                ));
-            }
             let version = StoredVersion::new(
                 Arc::clone(version_store),
                 hash,
@@ -1352,14 +1267,14 @@ pub async fn read_version_df(
             .await?;
             let extension = extension.to_string();
             let scan_opts = opts.clone();
-            let df_lazy = task::spawn_blocking(move || {
+            task::spawn_blocking(move || {
                 let source = ByteSource::Stored(&version);
                 scan_df_with_extension(&source, Some(&extension), &scan_opts, None)
             })
-            .await??;
-            collect_with_opts(df_lazy, opts.clone()).await
+            .await??
         }
-    }
+    };
+    collect_with_opts(df_lazy, opts.clone()).await
 }
 
 /// Scan arguments for an IPC file, reading at most `n_rows` rows from its start.
@@ -1407,8 +1322,9 @@ pub fn scan_df(
     )
 }
 
-/// A scan of at most `n_rows` rows of `source`, a data frame file with `extension`. A stored version
-/// file's reads block, so scan it off the async runtime.
+/// A scan of at most `n_rows` rows of `source`, a data frame file with `extension`. Refuses an
+/// `.arrow` file when `opts` carries a SQL query. A stored version file's reads block, so scan it
+/// off the async runtime.
 fn scan_df_with_extension(
     source: &ByteSource,
     extension: Option<&str>,
@@ -1420,19 +1336,20 @@ fn scan_df_with_extension(
         file.extension = ?extension,
         "Scanning a data frame"
     );
-    let err = format!("Unknown file type scan_df {source:?} {extension:?}");
     match extension {
-        Some(extension) => match extension {
-            "ndjson" | "jsonl" => scan_df_jsonl(source, n_rows),
-            "json" => read_json(source),
-            "csv" | "data" | "tsv" => {
-                scan_df_csv(source, CsvDialect::sniff(source, extension, opts)?, n_rows)
-            }
-            "parquet" => scan_df_parquet(source, n_rows),
-            "arrow" => scan_df_arrow(source, n_rows),
-            _ => Err(OxenError::basic_str(err)),
-        },
-        None => Err(OxenError::basic_str(err)),
+        Some("ndjson" | "jsonl") => scan_df_jsonl(source, n_rows),
+        Some("json") => read_json(source),
+        Some(extension @ ("csv" | "data" | "tsv")) => {
+            scan_df_csv(source, CsvDialect::sniff(source, extension, opts)?, n_rows)
+        }
+        Some("parquet") => scan_df_parquet(source, n_rows),
+        Some("arrow") if opts.sql.is_some() => Err(OxenError::basic_str(
+            "SQL queries are not supported for .arrow files",
+        )),
+        Some("arrow") => scan_df_arrow(source, n_rows),
+        _ => Err(OxenError::basic_str(format!(
+            "Could not load data frame {source:?} with extension {extension:?}"
+        ))),
     }
 }
 
@@ -1940,7 +1857,7 @@ mod tests {
 
     #[test]
     fn test_read_json() -> Result<(), OxenError> {
-        let df = tabular::read_df_json(&test::test_text_json())?.collect()?;
+        let df = tabular::read_json(&ByteSource::Path(&test::test_text_json()))?.collect()?;
 
         println!("{df}");
 
@@ -1977,7 +1894,7 @@ mod tests {
 
             let mut opts = DFOpts::empty();
             opts.slice = Some(SliceRange::for_page(1, 100));
-            let df = tabular::read_df_with_extension(path.clone(), "jsonl", &opts).await?;
+            let df = tabular::read_df_with_extension(&path, "jsonl", &opts).await?;
             assert_eq!(df.height(), 7);
             assert_eq!(df.column("id")?.i64()?.get(6), Some(6));
             assert_eq!(
@@ -2000,18 +1917,10 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn test_read_jsonl() -> Result<(), OxenError> {
-        let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
-            tabular::read_df_jsonl(test::test_text_jsonl())?
-                .collect()
-                .map_err(OxenError::from)
-        })
-        .await?
-        {
-            Ok(df) => df,
-            Err(e) => return Err(e),
-        };
+    #[test]
+    fn test_read_jsonl() -> Result<(), OxenError> {
+        let df =
+            tabular::scan_df_jsonl(&ByteSource::Path(&test::test_text_jsonl()), None)?.collect()?;
 
         println!("{df}");
 
