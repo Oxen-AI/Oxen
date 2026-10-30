@@ -198,8 +198,8 @@ async fn restore_dir(
 
     // Materialize every tracked directory in the subtree first. Files inside non-empty
     // dirs would otherwise rely on `restore_file`'s `create_dir_all(parent)` side-effect,
-    // but empty dirs (first-class in Oxen — see CLAUDE.md "How Oxen Differs from Git")
-    // have no files to drive that, and would be silently skipped (ENG-1003).
+    // but empty dirs (first-class, tracked entries in Oxen) have no files to drive that, and
+    // would be silently skipped (ENG-1003).
     for dir_path in &entries.dirs {
         let working_dir_path = match util::fs::working_tree_path(&repo.path, dir_path) {
             Ok(working_dir_path) => working_dir_path,

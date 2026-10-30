@@ -511,10 +511,9 @@ pub async fn list_missing_file_hashes_from_commits(
 
 /// Files and directories collected from a merkle subtree walk. `oxen restore <dir>` needs
 /// both: file entries to call `restore_file` on, and directory paths so it can `mkdir -p`
-/// every tracked directory (including empty ones, which are first-class in Oxen — see
-/// CLAUDE.md "How Oxen Differs from Git"). Empty dirs have no files to drive
-/// `restore_file`'s `create_dir_all(parent)` side-effect, so without an explicit dir list
-/// they'd be silently skipped (ENG-1003).
+/// every tracked directory (including empty ones, which are first-class in Oxen). Empty dirs
+/// have no files to drive `restore_file`'s `create_dir_all(parent)` side-effect, so without an
+/// explicit dir list they'd be silently skipped (ENG-1003).
 #[derive(Debug, Default)]
 pub struct DirEntries {
     pub files: HashSet<(FileNode, PathBuf)>,
