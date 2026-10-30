@@ -100,7 +100,8 @@ pub async fn get_slice(
     let version_store = repo.version_store();
     let df = tabular::read_version_df(
         &version_store,
-        &file_node.hash().to_string(),
+        *file_node.hash(),
+        file_node.num_bytes(),
         file_node.extension(),
         opts,
     )

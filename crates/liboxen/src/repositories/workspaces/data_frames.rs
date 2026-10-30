@@ -1465,8 +1465,14 @@ mod tests {
             let appended = workspaces::commit(&workspace, &new_commit, "append").await?;
             let entry = entries::get_commit_entry(&repo, &appended, &path)?
                 .expect("the appended data frame is committed");
-            let data_frame =
-                read_version_df(&version_store, &entry.hash, "csv", &DFOpts::empty()).await?;
+            let data_frame = read_version_df(
+                &version_store,
+                entry.hash.parse()?,
+                entry.num_bytes,
+                "csv",
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(
                 format!("{data_frame}"),
                 r"shape: (7, 6)
@@ -1535,8 +1541,14 @@ mod tests {
             // - 1 removed + 1 appended = 6 rows.
             let entry = entries::get_commit_entry(&repo, &recovered, &path)?
                 .expect("committed entry should exist");
-            let df = read_version_df(&version_store, &entry.hash, "csv", &DFOpts::empty())
-                .await?;
+            let df = read_version_df(
+                &version_store,
+                entry.hash.parse()?,
+                entry.num_bytes,
+                "csv",
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(df.height(), 6, "recovered commit row count: {df}");
             let rendered = format!("{df}");
             assert!(
@@ -1845,8 +1857,14 @@ mod tests {
             .await?;
             let entry = entries::get_commit_entry(&repo, &committed, media)?
                 .expect("the data frame is committed");
-            let data_frame =
-                read_version_df(&version_store, &entry.hash, "jsonl", &DFOpts::empty()).await?;
+            let data_frame = read_version_df(
+                &version_store,
+                entry.hash.parse()?,
+                entry.num_bytes,
+                "jsonl",
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(data_frame.height(), 3, "every row survives the commit");
             assert!(data_frame.column("error_details").is_ok());
 
@@ -1897,8 +1915,14 @@ mod tests {
             // through the recovery.
             let entry = entries::get_commit_entry(&repo, &recovered, media)?
                 .expect("committed entry should exist");
-            let df =
-                read_version_df(&version_store, &entry.hash, "jsonl", &DFOpts::empty()).await?;
+            let df = read_version_df(
+                &version_store,
+                entry.hash.parse()?,
+                entry.num_bytes,
+                "jsonl",
+                &DFOpts::empty(),
+            )
+            .await?;
             assert_eq!(df.height(), 2, "recovered jsonl row count: {df}");
             assert!(
                 df.column("error_details").is_ok(),
