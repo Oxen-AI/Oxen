@@ -1,0 +1,8 @@
+# `crates/oxen-server/`
+
+- **Move request-bound work off the request thread with `crate::tasks::spawn_blocking` (a blocking closure) or `crate::tasks::inherit_hub` (a future, before `tokio::spawn` or `JoinSet::spawn`)**, never `tokio::task::spawn_blocking`, `tokio::spawn`, or `actix_web::web::block`. The per-request Sentry hub and the current tracing span are thread-locals bound only around polls of the request future, so a task spawned the bare way reports a panic with no route and no request, and its spans are exported detached from the request's trace.
+  - Use `crate::tasks::spawn_blocking_per_item` for blocking work dispatched once per item in a loop. It carries the same context but no span of its own, since a bulk endpoint handling thousands of files per request would otherwise emit a span per file.
+  - Ask whether the response is still in flight. If the handler awaits the task, or the task produces the response body, it needs the request's context, and a response-body future must be bound at construction time inside the handler, since the middleware's binding is gone by the time a body is polled. Tasks that outlive their response on purpose (a background delete, a cleanup at stream EOF, a process-lifetime loop) keep using tokio's own spawn.
+  - liboxen calls tokio directly, since it must not depend on `sentry`.
+  - When auditing, remember that `actix_web::web::block` is a `spawn_blocking` that no `spawn_blocking` search finds. The full rationale and checklist are in [docs/async_policy.md](../../docs/async_policy.md).
+- **An operation the server's API starts never touches a local checkout on disk.**
