@@ -1378,17 +1378,43 @@ pub(crate) mod tests {
 
     use aws_sdk_s3::config::retry::RetryConfig;
     use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::net::TcpListener;
 
+    /// The error a server from [`spawn_s3s`] answers a read partway through an object with.
+    const PARTWAY_REFUSAL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error>\
+        <Code>AccessDenied</Code><Message>refused partway through the object</Message></Error>";
+
     /// Spin up an in-process s3s server on a loopback port. The returned temp dir and join handle
-    /// must be kept alive for the server's lifetime.
-    async fn spawn_s3s() -> (SocketAddr, tempfile::TempDir, tokio::task::JoinHandle<()>) {
+    /// must be kept alive for the server's lifetime. While `refuse_partway` is set, the server refuses
+    /// every ranged read that does not start at an object's first byte, as a store failing partway
+    /// through a file does.
+    async fn spawn_s3s(
+        refuse_partway: Arc<AtomicBool>,
+    ) -> (SocketAddr, tempfile::TempDir, tokio::task::JoinHandle<()>) {
         let tmp = tempfile::TempDir::new().unwrap();
         let fs = s3s_fs::FileSystem::new(tmp.path()).unwrap();
 
         let mut builder = s3s::service::S3ServiceBuilder::new(fs);
         builder.set_auth(s3s::auth::SimpleAuth::from_single("test", "test"));
-        let service = builder.build();
+        let s3s = builder.build();
+        let service = hyper::service::service_fn(move |req: http::Request<_>| {
+            let refused = refuse_partway.load(Ordering::Relaxed)
+                && (req.headers().get(http::header::RANGE))
+                    .is_some_and(|range| !range.as_bytes().starts_with(b"bytes=0-"));
+            let s3s = s3s.clone();
+            async move {
+                if refused {
+                    return Ok(http::Response::builder()
+                        .status(http::StatusCode::FORBIDDEN)
+                        .body(s3s::Body::from(Bytes::from_static(
+                            PARTWAY_REFUSAL.as_bytes(),
+                        )))
+                        .unwrap());
+                }
+                hyper::service::Service::call(&s3s, req).await
+            }
+        });
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1419,7 +1445,20 @@ pub(crate) mod tests {
         tempfile::TempDir,
         tokio::task::JoinHandle<()>,
     ) {
-        let (addr, tmp, server_handle) = spawn_s3s().await;
+        let (store, tmp, server_handle, _) = setup_refusable().await;
+        (store, tmp, server_handle)
+    }
+
+    /// What [`setup`] gives, and the switch that has the server refuse reads partway through an
+    /// object (see [`spawn_s3s`]).
+    async fn setup_refusable() -> (
+        S3VersionStore,
+        tempfile::TempDir,
+        tokio::task::JoinHandle<()>,
+        Arc<AtomicBool>,
+    ) {
+        let refuse_partway = Arc::new(AtomicBool::new(false));
+        let (addr, tmp, server_handle) = spawn_s3s(Arc::clone(&refuse_partway)).await;
 
         // Unique bucket per test — `polars-io`'s cloud-store cache is keyed by bucket, so any two
         // cloud_reads tests sharing a bucket name will collide on a stale endpoint (the first
@@ -1437,7 +1476,7 @@ pub(crate) mod tests {
             Some(format!("http://{addr}")),
         );
 
-        (store, tmp, server_handle)
+        (store, tmp, server_handle, refuse_partway)
     }
 
     /// Every object key under `prefix`, in the order the lister produced them.
@@ -1477,7 +1516,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_destroy_removes_only_this_stores_objects() {
-        let (addr, _tmp, _server) = spawn_s3s().await;
+        let (addr, _tmp, _server) = spawn_s3s(Arc::default()).await;
         let client = Arc::new(build_test_client(addr));
         client
             .create_bucket()
@@ -1526,7 +1565,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_destroy_refuses_empty_prefix() {
-        let (addr, _tmp, _server) = spawn_s3s().await;
+        let (addr, _tmp, _server) = spawn_s3s(Arc::default()).await;
         let client = Arc::new(build_test_client(addr));
         client
             .create_bucket()
@@ -1549,7 +1588,7 @@ pub(crate) mod tests {
     async fn test_check_bucket_accessible_fails_for_missing_bucket() {
         // Server is up but this bucket was never created -- the probe must error so the boot
         // hard-fails rather than letting a misconfigured bucket through.
-        let (addr, _tmp, _server) = spawn_s3s().await;
+        let (addr, _tmp, _server) = spawn_s3s(Arc::default()).await;
         let store = S3VersionStore::new_with_client(
             Arc::new(build_test_client(addr)),
             "missing-bucket".to_string(),
@@ -2494,7 +2533,9 @@ pub(crate) mod tests {
         /// Every tabular format reads back from S3 by value, on a multi-threaded runtime.
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn test_read_s3_formats() {
-            let (store, _tmp, _server) = setup_dyn().await;
+            set_test_aws_env();
+            let (store, _tmp, _server, refuse_partway) = setup_refusable().await;
+            let store: Arc<dyn VersionStore> = Arc::new(store);
             let cases = [
                 ("parquet", sample_parquet(), "Parquet cloud scan"),
                 ("arrow", sample_ipc(), "IPC cloud scan"),
@@ -2558,7 +2599,9 @@ pub(crate) mod tests {
             files.push((PathBuf::from("rows.csv"), csv("a,b", 12_000, "")));
             for (path, bytes) in files {
                 let (mime_type, data_type, metadata) =
-                    inspect_uploaded(&store, &path, bytes.clone()).await;
+                    inspect_uploaded(&store, &path, bytes.clone())
+                        .await
+                        .unwrap_or_else(|e| panic!("{path:?}: {e}"));
                 let in_memory = inspect_bytes(Bytes::from(bytes), &path).unwrap();
                 assert!(metadata.is_some(), "{path:?} has metadata to compare");
                 assert_eq!(
@@ -2577,7 +2620,9 @@ pub(crate) mod tests {
             // into memory, so its schema comes from the rows that fit, before the string in `b`.
             let wide = format!(",{}", "c".repeat(8 * 1024));
             let (_, _, metadata) =
-                inspect_uploaded(&store, Path::new("wide.csv"), csv("a,b,c", 10_050, &wide)).await;
+                inspect_uploaded(&store, Path::new("wide.csv"), csv("a,b,c", 10_050, &wide))
+                    .await
+                    .expect("wide.csv inspects");
             let Some(GenericMetadata::MetadataTabular(metadata)) = metadata else {
                 panic!("wide.csv has tabular metadata, not {metadata:?}");
             };
@@ -2586,6 +2631,20 @@ pub(crate) mod tests {
                 .collect();
             assert_eq!(dtypes, ["i64", "i64", "str"], "wide.csv's column types");
             assert_eq!(metadata.tabular.height, 10_050, "wide.csv counts every row");
+
+            // A read that fails partway through a file fails its inspection with the store's error,
+            // rather than inspecting it as a file with no metadata. This file is larger than the
+            // first fetch of its start, so Polars reads its footer partway through it.
+            refuse_partway.store(true, Ordering::Relaxed);
+            let parquet = std::fs::read(test::test_30k_parquet()).unwrap();
+            let err = inspect_uploaded(&store, Path::new("wiki_30k.parquet"), parquet)
+                .await
+                .expect_err("a read partway through wiki_30k.parquet fails its inspection");
+            assert!(
+                err.to_string()
+                    .contains("refused partway through the object"),
+                "wiki_30k.parquet's inspection fails with the store's error, not {err}"
+            );
         }
 
         /// What inspecting `bytes`, stored in `store` as the version file at `path`, gives.
@@ -2593,7 +2652,7 @@ pub(crate) mod tests {
             store: &Arc<dyn VersionStore>,
             path: &Path,
             bytes: Vec<u8>,
-        ) -> (String, EntryDataType, Option<GenericMetadata>) {
+        ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
             let size = bytes.len() as u64;
             let hash = upload(store, bytes).await;
             let VersionLocation::S3 {
@@ -2614,9 +2673,7 @@ pub(crate) mod tests {
             )
             .await
             .unwrap();
-            inspect_stored(version, path, None)
-                .await
-                .unwrap_or_else(|e| panic!("{path:?}: {e}"))
+            inspect_stored(version, path, None).await
         }
 
         /// Transforms and rejected reads on the current-thread runtime the actix server uses. A
