@@ -20,6 +20,7 @@ The Cargo workspace lives at the repository root, with crates under `crates/`:
 The CLI and server both depend on the shared library. Implement core functionality in the lib first, then expose it through the CLI and server.
 
 ## Key Components (`crates/liboxen/src/`)
+
 - **`core/`**: core data structures and database operations
 - **`model/`**: commits, branches, entries, diffs, and the like
 - **`repositories/`**: repository operations (init, clone, add, commit, push, pull, and so on). Most high-level operations start here.
@@ -35,6 +36,7 @@ GOOD: `cargo check --workspace`
 BAD: `cargo check --package liboxen`
 
 ### Building
+
 ```bash
 cargo build --workspace                           # Debug build
 cargo build --workspace --bins --tests            # Debug build that a later `cargo test` reuses
@@ -42,6 +44,7 @@ cargo build --workspace --bins --tests            # Debug build that a later `ca
 A `cargo build` that a `cargo test` follows, in a script or a CI job, builds `--bins --tests` with the same packages and features the test command selects, as `bin/test` and the Rust Tests jobs do. Dev-dependencies add features to crates such as `hyper` and `getrandom`, so a plain `cargo build` resolves a different feature set, and the `cargo test` after it compiles a second copy of every dependency above them, DuckDB, RocksDB, polars, and the AWS SDK included.
 
 ### Testing
+
 Run tests with `bin/test`, never `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is in a comment at the top of the script. `cargo test` alone works only after reproducing that setup by hand (the "Manual Test Setup" section of `crates/liboxen/README.md`).
 ```bash
 bin/test                         # Build and run all Rust tests
@@ -59,6 +62,7 @@ env RUST_LOG=warn,liboxen=debug,integration_test=debug bin/test --no-capture tes
 - **Read [docs/testing.md](docs/testing.md) before writing, editing, merging, deleting, or timing a test.** It covers choosing a fixture helper, folding tests that share a fixture into one, keeping coverage when tests merge, timing a change, and process-global state.
 
 ### Code Quality
+
 ```bash
 cargo fmt --all                                    # Format code
 cargo clippy --workspace --no-deps -- -D warnings  # Lint code
@@ -66,6 +70,7 @@ pre-commit run --all-files                         # Run pre-commit hooks (runs 
 ```
 
 ### Benchmarks
+
 The `liboxen::test` helper module is gated behind the `test-utils` feature, so it isn't compiled into release builds. Benches that use it (`download`, `fetch`, `push`, `workspace_add`) declare `required-features = ["test-utils"]` and are skipped unless the feature is enabled:
 ```bash
 cargo bench --features liboxen/test-utils           # Run all benches
@@ -74,12 +79,14 @@ cargo bench --features liboxen/test-utils --bench push
 `oxen-cli` and `oxen-server` enable `test-utils` through their dev-dependencies, so their own tests can call `liboxen::test::*`.
 
 ### Server Development
+
 ```bash
 ulimit -n 10240                     # Increase file handles before running the server
 bacon server                        # Start server with live reload
 ```
 
 ### CLI Usage
+
 ```bash
 export PATH="$PATH:/path/to/Oxen/target/debug"
 oxen init                           # Initialize repository
@@ -90,6 +97,7 @@ oxen push origin main               # Push to remote
 ```
 
 ## Code Organization
+
 - Define module exports in a `<module_name>.rs` file beside the `module_name/` directory, *NOT* the older `mod.rs` pattern.
 - Import bare items (structs, enums, traits, functions, constants, macros) and refer to them unqualified, rather than importing a parent module and qualifying at each use site: `use std::time::Duration;` then `Duration::from_secs(5)`, not `std::time::Duration::from_secs(5)`. Keep enough of the path to disambiguate where a bare import would be ambiguous or misleading (two same-named items from different modules), or where a module qualifier is the established idiom (`use std::fmt;` then `fmt::Result`, which avoids clashing with the prelude `Result`). Reach for an `as` alias when that reads better than a module qualifier.
 - **Take the concrete type, and make a generic earn its place.** When you write or change a function, give each parameter the type its callers pass: `&str`, `&Path`, `&OsStr`, `&[T]`, `String`, `PathBuf`. Deref coercion already turns `&String`, `&PathBuf`, `&OsString`, and `&Vec<T>` into the borrowed form, so a conversion bound (`impl AsRef<_>`, `impl Into<_>`, `impl Borrow<_>`) or a type parameter buys those callers nothing and adds monomorphization cost and `.as_ref()`/`.into()` noise in the body.
@@ -112,12 +120,14 @@ oxen push origin main               # Push to remote
 - Precede every `unsafe` block or `unsafe fn` with a `// SAFETY:` comment saying why the operation is sound: which invariants it relies on, why they hold here, and what would break if they didn't, per the [Rust style guide](https://std-dev-guide.rust-lang.org/policy/safety-comments.html). Document an `unsafe fn`'s obligations in a `# Safety` section of its doc comment, and pair each call site with its own `// SAFETY:` comment saying why they are met.
 
 ## Comments
+
 - Preserve code comments where possible. Comments written by someone other than the agent are always preserved or updated.
 - Function doc-comments describe **what** the function does, not **how**, unless the how matters to callers (an ordering constraint such as "call before `commit()`", a filesystem rule such as "src and target must live on the same filesystem", a thread-safety invariant such as "never hold a guard across `.await`"). The doc-comment conveys the contract callers rely on, and it rots when it duplicates the body's mechanism. Trim "stamps the temp file with mtime before the rename" to "the published file carries mtime". This applies to public and private doc-comments alike, and to inline comments that narrate implementation rather than describe behavior.
 - The set of merkle nodes and version blobs reachable from a commit is the **reachable objects** or **reachable set**, never the "closure" or "object closure", in identifiers, comments, error messages, commit messages, and issue text. "Closure" is fine for Rust closures.
 - A file in the version store is a **version file** (or versioned file) in comments, doc-comments, error messages, commit messages, and issue text, never a bare "version" or "the version's data", since "version" also means a release or a commit. Identifiers such as `version_path` are fine.
 
 ## Error Handling
+
 - **Read [docs/error_handling.md](docs/error_handling.md) before writing or changing any error handling, and follow it**: whenever a change adds an `OxenError` or `OxenHttpError` variant, changes how one is raised or classified, alters an HTTP status or a log level, or touches `hint`, `is_not_found`, `is_fatal_for_retry`, or `error_response`. Classification lives in `match` arms that fall through to a default, so a variant missing from a list still compiles and passes the tests while being classified wrong at runtime. Walk the doc's checklist after adding a variant, including whether `hint` needs an entry.
 - Never use `.unwrap()` or `.expect()` on a `Result` or an `Option` in production code, even where a panic looks unreachable because of an upstream invariant: propagate the error with `?`. Test-only code may use `.expect(<the invariant that was violated>)` to fail fast with a good stack trace.
 - `liboxen` returns `Result<T, OxenError>`. An error that is never inspected internally and cannot reach a caller of the library's public API is `OxenError::InternalError` with a formatted string. One that is inspected or can reach such a caller gets a structured variant on `OxenError`. Where code acts on an error, use as specific a type as possible, and a module whose errors are alike may define a local error enum unified under `OxenError`.
