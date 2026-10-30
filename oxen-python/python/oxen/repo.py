@@ -140,7 +140,8 @@ class Repo:
 
         The next commit records the path as removed. The path must already be
         committed. To bring the file back, use `oxen restore --staged <path>` to
-        unstage the removal and then `oxen restore <path>`.
+        unstage the removal and then `oxen restore <path>`. A directory removed
+        recursively keeps its untracked files, and stays on disk when it has any.
 
         A file whose working copy or staged content differs from HEAD is
         refused, as is a file added under a directory removed recursively.
