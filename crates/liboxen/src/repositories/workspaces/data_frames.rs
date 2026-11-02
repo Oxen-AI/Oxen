@@ -505,12 +505,13 @@ mod tests {
     use std::time::SystemTime;
 
     use indicatif::ProgressBar;
+    use polars::df;
     use serde_json::json;
 
     use super::*;
     use crate::config::UserConfig;
     use crate::constants::{DEFAULT_BRANCH_NAME, DIFF_STATUS_COL, INDEX_META_TABLE, OXEN_ID_COL};
-    use crate::core::df::tabular::read_version_df;
+    use crate::core::df::tabular::{read_version_df, write_df_arrow};
     use crate::core::staged::get_staged_db_manager;
     use crate::error::OxenError;
     use crate::model::diff::DiffResult;
@@ -1606,14 +1607,7 @@ mod tests {
             let new_commit =
                 workspaces::commit(&workspace, &body("Keep only the second row"), "unstage-discards")
                     .await?;
-            let resource = ParsedResource {
-                path: path.clone(),
-                version: PathBuf::from(new_commit.id.to_string()),
-                resource: path.clone(),
-                workspace: None,
-                commit: Some(new_commit.clone()),
-                branch: None,
-            };
+            let resource = committed_resource(&path, &new_commit);
             let df = get_slice(&repo, &resource, &path, &DFOpts::empty())
                 .await?;
             assert_eq!(
@@ -1992,6 +1986,63 @@ mod tests {
             let found = get_queryable_data_frame_workspace(&repo, &file_path, &commit)?;
             assert_eq!(found.id, queryable.id);
 
+            // A query on the indexed frame answers with its own error rather than every row.
+            let csv = committed_resource(&file_path, &commit);
+            let with_sql = |sql: &str| DFOpts {
+                sql: Some(sql.to_string()),
+                ..DFOpts::empty()
+            };
+            let err = get_slice(&repo, &csv, &file_path, &with_sql("SELECT * FROM df WHERE"))
+                .await
+                .err();
+            assert!(
+                matches!(
+                    err,
+                    Some(OxenError::DataFrameError(DataFrameError::SqlParse(_)))
+                ),
+                "malformed SQL, got {err:?}"
+            );
+            let unknown_column = with_sql("SELECT * FROM df WHERE no_such_column = 1");
+            let err = get_slice(&repo, &csv, &file_path, &unknown_column)
+                .await
+                .err();
+            assert!(
+                matches!(
+                    err,
+                    Some(OxenError::DataFrameError(DataFrameError::DuckDb(_)))
+                ),
+                "a column the frame lacks, got {err:?}"
+            );
+
+            // DuckDB cannot index an .arrow file, so a query on one is refused before any
+            // workspace is created to hold its index.
+            let arrow_path = PathBuf::from("frame.arrow");
+            let mut frame = df!("label" => ["cat", "dog"])?;
+            write_df_arrow(&mut frame, repo.path.join(&arrow_path))?;
+            repositories::add(&repo, repo.path.join(&arrow_path)).await?;
+            let arrow_commit = repositories::commit(&repo, "Add an .arrow data frame")?;
+            let workspace_count = workspaces::list(&repo).await?.len();
+            let all_rows = with_sql("SELECT * FROM df");
+            let arrow = committed_resource(&arrow_path, &arrow_commit);
+            let err = get_slice(&repo, &arrow, &arrow_path, &all_rows).await.err();
+            let Some(OxenError::DataFrameError(DataFrameError::InvalidFileType { extension })) =
+                &err
+            else {
+                panic!("a query on a committed .arrow file, got {err:?}");
+            };
+            assert_eq!(extension, "arrow", "the refusal names the extension");
+            let sql = "SELECT * FROM df".to_string();
+            let err = sql::query_df_from_repo(sql, &repo, &arrow_path, &all_rows)
+                .await
+                .err();
+            let Some(OxenError::DataFrameError(DataFrameError::InvalidFileType { extension })) =
+                &err
+            else {
+                panic!("a query on an .arrow file in the working tree, got {err:?}");
+            };
+            assert_eq!(extension, "arrow", "the refusal names the extension");
+            assert_eq!(workspaces::list(&repo).await?.len(), workspace_count);
+
             Ok(())
         })
         .await
@@ -2093,6 +2144,18 @@ mod tests {
         (0..df.height())
             .map(|i| Ok(column.get(i)?.to_string().trim_matches('"').to_string()))
             .collect()
+    }
+
+    /// A resource naming the data frame at `path` as `commit` holds it, outside any workspace.
+    fn committed_resource(path: &Path, commit: &Commit) -> ParsedResource {
+        ParsedResource {
+            path: path.to_path_buf(),
+            version: PathBuf::from(commit.id.to_string()),
+            resource: path.to_path_buf(),
+            workspace: None,
+            commit: Some(commit.clone()),
+            branch: None,
+        }
     }
 
     fn page_opts(page: usize, page_size: usize, sql: Option<&str>) -> DFOpts {

@@ -30,8 +30,11 @@ pub enum DataFrameError {
     #[error("No rows in table {0}")]
     NoRowsInTable(String),
 
-    #[error("Invalid file type: expected .csv, .tsv, .parquet, .jsonl, .json, .ndjson")]
-    InvalidFileType,
+    /// A data frame file with an `extension` DuckDB cannot index, query, or export to.
+    #[error(
+        "Unsupported file type {extension:?}, expected .csv, .tsv, .parquet, .jsonl, .json, or .ndjson"
+    )]
+    InvalidFileType { extension: String },
 
     #[error("modify_row incompatible_schemas {table_schema:?}\n{df_cols:?}")]
     IncompatibleSchemas {

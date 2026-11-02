@@ -1105,7 +1105,8 @@ impl OxenError {
             OxenError::MerkleNodesOnFilesystem(_) => true,
             OxenError::TabularFileMissingMetadata(_) => true,
             OxenError::InvalidDataFrameParam { .. } => true,
-            OxenError::InvalidFileType(_) => true,
+            OxenError::InvalidFileType(_)
+            | OxenError::DataFrameError(DataFrameError::InvalidFileType { .. }) => true,
             OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
             OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
