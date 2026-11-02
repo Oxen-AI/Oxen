@@ -39,10 +39,17 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
         with:
-          prefix-key: rust-test # Restore the cache the PR test job saves on main.
+          prefix-key: rust-test
           cache-all-crates: true
           cache-on-failure: false
           cache-bin: false
+
+      # The workspace build links the tests against libpython through pyo3 (pyo3-polars turns on
+      # polars' Python support), so pin the Python it links rather than taking the runner image's.
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11" # The earliest supported Python, as in ci_test.yml
 
       # Loopback NFS export, mounted back to this same runner.
       - name: Setup loopback NFS mount
