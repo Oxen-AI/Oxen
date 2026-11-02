@@ -2448,9 +2448,14 @@ pub(crate) mod tests {
         use crate::model::EntryDataType;
         use crate::model::metadata::generic_metadata::GenericMetadata;
         use crate::opts::DFOpts;
-        use crate::repositories::metadata::{StoredVersion, inspect_bytes, inspect_stored};
+        use crate::repositories::metadata::{
+            MIN_FETCH, StoredVersion, inspect_bytes, inspect_stored,
+        };
         use crate::test;
+        use mp4::{BoxHeader, BoxType, HEADER_SIZE};
         use polars::prelude::*;
+        use std::fs;
+        use std::io::Cursor;
         use std::path::{Path, PathBuf};
 
         /// Make the s3s fixture credentials discoverable by Polars' `from_env` cloud-scan path
@@ -2544,7 +2549,9 @@ pub(crate) mod tests {
             );
         }
 
-        /// Every tabular format reads back from S3 by value, on a multi-threaded runtime.
+        /// Every tabular format reads back from S3 by value, a stored file inspects as it does in
+        /// memory, and a read failing partway through a stored file fails its inspection with the
+        /// store's error, on a multi-threaded runtime.
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn test_read_s3_formats() {
             set_test_aws_env();
@@ -2593,7 +2600,7 @@ pub(crate) mod tests {
             ]
             .into_iter()
             .map(|path| {
-                let bytes = std::fs::read(&path).unwrap();
+                let bytes = fs::read(&path).unwrap();
                 (path, bytes)
             })
             .collect();
@@ -2611,6 +2618,28 @@ pub(crate) mod tests {
             };
             // A head cut short of the string infers another type for `b`.
             files.push((PathBuf::from("rows.csv"), csv("a,b", 12_000, "")));
+            // basketball.mp4 with a `free` box the size of a stored file's first fetch ahead of its
+            // `moov`, which the video extractor then reads past that fetch.
+            let late_moov = {
+                let mp4 = fs::read(test::test_video_file_with_name("basketball.mp4")).unwrap();
+                let mut boxes = Cursor::new(&mp4);
+                let moov_at = loop {
+                    let at = boxes.position();
+                    let header = BoxHeader::read(&mut boxes).unwrap();
+                    if header.name == BoxType::MoovBox {
+                        break at as usize;
+                    }
+                    boxes.set_position(at + header.size);
+                };
+                let mut bytes = mp4[..moov_at].to_vec();
+                BoxHeader::new(BoxType::FreeBox, HEADER_SIZE + MIN_FETCH)
+                    .write(&mut bytes)
+                    .unwrap();
+                bytes.resize(bytes.len() + MIN_FETCH as usize, 0);
+                bytes.extend_from_slice(&mp4[moov_at..]);
+                bytes
+            };
+            files.push((PathBuf::from("late_moov.mp4"), late_moov.clone()));
             for (path, bytes) in files {
                 let (mime_type, data_type, metadata) =
                     inspect_uploaded(&store, &path, bytes.clone())
@@ -2647,18 +2676,28 @@ pub(crate) mod tests {
             assert_eq!(metadata.tabular.height, 10_050, "wide.csv counts every row");
 
             // A read that fails partway through a file fails its inspection with the store's error,
-            // rather than inspecting it as a file with no metadata. This file is larger than the
-            // first fetch of its start, so Polars reads its footer partway through it.
+            // rather than inspecting it as a file with no metadata. Polars reads the Parquet file's
+            // footer past the first fetch of its start, reporting the server's refusal, and the
+            // video extractor reads the MP4 file's `moov` there through the store.
             refuse_partway.store(true, Ordering::Relaxed);
-            let parquet = std::fs::read(test::test_30k_parquet()).unwrap();
-            let err = inspect_uploaded(&store, Path::new("wiki_30k.parquet"), parquet)
-                .await
-                .expect_err("a read partway through wiki_30k.parquet fails its inspection");
-            assert!(
-                err.to_string()
-                    .contains("refused partway through the object"),
-                "wiki_30k.parquet's inspection fails with the store's error, not {err}"
-            );
+            let parquet = fs::read(test::test_30k_parquet()).unwrap();
+            let cases = [
+                (
+                    "wiki_30k.parquet",
+                    parquet,
+                    "refused partway through the object",
+                ),
+                ("late_moov.mp4", late_moov, "S3 get_object failed"),
+            ];
+            for (path, bytes, store_error) in cases {
+                let Err(err) = inspect_uploaded(&store, Path::new(path), bytes).await else {
+                    panic!("a read partway through {path} fails its inspection");
+                };
+                assert!(
+                    err.to_string().contains(store_error),
+                    "{path}'s inspection fails with the store's error, not {err}"
+                );
+            }
         }
 
         /// What inspecting `bytes`, stored in `store` as the version file at `path`, gives.
