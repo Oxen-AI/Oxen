@@ -228,7 +228,7 @@ pub enum OxenError {
     #[error("Path is staged for removal: {0}")]
     PathStagedForRemoval(PathBufError),
 
-    /// `oxen rm --staged` targeted a committed path whose removal is already staged.
+    /// `oxen rm` targeted a committed path whose removal is already staged, which is untracked.
     #[error("Removal of {0} is already staged")]
     RemovalAlreadyStaged(PathBufError),
 
@@ -922,7 +922,7 @@ impl OxenError {
                 "Unstage the removal with `oxen workspace rm --staged <path>`, then retry the edit."
             }
             RemovalAlreadyStaged(_) => {
-                "Unstage the removal with `oxen restore --staged <path>`, and bring the file back with `oxen restore <path>`."
+                "The path is no longer tracked. Delete it with your shell, or track it again with `oxen restore --staged <path>`."
             }
             RmWouldLoseChanges(_) => {
                 "Commit or restore the changes first, keep the file with `oxen rm --staged`, or delete it anyway with `oxen rm -f`."

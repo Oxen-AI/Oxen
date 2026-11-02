@@ -1,4 +1,3 @@
-use crate::constants::OXEN_HIDDEN_DIR;
 use crate::core::db;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
@@ -35,6 +34,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::hash_map::Entry;
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::str;
 
@@ -43,8 +44,8 @@ use rocksdb::DB;
 use std::sync::Arc;
 
 /// Removes the `paths` given outright and every match in `glob_matches`, which pairs each glob given
-/// with its matches. Under `--staged`, a match whose removal is already staged is skipped rather than
-/// refused unless it is also given outright, and a glob whose every match is skipped fails.
+/// with its matches. A match whose removal is already staged is skipped rather than refused unless it
+/// is also given outright, and a glob whose every match is skipped fails.
 pub async fn rm(
     paths: &HashSet<PathBuf>,
     glob_matches: &[(PathBuf, HashSet<PathBuf>)],
@@ -622,7 +623,8 @@ fn look_up_removals(
                     let error = format!("`oxen rm` on directory {relative_path:?} requires -r");
                     return Err(OxenError::basic_str(error));
                 }
-                if opts.staged && is_removal_staged(&relative_path, &node, staged_db)? {
+                // A path whose removal is staged is untracked
+                if is_removal_staged(&relative_path, &node, staged_db)? {
                     // A glob passes over its matches whose removal is staged and removes the rest
                     if !given.contains(path) {
                         skipped.insert(path.clone());
@@ -702,26 +704,20 @@ fn stage_committed_removals(
 ) -> Result<CumulativeStats, OxenError> {
     let mut total = CumulativeStats::default();
     for (path, node) in committed {
-        let full_path = repo.path.join(&path);
         match &node.node {
             EMerkleTreeNode::Directory(_) => {
-                total += remove_dir_inner(repo, head_commit, &path, Some(dir_hashes), staged_db)?;
-                // Remove dir from working directory, which the user might have removed
-                // manually before using `oxen rm`
-                if !keep_working_copy
-                    && full_path.exists()
-                    && full_path != repo.path
-                    && full_path != repo.path.join(OXEN_HIDDEN_DIR)
-                {
-                    log::debug!("Removing directory: {full_path:?}");
-                    util::fs::remove_dir_all(&full_path)?;
-                    log::debug!("Successfully removed directory from filesystem");
+                let removal =
+                    remove_dir_inner(repo, head_commit, &path, Some(dir_hashes), staged_db)?;
+                if !keep_working_copy {
+                    removal.delete_from_working_copy(repo)?;
                 }
+                total += removal.stats;
                 // TODO: Currently, there's no way to avoid re-staging the parent dirs with glob
                 // paths. Potentially, we can could a mutex global to all paths?
             }
             EMerkleTreeNode::File(file_node) => {
                 total += remove_file_inner(repo, &path, file_node, staged_db)?;
+                let full_path = repo.path.join(&path);
                 // user might have removed file manually before using `oxen rm`
                 if !keep_working_copy && full_path.exists() {
                     log::debug!("Removing file: {full_path:?}");
@@ -732,6 +728,82 @@ fn stage_committed_removals(
         }
     }
     Ok(total)
+}
+
+/// A directory whose removal is staged, with what HEAD has under it and what its removal unstaged.
+struct DirRemoval {
+    path: PathBuf,
+    stats: CumulativeStats,
+    head: MerkleTreeNode,
+    unstaged: Vec<(PathBuf, StagedMerkleTreeNode)>,
+}
+
+impl DirRemoval {
+    /// Deletes the directory's tracked files from the working copy, then each tracked directory
+    /// that leaves empty. Untracked files, and the directories holding them, stay.
+    fn delete_from_working_copy(&self, repo: &LocalRepository) -> Result<(), OxenError> {
+        // What was staged is tracked, except a path whose removal was staged, which is untracked
+        let mut untracked = HashSet::new();
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        for (path, entry) in &self.unstaged {
+            if entry.status == StagedEntryStatus::Removed {
+                untracked.insert(path.clone());
+            } else if entry.node.is_dir() {
+                dirs.push(path.clone());
+            } else {
+                files.push(path.clone());
+            }
+        }
+        let head_files = self.head.list_file_paths()?.into_iter();
+        let head_files = head_files.map(|file| self.path.join(file));
+        files.extend(head_files.filter(|file| !untracked.contains(file)));
+        let head_dirs = self.head.list_dir_paths()?.into_iter();
+        let head_dirs = head_dirs.map(|dir| self.path.join(dir));
+        dirs.extend(head_dirs.filter(|dir| !untracked.contains(dir)));
+
+        // Oxen does not track symlinks, so nothing at or behind a symlinked directory is deleted
+        let is_symlink = |path: &Path| {
+            fs::symlink_metadata(repo.path.join(path)).is_ok_and(|meta| meta.is_symlink())
+        };
+        let candidates = self
+            .path
+            .ancestors()
+            .chain(dirs.iter().map(PathBuf::as_path));
+        let links: Vec<PathBuf> = candidates
+            .filter(|path| !path.as_os_str().is_empty() && is_symlink(path))
+            .map(Path::to_path_buf)
+            .collect();
+        let behind_link = |path: &PathBuf| links.iter().any(|link| path.starts_with(link));
+        files.retain(|file| !behind_link(file));
+        dirs.retain(|dir| !behind_link(dir));
+
+        for file in files {
+            let full_path = repo.path.join(file);
+            // A file deleted by hand before `oxen rm` is already gone
+            if let Err(err) = fs::remove_file(&full_path)
+                && err.kind() != ErrorKind::NotFound
+            {
+                return Err(OxenError::file_error(&full_path, err));
+            }
+        }
+        // A directory sorts after its parent, so the reverse order empties children first
+        dirs.sort_unstable();
+        for dir in dirs.iter().rev().map(|dir| repo.path.join(dir)) {
+            if dir == repo.path {
+                continue;
+            }
+            if let Err(err) = fs::remove_dir(&dir)
+                && !matches!(
+                    err.kind(),
+                    ErrorKind::DirectoryNotEmpty | ErrorKind::NotFound
+                )
+            {
+                return Err(OxenError::file_error(&dir, err));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn process_remove_file(
@@ -768,7 +840,7 @@ fn remove_dir_inner(
     path: &Path,
     dir_hashes: Option<&HashMap<PathBuf, MerkleHash>>,
     staged_db: &DB,
-) -> Result<CumulativeStats, OxenError> {
+) -> Result<DirRemoval, OxenError> {
     let dir_node =
         match CommitMerkleTree::dir_with_children_recursive(repo, commit, path, dir_hashes)? {
             Some(node) => node,
@@ -779,13 +851,19 @@ fn remove_dir_inner(
         };
 
     // Drop everything staged under the directory, so files added since HEAD unstage
+    let unstaged = staged_entries_under(path, staged_db)?;
     let mut batch = WriteBatch::default();
-    for (entry_path, _) in staged_entries_under(path, staged_db)? {
+    for (entry_path, _) in &unstaged {
         batch.delete(entry_path.to_string_lossy().as_bytes());
     }
     staged_db.write(batch)?;
 
-    process_remove_dir(repo, path, &dir_node, staged_db)
+    Ok(DirRemoval {
+        path: path.to_path_buf(),
+        stats: process_remove_dir(repo, path, &dir_node, staged_db)?,
+        head: dir_node,
+        unstaged,
+    })
 }
 
 pub fn remove_dir(
@@ -797,7 +875,7 @@ pub fn remove_dir(
     let db_path = util::fs::oxen_hidden_dir(&repo.path).join(STAGED_DIR);
     let staged_db: DB = DB::open(&opts, dunce::simplified(&db_path))?;
 
-    remove_dir_inner(repo, commit, path, None, &staged_db)
+    Ok(remove_dir_inner(repo, commit, path, None, &staged_db)?.stats)
 }
 
 // Stage dir and all its children for removal

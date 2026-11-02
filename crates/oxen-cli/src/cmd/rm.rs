@@ -21,7 +21,8 @@ pub fn rm_args() -> Command {
             "Delete files from the working tree and stage the removal.\n\n\
              The next commit records the files as removed. Paths must already be \
              committed. Delete a file that has never been committed with your shell \
-             instead.\n\n\
+             instead. A directory given with `-r` keeps its untracked files, and stays on \
+             disk when it has any.\n\n\
              To bring a deleted file back, run `oxen restore --staged <file>` to \
              unstage the removal, then `oxen restore <file>`.\n\n\
              A file whose working copy or staged content differs from HEAD is refused, as is \

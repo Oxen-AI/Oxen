@@ -44,6 +44,8 @@ pub async fn rm(repo: &LocalRepository, opts: &RmOpts) -> Result<(), OxenError> 
 #[cfg(test)]
 mod tests {
     use crate::test;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::path::Path;
     use std::path::PathBuf;
 
@@ -885,16 +887,15 @@ mod tests {
             );
             assert_eq!(status.untracked_files, vec![path.to_path_buf()]);
 
-            let opts = RmOpts::from_path(path);
-            repositories::rm(&repo, &opts).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_files.len(), 1);
+            let result = repositories::rm(&repo, &RmOpts::from_path(path)).await;
+            assert!(
+                matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
+                "rm refuses a file whose removal is staged, which is untracked: {result:?}"
+            );
             assert_eq!(
-                status.staged_files.get(path).unwrap().status,
-                StagedEntryStatus::Removed
+                util::fs::read_from_path(repo.path.join(path))?,
+                "edited readme",
+                "rm leaves the untracked file on disk"
             );
 
             Ok(())
@@ -1083,6 +1084,11 @@ mod tests {
             let path = Path::new("train");
 
             let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(path));
+            let untracked = repo.path.join(path).join("untracked.txt");
+            util::fs::write_to_path(&untracked, "never added")?;
+            let unstaged = path.join("dog_1.jpg");
+            repositories::rm(&repo, &RmOpts::from_staged_path(&unstaged)).await?;
+            test::modify_txt_file(repo.path.join(&unstaged), "edited once untracked")?;
 
             let opts = RmOpts {
                 paths: vec![path.to_path_buf()],
@@ -1091,6 +1097,12 @@ mod tests {
                 ..Default::default()
             };
             repositories::rm(&repo, &opts).await?;
+            assert_eq!(
+                util::fs::rcount_files_in_dir(&repo.path.join(path)),
+                2,
+                "rm -r deletes the tracked files and leaves the untracked ones, a file whose \
+                 removal was staged with --staged among them"
+            );
 
             let status = repositories::status(&repo).await?;
             status.print();
@@ -1219,10 +1231,25 @@ mod tests {
             util::fs::create_dir_all(&test_dir)?;
             let test_file_in_dir = test_dir.join("file_in_dir.txt");
             util::fs::write_to_path(&test_file_in_dir, "file in directory")?;
+            let empty_dir = repo.path.join("empty_dir");
+            util::fs::create_dir_all(&empty_dir)?;
+            let linked = repo.path.join("linked");
+            util::fs::create_dir_all(&linked)?;
+            util::fs::write_to_path(linked.join("inner.txt"), "behind a symlink")?;
 
             // Add and commit all files
             repositories::add(&repo, &repo.path).await?;
             repositories::commit(&repo, "Initial commit with test files")?;
+            let untracked = test_dir.join("untracked.txt");
+            util::fs::write_to_path(&untracked, "never added")?;
+            // A tracked directory replaced by a symlink to an untracked one
+            #[cfg(unix)]
+            let behind_link = {
+                let target = repo.path.join("link_target");
+                util::fs::rename(&linked, &target)?;
+                symlink(&target, &linked)?;
+                target.join("inner.txt")
+            };
 
             // Verify .oxen directory exists
             let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
@@ -1241,6 +1268,18 @@ mod tests {
             assert!(
                 oxen_dir.exists(),
                 "OXEN_HIDDEN_DIR should not be removed by 'oxen rm .'"
+            );
+            for tracked in [&test_file1, &test_file2, &test_file_in_dir, &empty_dir] {
+                assert!(!tracked.exists(), "rm -r . deletes the tracked {tracked:?}");
+            }
+            assert!(
+                untracked.is_file(),
+                "rm -r leaves an untracked file, and the directory holding it, in place"
+            );
+            #[cfg(unix)]
+            assert!(
+                behind_link.is_file() && linked.is_symlink(),
+                "rm -r . deletes nothing through a symlinked directory, nor the link itself"
             );
 
             // Verify that the test files were staged for removal
