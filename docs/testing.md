@@ -11,7 +11,7 @@ Read before writing, editing, merging, deleting, or timing a test. `bin/test` us
 - When a test needs a small directory of placeholder text files, call `test::populate_dir_with_txt_files(dir, prefix, count)` instead of open-coding `util::fs::create_dir_all` and a loop over `write_txt_file_to_path`.
 - Files under `data/test/` exist to serve specific tests. When you delete or rewrite a test, check whether any fixture file under `data/test/` is now unreferenced and delete the orphan in the same PR. Never add a fixture file speculatively or "for a future test". Add it only when the test that uses it already exists.
 - When possible, put tests in the higher-level `repositories` module rather than the lower-level, version-specific implementation: `repositories/commits.rs` rather than `core/v_latest/commits.rs`.
-- Tests create unique temporary directories and clean up automatically.
+- Each helper builds its repo in a unique directory under `test_run_dir()` and removes it afterward, except `run_empty_dir_test_async` and `run_training_data_fully_sync_remote`, which leave theirs.
 
 ## One fixture, many assertions
 
