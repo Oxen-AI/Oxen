@@ -1289,7 +1289,7 @@ fn p_modify_file(
     staged_db_manager.edit_staged_node(path, |staged| {
         let (mut file_node, status) = match (committed, staged) {
             (Some(mut file_node), staged) => {
-                file_node.set_name(path.to_str().unwrap());
+                file_node.set_name(&path.to_string_lossy());
                 // The committed node knows nothing of workspace metadata edits. When
                 // the staged node holds the same content with different metadata,
                 // carry that metadata over so re-staging doesn't discard it.
