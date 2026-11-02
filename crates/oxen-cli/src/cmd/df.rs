@@ -6,7 +6,6 @@ use clap::{Arg, ArgMatches, Command, arg};
 use liboxen::command;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
-use liboxen::util::fs;
 
 use crate::cmd::RunCmd;
 pub const NAME: &str = "df";
@@ -149,13 +148,8 @@ impl RunCmd for DFCmd {
         .arg(
             Arg::new("sql")
                 .long("sql")
-                .help("Run a sql query on the data frame.")
-                .action(clap::ArgAction::Set),
-        )
-        .arg(
-            Arg::new("text2sql")
-                .long("text2sql")
-                .help("Run a text query that translates to sql on the data frame.")
+                .help("Run a sql query on the data frame as committed at HEAD, from inside its repository.")
+                .conflicts_with("revision")
                 .action(clap::ArgAction::Set),
         )
         .arg(
@@ -284,10 +278,8 @@ impl DFCmd {
             None
         };
 
-        let repo_dir: Option<PathBuf> = if args.get_one::<String>("sql").is_some()
-            || args.get_one::<String>("text2sql").is_some()
-        {
-            fs::get_repo_root_from_current_dir()
+        let repo_dir = if args.contains_id("sql") {
+            Some(LocalRepository::from_current_dir()?.path)
         } else {
             None
         };
@@ -335,7 +327,6 @@ impl DFCmd {
             sql: args.get_one::<String>("sql").map(String::from),
             tail: parse_usize_arg(args, "tail")?,
             take: args.get_one::<String>("take").map(String::from),
-            text2sql: args.get_one::<String>("text2sql").map(String::from),
             unique: args.get_one::<String>("unique").map(String::from),
             unique_count: args.get_one::<String>("unique_count").map(String::from),
             vstack,

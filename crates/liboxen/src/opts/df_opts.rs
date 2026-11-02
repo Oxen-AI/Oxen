@@ -147,7 +147,6 @@ pub struct DFOpts {
     pub sort_by: Option<String>,
     pub sort_by_similarity_to: Option<String>,
     pub sql: Option<String>,
-    pub text2sql: Option<String>,
     pub tail: Option<usize>,
     pub take: Option<String>,
     pub unique: Option<String>,
@@ -202,7 +201,6 @@ impl DFOpts {
             sql: None,
             tail: None,
             take: None,
-            text2sql: None,
             unique: None,
             unique_count: None,
             vstack: None,
@@ -247,7 +245,6 @@ impl DFOpts {
 
     pub fn has_filter_transform(&self) -> bool {
         self.sql.is_some()
-            || self.text2sql.is_some()
             || self.unique.is_some()
             || self.unique_count.is_some()
             || self.filter.is_some()
@@ -272,7 +269,6 @@ impl DFOpts {
             || self.sql.is_some()
             || self.tail.is_some()
             || self.take.is_some()
-            || self.text2sql.is_some()
             || self.unique.is_some()
             || self.unique_count.is_some()
             || self.vstack.is_some()
@@ -492,7 +488,6 @@ impl DFOptView {
 impl DFOptsView {
     pub fn from_df_opts(opts: &DFOpts) -> DFOptsView {
         let ordered_opts: Vec<DFOptView> = [
-            DFOptView::from_opt("text2sql", &opts.text2sql),
             DFOptView::from_opt("sql", &opts.sql),
             DFOptView::from_opt("filter", &opts.filter),
             DFOptView::from_opt("unique", &opts.unique),
