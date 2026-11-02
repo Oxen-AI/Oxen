@@ -30,6 +30,7 @@ use crate::util::telemetry::TracingGuard;
 use http::StatusCode;
 use rand::RngExt;
 use rand::distr::Alphanumeric;
+use std::env;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::future::Future;
@@ -46,12 +47,17 @@ use walkdir::WalkDir;
 
 pub const DEFAULT_TEST_HOST: &str = "localhost:3000";
 
+/// The root of the checkout whose tests are running, even one copied or moved since they were built.
+/// Panics in a test binary run without cargo, which sets `CARGO_MANIFEST_DIR`.
 pub static REPO_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .unwrap()
-        .to_path_buf()
+    PathBuf::from(
+        env::var_os("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR is unset: run the tests through cargo, as bin/test does"),
+    )
+    .ancestors()
+    .nth(2)
+    .expect("every workspace crate sits two directories below the repository root")
+    .to_path_buf()
 });
 
 pub static TEST_DATA_DIR: LazyLock<PathBuf> = LazyLock::new(|| REPO_ROOT.join("data"));
