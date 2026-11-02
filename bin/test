@@ -2,9 +2,12 @@
 #
 # Build, configure, and run the Oxen test suite.
 #
-# Usage: bin/test [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python] [extra args...]
+# Usage: bin/test [--ffmpeg] [--keep] [--install-deps] [--no-ramdisk] [--timings] [-p|--python]
+#                 [--build-only] [extra args...]
 #
 #   --ffmpeg        Enable the "ffmpeg" cargo feature for build and test commands.
+#   --build-only    Run the build a Rust test run starts with, then exit, leaving test data alone.
+#                   Not with -p.
 #   --keep          Do not remove test data (in data/ox and data/test/runs) on cleanup — useful for
 #                   debugging failed tests.
 #   --install-deps  Check and install prerequisites (install-prereqs) before running tests.
@@ -92,9 +95,11 @@ INSTALL_DEPS=false
 RUN_PYTHON=false
 USE_RAMDISK=true
 TIMINGS=false
+BUILD_ONLY=false
 while true; do
     case "${1:-}" in
         --ffmpeg)        FEATURE_ARGS="-F ffmpeg"; shift ;;
+        --build-only)    BUILD_ONLY=true; shift ;;
         --keep)          KEEP_DATA=true; shift ;;
         --install-deps)  INSTALL_DEPS=true; shift ;;
         --no-ramdisk)    USE_RAMDISK=false; shift ;;
@@ -105,6 +110,11 @@ while true; do
 done
 
 set -euo pipefail
+
+if [ "$BUILD_ONLY" = true ] && [ "$RUN_PYTHON" = true ]; then
+    echo "ERROR: --build-only runs the Rust build and cannot be combined with -p."
+    exit 2
+fi
 
 # On Linux the `ffmpeg` feature links FFmpeg 9 from /opt/ffmpeg (installed by bin/install-prereqs);
 # point pkg-config at it. macOS gets FFmpeg 9 from Homebrew, already on the default pkg-config path.
@@ -201,7 +211,9 @@ cleanup() {
     if [ -n "$PYTHON_CONFIG_DIR" ]; then
         rm -rf "$PYTHON_CONFIG_DIR"
     fi
-    if [ "$KEEP_DATA" = false ]; then
+    if [ "$BUILD_ONLY" = true ]; then
+        :
+    elif [ "$KEEP_DATA" = false ]; then
         echo "==> Removing test data..."
         rm -rf ./data/ox
         rm -rf ./data/test/runs
@@ -216,7 +228,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # Set up ramdisk for test data
-if [ "$USE_RAMDISK" = true ]; then
+if [ "$BUILD_ONLY" = true ]; then
+    :
+elif [ "$USE_RAMDISK" = true ]; then
     if ! setup_ramdisk; then
         echo "==> Ramdisk setup failed, using regular filesystem."
     fi
@@ -235,6 +249,10 @@ phase "Build"
 echo "==> Building oxen (cargo build --workspace --bins --tests $FEATURE_ARGS)..."
 # shellcheck disable=SC2086
 cargo build --workspace --bins --tests $FEATURE_ARGS
+
+if [ "$BUILD_ONLY" = true ]; then
+    exit 0
+fi
 
 phase "Server start"
 

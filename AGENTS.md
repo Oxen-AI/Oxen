@@ -40,6 +40,7 @@ BAD: `cargo check --package liboxen`
 ```bash
 cargo build --workspace                           # Debug build
 cargo build --workspace --bins --tests            # Debug build that a later `cargo test` reuses
+bin/test --build-only                             # The build bin/test runs, without the tests
 ```
 
 A `cargo build` that a `cargo test` follows, in a script or a CI job, builds `--bins --tests` with the same packages and features the test command selects, as `bin/test` and the Rust Tests jobs do. Dev-dependencies add features to crates such as `hyper` and `getrandom`, so a plain `cargo build` resolves a different feature set, and the `cargo test` after it compiles a second copy of every dependency above them, DuckDB, RocksDB, polars, and the AWS SDK included.
