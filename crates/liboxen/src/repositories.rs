@@ -562,6 +562,8 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
 /// [`OxenError::RepoAlreadyExists`] when `root_dir` already holds the repository at
 /// `{namespace}/{name}`, or when another repository holds the name `identity` records.
 /// [`OxenError::RepoUuidTaken`] when a repository is already placed by the UUID `identity` records.
+/// [`OxenError::PathOutsideWorkingTree`] or [`OxenError::EmptyPath`] when a seed file's path does
+/// not name a file inside the repository.
 /// [`OxenError::InternalError`] when there is no `identity`.
 pub async fn create(
     root_dir: &Path,
