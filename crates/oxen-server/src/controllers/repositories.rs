@@ -493,6 +493,9 @@ async fn create_repo_response(
                 },
             }))
         }
+        Err(err @ (OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath)) => {
+            Err(err.into())
+        }
         Err(err) => Ok(map_create_error_to_response(err)),
     }
 }
@@ -784,11 +787,12 @@ mod tests {
     use liboxen::config::RepositoryConfig;
     use liboxen::core::repo_locks;
     use liboxen::error::OxenError;
-    use liboxen::model::RepoIdentity;
+    use liboxen::model::file::{FileContents, FileNew};
+    use liboxen::model::{RepoIdentity, User};
     use liboxen::repositories;
     use liboxen::repositories::name_table::NameTable;
     use liboxen::util;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
     use uuid::Uuid;
 
@@ -1114,6 +1118,32 @@ mod tests {
             NameTable::new(&sync_dir).get("bessie", "cats")?,
             Some(repo_uuid),
             "a create refused to the repository already holding the name leaves it holding it"
+        );
+
+        let mut seeded = RepoNew::from_namespace_name(&namespace, Uuid::new_v4().to_string(), None);
+        seeded.repo_uuid = Some(Uuid::new_v4());
+        seeded.namespace_name = Some("bessie".to_string());
+        seeded.repo_name = Some("seeded".to_string());
+        seeded.files = Some(vec![FileNew {
+            path: PathBuf::from("../escaped.txt"),
+            contents: FileContents::Text("planted".to_string()),
+            user: User {
+                name: "Bessie".to_string(),
+                email: "bessie@oxen.ai".to_string(),
+            },
+        }]);
+        let err = super::create_repo_response(&app_data, seeded)
+            .await
+            .expect_err("a seed file path outside the repository must be refused");
+        assert_eq!(
+            err.error_response().status(),
+            http::StatusCode::BAD_REQUEST,
+            "a seed file path outside the repository is the caller's mistake"
+        );
+        assert_eq!(
+            NameTable::new(&sync_dir).get("bessie", "seeded")?,
+            None,
+            "a create refused for a seed file path gives its name back"
         );
 
         test::cleanup_sync_dir(&sync_dir)?;

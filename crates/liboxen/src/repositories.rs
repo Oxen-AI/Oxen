@@ -562,6 +562,8 @@ pub fn is_valid_namespace_name(name: &str) -> bool {
 /// [`OxenError::RepoAlreadyExists`] when `root_dir` already holds the repository at
 /// `{namespace}/{name}`, or when another repository holds the name `identity` records.
 /// [`OxenError::RepoUuidTaken`] when a repository is already placed by the UUID `identity` records.
+/// [`OxenError::PathOutsideWorkingTree`] or [`OxenError::EmptyPath`] when a seed file's path does
+/// not name a file inside the repository.
 /// [`OxenError::InternalError`] when there is no `identity`.
 pub async fn create(
     root_dir: &Path,
@@ -723,8 +725,14 @@ fn save_new_repo(
 /// `files`. An empty list commits nothing.
 async fn set_up_new_repo(
     local_repo: &LocalRepository,
-    files: Vec<FileNew>,
+    mut files: Vec<FileNew>,
 ) -> Result<(), OxenError> {
+    // Resolve each seed file's path inside the new repository before writing any, so a path that
+    // would land outside it fails the create with nothing written.
+    for file in &mut files {
+        file.path = util::fs::validate_and_normalize_path(&file.path)?;
+    }
+
     // Initialize version store
     let version_store = local_repo.version_store();
     version_store.init().await?;
@@ -867,6 +875,7 @@ mod tests {
     use crate::test;
     use crate::util;
     use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
     use time::OffsetDateTime;
     use uuid::Uuid;
 
@@ -1374,8 +1383,8 @@ mod tests {
             let name: &str = "test-repo-name";
 
             let user = UserConfig::get()?.to_user();
-            let file = |path: &str| FileNew {
-                path: PathBuf::from(path),
+            let file = |path: PathBuf| FileNew {
+                path,
                 contents: FileContents::Text(String::from("Hello world!")),
                 user: user.clone(),
             };
@@ -1385,13 +1394,17 @@ mod tests {
                 identity.as_ref().expect("a server identity").repo_uuid,
             );
 
+            // A disposable directory outside the sync dir that a seed path must never reach.
+            let outside = TempDir::new()?;
+            let canary = outside.path().join("canary.txt");
+
             // The second file's path runs through the first, so writing it fails after the
             // repository's directory, version store, and HEAD are made.
             let repo_new = RepoNew::from_files(
                 namespace,
                 name,
                 constants::DEFAULT_HOST,
-                vec![file("README"), file("README/inner")],
+                vec![file("README".into()), file("README/inner".into())],
                 None,
             );
             let result = repositories::create(&sync_dir, repo_new, identity.clone(), None).await;
@@ -1409,8 +1422,46 @@ mod tests {
                 "a failed create gives its name back"
             );
 
-            // The same name and UUID again, both of which the failed create has freed.
-            let repo_new = RepoNew::from_files(namespace, name, constants::DEFAULT_HOST, vec![file("README")], None);
+            // A seed path that resolves outside the new repository (absolute, or climbing out
+            // with `..`) is refused before any write, leaving neither the repository nor a file
+            // outside it, and freeing the name for the next attempt.
+            for path in [canary.clone(), PathBuf::from("../../../../../canary.txt")] {
+                let repo_new = RepoNew::from_files(
+                    namespace,
+                    name,
+                    constants::DEFAULT_HOST,
+                    vec![file(path.clone())],
+                    None,
+                );
+                let result =
+                    repositories::create(&sync_dir, repo_new, identity.clone(), None).await;
+                assert!(
+                    matches!(result, Err(OxenError::PathOutsideWorkingTree { .. })),
+                    "a seed path outside the repository is refused: {path:?} -> {result:?}"
+                );
+                assert!(
+                    !repo_path.exists(),
+                    "a refused create leaves no repository directory: {path:?}"
+                );
+                assert_eq!(
+                    NameTable::new(&sync_dir).get(namespace, name)?,
+                    None,
+                    "a refused create gives its name back: {path:?}"
+                );
+            }
+            assert!(
+                !canary.exists(),
+                "no seed file is written outside the repository"
+            );
+
+            // The same name and UUID again, all of which the failed creates have freed.
+            let repo_new = RepoNew::from_files(
+                namespace,
+                name,
+                constants::DEFAULT_HOST,
+                vec![file("README".into())],
+                None,
+            );
             let _repo = repositories::create(&sync_dir, repo_new, identity, None).await?;
             assert!(repo_path.exists());
 
