@@ -1,7 +1,7 @@
 //! Helper functions to get metadata from the local filesystem.
 //!
 
-use crate::core::df::tabular::{header_lines, height_from_lines, s3_cloud_options, stored_schema};
+use crate::core::df::tabular::stored_size_and_schema;
 use crate::error::OxenError;
 use crate::model::entry::entry_data_type::EntryDataType;
 use crate::model::entry::metadata_entry::CLIMetadataEntry;
@@ -21,6 +21,7 @@ use futures::StreamExt;
 use parking_lot::Mutex;
 use polars::io::cloud::CloudOptions;
 use polars::io::mmap::MmapBytesReader;
+use polars::prelude::CloudScheme;
 use polars::prelude::PolarsError;
 use std::fmt;
 use std::fs::File;
@@ -211,7 +212,14 @@ impl StoredVersion {
         region: &str,
         endpoint_url: Option<&str>,
     ) -> Result<Self, OxenError> {
-        let cloud_options = s3_cloud_options(&url, region, endpoint_url)?;
+        let mut config = vec![("aws_region", region)];
+        if let Some(endpoint) = endpoint_url {
+            config.push(("aws_endpoint_url", endpoint));
+            config.push(("aws_allow_http", "true"));
+            config.push(("aws_virtual_hosted_style_request", "false"));
+        }
+        let cloud_options =
+            CloudOptions::from_untyped_config(CloudScheme::from_path(&url), config)?;
         Ok(Self {
             bytes: Arc::new(StoredBytes {
                 store,
@@ -244,6 +252,30 @@ impl StoredVersion {
     /// earlier read of its start fetched more. Fetches only what no earlier read of its start did.
     pub(crate) async fn fetch_head(&self, len: u64) -> Result<Bytes, OxenError> {
         self.bytes.fetch_head(len).await
+    }
+
+    /// The whole file, fetched in one request. Blocks.
+    pub(crate) fn read_all(&self) -> Result<Bytes, OxenError> {
+        if self.bytes.size == 0 {
+            return Ok(Bytes::new());
+        }
+        Ok(self.bytes.fetch(0, self.bytes.size)?)
+    }
+
+    /// The file's line counts, and its character count when `with_chars` is set, from a download of
+    /// the whole file.
+    pub(crate) async fn download_line_counts(
+        &self,
+        with_chars: bool,
+    ) -> Result<LineCounts, OxenError> {
+        let mut stream = (self.bytes.store)
+            .get_version_stream(&self.bytes.hash.to_string())
+            .await?;
+        let mut lines = LineCounts::new(with_chars);
+        while let Some(chunk) = stream.next().await {
+            lines.add(&chunk?);
+        }
+        Ok(lines)
     }
 }
 
@@ -297,30 +329,20 @@ impl StoredBytes {
         }
         let offset = head.len() as u64;
         let rest = self.fetch_chunk(offset, len - offset).await?;
-        // A CSV's head grows toward 64 MiB, too large to copy on the runtime.
-        let joined = spawn_blocking(move || {
-            let mut joined = BytesMut::with_capacity(head.len() + rest.len());
-            joined.extend_from_slice(&head);
-            joined.extend_from_slice(&rest);
-            joined.freeze()
-        })
-        .await?;
+        let joined = if head.is_empty() {
+            rest
+        } else {
+            // A CSV's head grows toward 64 MiB, too large to copy on the runtime.
+            spawn_blocking(move || {
+                let mut joined = BytesMut::with_capacity(head.len() + rest.len());
+                joined.extend_from_slice(&head);
+                joined.extend_from_slice(&rest);
+                joined.freeze()
+            })
+            .await?
+        };
         *self.head.lock() = joined.clone();
         Ok(joined)
-    }
-
-    /// The file's line counts, and its character count when `with_chars` is set, from a download of
-    /// the whole file.
-    async fn download_line_counts(&self, with_chars: bool) -> Result<LineCounts, OxenError> {
-        let mut stream = self
-            .store
-            .get_version_stream(&self.hash.to_string())
-            .await?;
-        let mut lines = LineCounts::new(with_chars);
-        while let Some(chunk) = stream.next().await {
-            lines.add(&chunk?);
-        }
-        Ok(lines)
     }
 
     /// Keeps `err` unless an earlier failure was kept, and returns an error to fail the read with.
@@ -432,39 +454,21 @@ pub(crate) async fn inspect_stored(
     let head = read_head(&mut Cursor::new(version.fetch_head(MIN_FETCH).await?))?;
     let mime_type = mime_type_from_head(&head, file_path);
     let data_type = data_type_from_head(&head, file_path, &mime_type);
-    let extension = file_extension(file_path);
-    let metadata = match (&data_type, header_lines(Some(&extension))) {
-        (EntryDataType::Text, _) => {
+    let metadata = match &data_type {
+        EntryDataType::Text => {
             let lines = match lines {
                 Some(lines) => lines,
-                None => version.bytes.download_line_counts(true).await?,
+                None => version.download_line_counts(true).await?,
             };
             Some(GenericMetadata::MetadataText(text::from_counts(&lines)))
         }
-        // The schema is read while the lines are counted, and either failing stops the other.
-        (EntryDataType::Tabular, Some(header)) => {
-            let scanning = stored_schema(&version, &extension);
-            let counting = async {
-                match lines {
-                    Some(lines) => Ok(lines),
-                    None => version.bytes.download_line_counts(false).await,
-                }
-            };
-            tokio::pin!(scanning, counting);
-            let scanned = tokio::select! {
-                scanned = &mut scanning => match scanned? {
-                    Ok(schema) => Ok((schema, counting.await?)),
-                    Err(err) => Err(err),
-                },
-                lines = &mut counting => {
-                    let lines = lines?;
-                    scanning.await?.map(|schema| (schema, lines))
-                }
-            };
-            let tabular = scanned.map(|(schema, lines)| {
-                let height = height_from_lines(&lines, header);
-                GenericMetadata::MetadataTabular(tabular::from_schema(&schema, height))
-            });
+        EntryDataType::Tabular => {
+            let extension = file_extension(file_path);
+            let tabular = stored_size_and_schema(&version, &extension, lines)
+                .await?
+                .map(|(size, schema)| {
+                    GenericMetadata::MetadataTabular(tabular::from_schema(&schema, size.height))
+                });
             settle(
                 tabular,
                 &ByteSource::Stored(&version),
@@ -472,34 +476,7 @@ pub(crate) async fn inspect_stored(
                 "Could not compute tabular metadata",
             )?
         }
-        // A JSON data frame is parsed whole, so its bytes are fetched on the runtime.
-        (EntryDataType::Tabular, None) if extension == "json" => {
-            let data = Bytes::from(
-                version
-                    .bytes
-                    .store
-                    .get_version(&version.bytes.hash.to_string())
-                    .await?,
-            );
-            let tabular = spawn_blocking(move || {
-                tabular::get_metadata_with_extension(&ByteSource::Memory(data), "json")
-            })
-            .await?
-            .map(GenericMetadata::MetadataTabular);
-            settle(
-                tabular,
-                &ByteSource::Stored(&version),
-                file_path,
-                "Could not compute tabular metadata",
-            )?
-        }
-        (
-            EntryDataType::Image
-            | EntryDataType::Video
-            | EntryDataType::Audio
-            | EntryDataType::Tabular,
-            _,
-        ) => {
+        EntryDataType::Image | EntryDataType::Video | EntryDataType::Audio => {
             let version = version.clone();
             let file_path = file_path.to_path_buf();
             let data_type = data_type.clone();
@@ -509,7 +486,7 @@ pub(crate) async fn inspect_stored(
             })
             .await??
         }
-        (EntryDataType::Dir | EntryDataType::Binary, _) => None,
+        EntryDataType::Dir | EntryDataType::Binary => None,
     };
     version
         .bytes

@@ -663,7 +663,8 @@ pub async fn diff_tabular_file_and_file_node(
             let version_store = repo.version_store();
             let df_1 = tabular::read_version_df(
                 &version_store,
-                &file_node.hash().to_string(),
+                *file_node.hash(),
+                file_node.num_bytes(),
                 file_node.extension(),
                 &DFOpts::empty(),
             )
@@ -699,14 +700,16 @@ pub async fn diff_tabular_file_nodes(
             let version_store = repo.version_store();
             let df_1 = tabular::read_version_df(
                 &version_store,
-                &file_1.hash().to_string(),
+                *file_1.hash(),
+                file_1.num_bytes(),
                 file_1.extension(),
                 &DFOpts::empty(),
             )
             .await?;
             let df_2 = tabular::read_version_df(
                 &version_store,
-                &file_2.hash().to_string(),
+                *file_2.hash(),
+                file_2.num_bytes(),
                 file_2.extension(),
                 &DFOpts::empty(),
             )
@@ -720,7 +723,8 @@ pub async fn diff_tabular_file_nodes(
             let version_store = repo.version_store();
             let df_1 = tabular::read_version_df(
                 &version_store,
-                &file_1.hash().to_string(),
+                *file_1.hash(),
+                file_1.num_bytes(),
                 file_1.extension(),
                 &DFOpts::empty(),
             )
@@ -736,7 +740,8 @@ pub async fn diff_tabular_file_nodes(
             let df_1 = tabular::new_df();
             let df_2 = tabular::read_version_df(
                 &version_store,
-                &file_2.hash().to_string(),
+                *file_2.hash(),
+                file_2.num_bytes(),
                 file_2.extension(),
                 &DFOpts::empty(),
             )

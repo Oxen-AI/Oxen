@@ -2482,15 +2482,26 @@ pub(crate) mod tests {
             (Arc::new(store), tmp, server)
         }
 
-        /// Store `bytes` as a version file and return its hash so the reader can resolve it.
-        async fn upload(store: &Arc<dyn VersionStore>, bytes: Vec<u8>) -> String {
+        /// Store `bytes` as a version file and return its hash and size.
+        async fn upload(store: &Arc<dyn VersionStore>, bytes: Vec<u8>) -> (MerkleHash, u64) {
             let hash = hasher::hash_buffer(&bytes);
             let len = bytes.len() as u64;
             store
                 .store_version_from_reader(&hash, Box::new(std::io::Cursor::new(bytes)), len)
                 .await
                 .unwrap();
-            hash
+            (hash.parse().expect("a version file's hash parses"), len)
+        }
+
+        /// Reads `stored`, the hash and size of a version file in `store`, as a data frame with
+        /// `extension`.
+        async fn read(
+            store: &Arc<dyn VersionStore>,
+            (hash, size): (MerkleHash, u64),
+            extension: &str,
+            opts: &DFOpts,
+        ) -> Result<DataFrame, OxenError> {
+            tabular::read_version_df(store, hash, size, extension, opts).await
         }
 
         fn sample_df() -> DataFrame {
@@ -2513,6 +2524,9 @@ pub(crate) mod tests {
 
         const SAMPLE_JSONL: &[u8] =
             b"{\"a\":1,\"b\":\"x\"}\n{\"a\":2,\"b\":\"y\"}\n{\"a\":3,\"b\":\"z\"}\n";
+        const SAMPLE_JSON: &[u8] =
+            b"[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"},{\"a\":3,\"b\":\"z\"}]";
+        const SAMPLE_CSV: &[u8] = b"a,b\n1,x\n2,y\n3,z\n";
 
         /// Assert a round-tripped frame matches `sample_df` by value, not just shape — catches
         /// header-as-data, column swaps, and dtype/null coercion that a shape-only check misses.
@@ -2539,7 +2553,7 @@ pub(crate) mod tests {
             let cases = [
                 ("parquet", sample_parquet(), "Parquet cloud scan"),
                 ("arrow", sample_ipc(), "IPC cloud scan"),
-                ("csv", b"a,b\n1,x\n2,y\n3,z\n".to_vec(), "CSV cloud scan"),
+                ("csv", SAMPLE_CSV.to_vec(), "CSV cloud scan"),
                 (
                     "tsv",
                     b"a\tb\n1\tx\n2\ty\n3\tz\n".to_vec(),
@@ -2554,13 +2568,13 @@ pub(crate) mod tests {
                 ("jsonl", SAMPLE_JSONL.to_vec(), "JSONL cloud scan"),
                 (
                     "json",
-                    b"[{\"a\":1,\"b\":\"x\"},{\"a\":2,\"b\":\"y\"},{\"a\":3,\"b\":\"z\"}]".to_vec(),
+                    SAMPLE_JSON.to_vec(),
                     "JSON array, fetched whole since Polars has no cloud reader for it",
                 ),
             ];
             for (ext, bytes, case) in cases {
-                let hash = upload(&store, bytes).await;
-                let df = tabular::read_version_df(&store, &hash, ext, &DFOpts::empty())
+                let stored = upload(&store, bytes).await;
+                let df = read(&store, stored, ext, &DFOpts::empty())
                     .await
                     .unwrap_or_else(|e| panic!("{case}: {e}"));
                 assert_sample_df(&df, case);
@@ -2653,19 +2667,18 @@ pub(crate) mod tests {
             path: &Path,
             bytes: Vec<u8>,
         ) -> Result<(String, EntryDataType, Option<GenericMetadata>), OxenError> {
-            let size = bytes.len() as u64;
-            let hash = upload(store, bytes).await;
+            let (hash, size) = upload(store, bytes).await;
             let VersionLocation::S3 {
                 url,
                 region,
                 endpoint_url,
-            } = store.version_location(&hash).await.unwrap()
+            } = store.version_location(&hash.to_string()).await.unwrap()
             else {
                 panic!("an S3 store keeps {hash} in S3");
             };
             let version = StoredVersion::new(
                 Arc::clone(store),
-                hash.parse().unwrap(),
+                hash,
                 size,
                 url,
                 &region,
@@ -2685,12 +2698,14 @@ pub(crate) mod tests {
             let (store, _tmp, _server) = setup_dyn().await;
             let parquet = upload(&store, sample_parquet()).await;
             let jsonl = upload(&store, SAMPLE_JSONL.to_vec()).await;
+            let csv = upload(&store, SAMPLE_CSV.to_vec()).await;
+            let json = upload(&store, SAMPLE_JSON.to_vec()).await;
 
             let take = DFOpts {
                 take: Some("0,2".to_string()),
                 ..DFOpts::empty()
             };
-            let df = tabular::read_version_df(&store, &parquet, "parquet", &take)
+            let df = read(&store, parquet, "parquet", &take)
                 .await
                 .expect("take over a Parquet scan");
             assert_eq!((df.height(), df.width()), (2, 2));
@@ -2701,19 +2716,26 @@ pub(crate) mod tests {
                 item: Some("b:2".to_string()),
                 ..DFOpts::empty()
             };
-            let df = tabular::read_version_df(&store, &parquet, "parquet", &column_at)
+            let df = read(&store, parquet, "parquet", &column_at)
                 .await
                 .expect("column_at over a Parquet scan");
             assert_eq!(df.get(0).unwrap()[0], AnyValue::String("z"));
 
-            // A filter resolves the schema, and the cloud-scan root differs per format.
+            // A filter resolves the schema, and the cloud-scan root differs per format. A CSV's
+            // dialect sample and a JSON array are fetched from the store, blocking on the runtime.
             let filter = DFOpts {
                 filter: Some("a == 2".to_string()),
                 ..DFOpts::empty()
             };
-            for (hash, ext) in [(&parquet, "parquet"), (&jsonl, "jsonl")] {
+            let cases = [
+                (parquet, "parquet"),
+                (jsonl, "jsonl"),
+                (csv, "csv"),
+                (json, "json"),
+            ];
+            for (stored, ext) in cases {
                 let case = format!("filter over a {ext} scan");
-                let df = tabular::read_version_df(&store, hash, ext, &filter)
+                let df = read(&store, stored, ext, &filter)
                     .await
                     .unwrap_or_else(|e| panic!("{case}: {e}"));
                 assert_eq!((df.height(), df.width()), (1, 2), "{case}");
@@ -2729,9 +2751,8 @@ pub(crate) mod tests {
                 item: Some("b:0".to_string()),
                 ..DFOpts::empty()
             };
-            let missing =
-                tabular::read_version_df(&store, "deadbeefdeadbeef", "parquet", &column_at_first)
-                    .await;
+            let never_stored = (MerkleHash::new(0xdeadbeef), parquet.1);
+            let missing = read(&store, never_stored, "parquet", &column_at_first).await;
             assert!(missing.is_err(), "column_at over an object never stored");
 
             let ipc = upload(&store, sample_ipc()).await;
@@ -2739,12 +2760,11 @@ pub(crate) mod tests {
                 sql: Some("SELECT * FROM df".to_string()),
                 ..DFOpts::empty()
             };
-            let result = tabular::read_version_df(&store, &ipc, "arrow", &sql).await;
+            let result = read(&store, ipc, "arrow", &sql).await;
             assert!(result.is_err(), "SQL over an IPC file is rejected");
 
             let not_a_frame = upload(&store, b"not a data frame".to_vec()).await;
-            let result =
-                tabular::read_version_df(&store, &not_a_frame, "xlsx", &DFOpts::empty()).await;
+            let result = read(&store, not_a_frame, "xlsx", &DFOpts::empty()).await;
             assert!(result.is_err(), "an unknown extension is rejected");
         }
 

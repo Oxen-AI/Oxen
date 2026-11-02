@@ -143,7 +143,8 @@ impl TabularDiffWrapper {
                 let version_store = repo.version_store();
                 tabular::read_version_df(
                     &version_store,
-                    &node.hash().to_string(),
+                    *node.hash(),
+                    node.num_bytes(),
                     node.extension(),
                     &DFOpts::empty(),
                 )
