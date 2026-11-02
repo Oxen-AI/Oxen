@@ -295,9 +295,11 @@ pub enum OxenError {
         reason: &'static str,
     },
 
-    /// A pushed commit archive holds an entry other than a commit's `dirs` or `dir_hashes` under
-    /// `history/<commit_id>/`, so nothing is written for it.
-    #[error("Commit archive entry is not a commit's dirs or dir_hashes: {0}")]
+    /// A pushed commit archive holds an entry other than a file or directory in a commit's `dirs`
+    /// or `dir_hashes` under `history/<commit_id>/`, so nothing is written for it.
+    #[error(
+        "Commit archive entry is not a file or directory in a commit's dirs or dir_hashes: {0}"
+    )]
     InvalidCommitArchiveEntry(PathBufError),
 
     /// A path a request supplied normalizes to the repository root where a file path is expected.

@@ -1089,12 +1089,14 @@ async fn unpack_entry_tarball_async(
             .path()
             .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
 
-        // A push sends only a commit's `history/<commit_id>/dirs` and `history/<commit_id>/dir_hashes`
-        // and their contents, so every other entry is refused.
+        // A push sends only the files and directories of a commit's `history/<commit_id>/dirs` and
+        // `history/<commit_id>/dir_hashes`, so every other entry is refused.
         let refused = || OxenError::InvalidCommitArchiveEntry(path.as_ref().into());
         let relative = util::fs::normalize_relative_path(&path).map_err(|_| refused())?;
+        let entry_type = file.header().entry_type();
         let mut parts = relative.iter();
-        let accepted = parts.next().is_some_and(|part| part == HISTORY_DIR)
+        let accepted = (entry_type.is_file() || entry_type.is_dir())
+            && parts.next().is_some_and(|part| part == HISTORY_DIR)
             && parts
                 .next()
                 .and_then(|part| part.to_str())
@@ -1109,14 +1111,6 @@ async fn unpack_entry_tarball_async(
         // We construct the destination ourselves instead of using unpack_in(), because unpack_in()
         // calls canonicalize() internally, which fails on Windows ramdisks (imdisk).
         let dest = hidden_dir.join(&relative);
-        let entry_type = file.header().entry_type();
-        if !entry_type.is_file() && !entry_type.is_dir() {
-            return Err(OxenError::basic_str(format!(
-                "Unsupported archive entry type for {}: only regular files and directories are \
-                 allowed",
-                path.display()
-            )));
-        }
         if let Some(parent) = dest.parent() {
             util::fs::create_dir_all(parent)?;
         }
@@ -1222,6 +1216,22 @@ mod tests {
                 "{entry:?} must not be written"
             );
         }
+
+        let link = commit_dir.join(DIRS_DIR).join("link");
+        let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Symlink);
+        header.set_size(0);
+        tar.append_link(&mut header, &link, "../../../config.toml")?;
+        let result = unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await;
+        assert!(
+            matches!(result, Err(OxenError::InvalidCommitArchiveEntry(_))),
+            "a symlink in a commit's dirs is refused, got {result:?}"
+        );
+        assert!(
+            fs::symlink_metadata(hidden_dir.join(&link)).is_err(),
+            "a refused symlink must not be created"
+        );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
