@@ -579,7 +579,9 @@ pub fn export(
     // let sql = prepare_sql(sql, opts)?;
     // Get the file extension from the tmp_path
     if !is_valid_export_extension(tmp_path) {
-        return Err(DataFrameError::InvalidFileType);
+        return Err(DataFrameError::InvalidFileType {
+            extension: util::fs::extension_from_path(tmp_path),
+        });
     }
     let export_sql = wrap_sql_for_export(sql, tmp_path);
     log::debug!("export_sql: {export_sql}");
@@ -1020,40 +1022,17 @@ pub fn modify_rows_with_polars_df(
     Ok(df)
 }
 
-pub fn index_file(path: &Path, conn: &duckdb::Connection) -> Result<(), DataFrameError> {
-    log::debug!("df_db:index_file() at path {path:?}");
-    let extension: &str = &util::fs::extension_from_path(path);
-    let path_str = path.to_string_lossy().to_string();
+/// The DuckDB function that reads a data frame file with `extension` into an index, or
+/// `InvalidFileType` for an extension DuckDB cannot index.
+pub(crate) fn duckdb_reader(extension: &str) -> Result<&'static str, DataFrameError> {
     match extension {
-        "csv" => {
-            let query = format!(
-                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_csv('{path_str}')"
-            );
-            conn.execute(&query, [])?;
-        }
-        "tsv" => {
-            let query = format!(
-                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_csv('{path_str}')"
-            );
-            conn.execute(&query, [])?;
-        }
-        "parquet" => {
-            let query = format!(
-                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_parquet('{path_str}')"
-            );
-            conn.execute(&query, [])?;
-        }
-        "jsonl" | "json" | "ndjson" => {
-            let query = format!(
-                "CREATE TABLE {DUCKDB_DF_TABLE_NAME} AS SELECT * FROM read_json('{path_str}')"
-            );
-            conn.execute(&query, [])?;
-        }
-        _ => {
-            return Err(DataFrameError::InvalidFileType);
-        }
+        "csv" | "tsv" => Ok("read_csv"),
+        "parquet" => Ok("read_parquet"),
+        "jsonl" | "json" | "ndjson" => Ok("read_json"),
+        _ => Err(DataFrameError::InvalidFileType {
+            extension: extension.to_string(),
+        }),
     }
-    Ok(())
 }
 
 // TODO: We will eventually want to parse the actual type, not just the extension.
@@ -1066,13 +1045,9 @@ pub fn index_file_with_id(
     log::debug!("df_db:index_file() at path {path:?} into path {conn:?}");
     let path_str = path.to_string_lossy().to_string();
 
-    let read_clause = match extension {
-        "csv" | "tsv" => format!("read_csv('{path_str}', AUTO_DETECT=TRUE, header=True)"),
-        "parquet" => format!("read_parquet('{path_str}')"),
-        "jsonl" | "json" | "ndjson" => format!("read_json('{path_str}')"),
-        _ => {
-            return Err(DataFrameError::InvalidFileType);
-        }
+    let read_clause = match duckdb_reader(extension)? {
+        "read_csv" => format!("read_csv('{path_str}', AUTO_DETECT=TRUE, header=True)"),
+        reader => format!("{reader}('{path_str}')"),
     };
 
     // The system column names are reserved. DuckDB silently renames duplicate

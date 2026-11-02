@@ -2755,14 +2755,6 @@ pub(crate) mod tests {
             let missing = read(&store, never_stored, "parquet", &column_at_first).await;
             assert!(missing.is_err(), "column_at over an object never stored");
 
-            let ipc = upload(&store, sample_ipc()).await;
-            let sql = DFOpts {
-                sql: Some("SELECT * FROM df".to_string()),
-                ..DFOpts::empty()
-            };
-            let result = read(&store, ipc, "arrow", &sql).await;
-            assert!(result.is_err(), "SQL over an IPC file is rejected");
-
             let not_a_frame = upload(&store, b"not a data frame".to_vec()).await;
             let result = read(&store, not_a_frame, "xlsx", &DFOpts::empty()).await;
             assert!(result.is_err(), "an unknown extension is rejected");

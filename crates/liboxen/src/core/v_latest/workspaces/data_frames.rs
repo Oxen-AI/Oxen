@@ -199,6 +199,8 @@ pub fn get_queryable_data_frame_workspace_from_file_node(
         .ok_or(OxenError::QueryableWorkspaceNotFound)
 }
 
+/// The non-editable workspace holding a queryable index of `path` at `commit`. Refuses a file type
+/// DuckDB cannot index, and fails with `QueryableWorkspaceNotFound` when no workspace holds one.
 pub fn get_queryable_data_frame_workspace(
     repo: &LocalRepository,
     path: impl AsRef<Path>,
@@ -213,6 +215,7 @@ pub fn get_queryable_data_frame_workspace(
             "File format not supported, must be tabular.",
         ));
     }
+    df_db::duckdb_reader(file_node.extension())?;
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 

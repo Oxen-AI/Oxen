@@ -1322,9 +1322,8 @@ pub fn scan_df(
     )
 }
 
-/// A scan of at most `n_rows` rows of `source`, a data frame file with `extension`. Refuses an
-/// `.arrow` file when `opts` carries a SQL query. A stored version file's reads block, so scan it
-/// off the async runtime.
+/// A scan of at most `n_rows` rows of `source`, a data frame file with `extension`. A stored
+/// version file's reads block, so scan it off the async runtime.
 fn scan_df_with_extension(
     source: &ByteSource,
     extension: Option<&str>,
@@ -1343,9 +1342,6 @@ fn scan_df_with_extension(
             scan_df_csv(source, CsvDialect::sniff(source, extension, opts)?, n_rows)
         }
         Some("parquet") => scan_df_parquet(source, n_rows),
-        Some("arrow") if opts.sql.is_some() => Err(OxenError::basic_str(
-            "SQL queries are not supported for .arrow files",
-        )),
         Some("arrow") => scan_df_arrow(source, n_rows),
         _ => Err(OxenError::basic_str(format!(
             "Could not load data frame {source:?} with extension {extension:?}"

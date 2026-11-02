@@ -980,6 +980,23 @@ impl error::ResponseError for OxenHttpError {
                             });
                             HttpResponse::BadRequest().json(error_json)
                         }
+                        // A SQL query, an index, or an export asked of a file type DuckDB cannot
+                        // read, which no retry changes.
+                        e @ DataFrameError::InvalidFileType { .. } => {
+                            tracing::warn!(
+                                "Refused a data frame file type DuckDB does not support"
+                            );
+                            let error_json = json!({
+                                "error": {
+                                    "type": "invalid_file_type",
+                                    "title": "Unsupported data frame file type",
+                                    "detail": format!("{e}"),
+                                },
+                                "status": STATUS_ERROR,
+                                "status_message": MSG_BAD_REQUEST,
+                            });
+                            HttpResponse::BadRequest().json(error_json)
+                        }
                         e @ DataFrameError::NoRowsFound => {
                             log::debug!("No rows found: {e}");
                             let error_json = json!({
