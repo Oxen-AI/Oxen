@@ -88,13 +88,14 @@ pub use crate::core::v_latest::merge::lowest_common_ancestor_from_commits;
 #[cfg(test)]
 mod tests {
 
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use filetime::{FileTime, set_file_mtime};
 
     use crate::core::df::tabular;
     use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::v_latest::merge_marker;
     use crate::error::OxenError;
     use crate::model::{Commit, LocalRepository, User};
@@ -163,200 +164,1911 @@ mod tests {
         Ok(lca)
     }
 
-    #[tokio::test]
-    async fn test_merge_one_commit_add_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Write and commit hello file to main branch
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, hello_file).await?;
-            repositories::commit(&repo, "Adding hello file")?;
+    async fn case_merge_one_commit_add_fast_forward(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Write and commit hello file to main branch
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, hello_file).await?;
+        repositories::commit(repo, "Adding hello file")?;
 
-            // Branch to add world
-            let branch_name = "add-world";
-            repositories::branches::create_checkout(&repo, branch_name)?;
+        // Branch to add world
+        let branch_name = "add-world";
+        repositories::branches::create_checkout(repo, branch_name)?;
 
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Adding world file")?;
-            // Fetch the branch again to get the latest commit
-            let merge_branch = repositories::branches::current_branch(&repo)?.unwrap();
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Adding world file")?;
+        // Fetch the branch again to get the latest commit
+        let merge_branch = repositories::branches::current_branch(repo)?.unwrap();
 
-            // Checkout and merge additions
-            let _og_branch = repositories::checkout(&repo, &og_branch.name)
-                .await?
-                .unwrap();
+        // Checkout and merge additions
+        let _og_branch = repositories::checkout(repo, &og_branch.name)
+            .await?
+            .unwrap();
 
-            // Make sure world file doesn't exist until we merge it in
-            assert!(!world_file.exists());
+        // Make sure world file doesn't exist until we merge it in
+        assert!(!world_file.exists());
 
-            let commit = repositories::merge::merge(&repo, &merge_branch.name)
-                .await?
-                .unwrap();
+        let commit = repositories::merge::merge(repo, &merge_branch.name)
+            .await?
+            .unwrap();
 
-            // Now that we've merged in, world file should exist
-            assert!(world_file.exists());
+        // Now that we've merged in, world file should exist
+        assert!(world_file.exists());
 
-            // Check that HEAD has updated to the merge commit
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, commit.id);
-            Ok(())
-        })
-        .await
+        // Check that HEAD has updated to the merge commit
+        let head_commit = repositories::commits::head_commit(repo)?;
+        assert_eq!(head_commit.id, commit.id);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_merge_one_commit_remove_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Write and add hello file
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, hello_file).await?;
+    async fn case_merge_one_commit_remove_fast_forward(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Write and add hello file
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, hello_file).await?;
 
-            // Write and add world file
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &world_file).await?;
+        // Write and add world file
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &world_file).await?;
 
-            // Commit two files
-            repositories::commit(&repo, "Adding hello & world files")?;
+        // Commit two files
+        repositories::commit(repo, "Adding hello & world files")?;
 
-            // Branch to remove world
-            let branch_name = "remove-world";
-            let merge_branch = repositories::branches::create_checkout(&repo, branch_name)?;
+        // Branch to remove world
+        let branch_name = "remove-world";
+        let merge_branch = repositories::branches::create_checkout(repo, branch_name)?;
 
-            // Remove the file
-            let world_file = repo.path.join("world.txt");
-            util::fs::remove_file(&world_file)?;
+        // Remove the file
+        let world_file = repo.path.join("world.txt");
+        util::fs::remove_file(&world_file)?;
 
-            // Commit the removal
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Removing world file")?;
+        // Commit the removal
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Removing world file")?;
 
-            // Checkout and merge additions
-            repositories::checkout(&repo, &og_branch.name).await?;
+        // Checkout and merge additions
+        repositories::checkout(repo, &og_branch.name).await?;
 
-            // Make sure world file exists until we merge the removal in
-            assert!(world_file.exists(), "World file should exist before merge");
+        // Make sure world file exists until we merge the removal in
+        assert!(world_file.exists(), "World file should exist before merge");
 
-            let merge_result = repositories::merge::merge(&repo, &merge_branch.name).await?;
+        let merge_result = repositories::merge::merge(repo, &merge_branch.name).await?;
 
-            merge_result.unwrap();
+        merge_result.unwrap();
 
-            // Now that we've merged in, world file should not exist
-            assert!(
-                !world_file.exists(),
-                "World file should not exist after merge"
-            );
+        // Now that we've merged in, world file should not exist
+        assert!(
+            !world_file.exists(),
+            "World file should not exist after merge"
+        );
 
-            Ok(())
-        })
-        .await
+        Ok(())
     }
+
     /// A criss-cross history leaves two commits tied as merge bases. The most recent one wins, as
     /// it does in git, so a three-dot diff of the same two revisions agrees between the two tools.
-    #[tokio::test]
-    async fn test_lowest_common_ancestor_picks_the_most_recent_merge_base() -> Result<(), OxenError>
-    {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
+    async fn case_lowest_common_ancestor_picks_the_most_recent_merge_base(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
 
-            repositories::branches::create_checkout(&repo, "X")?;
-            let x_path = repo.path.join("x.txt");
-            util::fs::write_to_path(&x_path, "x")?;
-            repositories::add(&repo, &x_path).await?;
-            let x1 = repositories::commit(&repo, "x1")?;
+        repositories::branches::create_checkout(repo, "X")?;
+        let x_path = repo.path.join("x.txt");
+        util::fs::write_to_path(&x_path, "x")?;
+        repositories::add(repo, &x_path).await?;
+        let x1 = repositories::commit(repo, "x1")?;
 
-            repositories::checkout(&repo, &main_branch.name).await?;
-            repositories::branches::create_checkout(&repo, "Y")?;
-            let y_path = repo.path.join("y.txt");
-            util::fs::write_to_path(&y_path, "y")?;
-            repositories::add(&repo, &y_path).await?;
-            let y1 = repositories::commit(&repo, "y1")?;
+        repositories::checkout(repo, &main_branch.name).await?;
+        repositories::branches::create_checkout(repo, "Y")?;
+        let y_path = repo.path.join("y.txt");
+        util::fs::write_to_path(&y_path, "y")?;
+        repositories::add(repo, &y_path).await?;
+        let y1 = repositories::commit(repo, "y1")?;
 
-            // Each side merges the other's commit, the way two collaborators merging in opposite
-            // directions before either pushes would. Both merges have exactly two parents.
-            let my = repositories::merge::merge_commit_into_base(&repo, &x1, &y1)
-                .await?
-                .expect("merging x1 into y1 should produce a commit");
-            repositories::checkout(&repo, "X").await?;
-            let mx = repositories::merge::merge_commit_into_base(&repo, &y1, &x1)
-                .await?
-                .expect("merging y1 into x1 should produce a commit");
-            assert_eq!(mx.parent_ids.len(), 2);
-            assert_eq!(my.parent_ids.len(), 2);
+        // Each side merges the other's commit, the way two collaborators merging in opposite
+        // directions before either pushes would. Both merges have exactly two parents.
+        let my = repositories::merge::merge_commit_into_base(repo, &x1, &y1)
+            .await?
+            .expect("merging x1 into y1 should produce a commit");
+        repositories::checkout(repo, "X").await?;
+        let mx = repositories::merge::merge_commit_into_base(repo, &y1, &x1)
+            .await?
+            .expect("merging y1 into x1 should produce a commit");
+        assert_eq!(mx.parent_ids.len(), 2);
+        assert_eq!(my.parent_ids.len(), 2);
 
-            // x1 and y1 are both common ancestors one step from each merge, so this is the
-            // ambiguous case and not an accidentally-unique one. y1 was committed second, so
-            // the git rule (most recent merge base wins) selects it.
-            assert!(
-                y1.timestamp > x1.timestamp,
-                "y1 should be the newer merge base"
-            );
-            let lca = repositories::merge::lowest_common_ancestor_from_commits(&repo, &mx, &my)?
-                .expect("the two merges share history");
-            assert_eq!(
-                lca.id, y1.id,
-                "the most recent merge base should win, as it does in git"
-            );
-            Ok(())
-        })
-        .await
+        // x1 and y1 are both common ancestors one step from each merge, so this is the
+        // ambiguous case and not an accidentally-unique one. y1 was committed second, so
+        // the git rule (most recent merge base wins) selects it.
+        assert!(
+            y1.timestamp > x1.timestamp,
+            "y1 should be the newer merge base"
+        );
+        let lca = repositories::merge::lowest_common_ancestor_from_commits(repo, &mx, &my)?
+            .expect("the two merges share history");
+        assert_eq!(
+            lca.id, y1.id,
+            "the most recent merge base should win, as it does in git"
+        );
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_merge_get_lowest_common_ancestor() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let merge_branch_name = "B"; // see populate function
-            let lca = populate_threeway_merge_repo(&repo, merge_branch_name).await?;
+    async fn case_merge_get_lowest_common_ancestor(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let merge_branch_name = "B"; // see populate function
+        let lca = populate_threeway_merge_repo(repo, merge_branch_name).await?;
 
+        // Make sure the merger can detect the three way merge
+        let guess =
+            repositories::merge::lowest_common_ancestor_from_commits(repo, &lca, &lca)?.unwrap();
+        assert_eq!(lca.id, guess.id);
+
+        Ok(())
+    }
+
+    async fn case_merge_no_conflict_three_way_merge(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let merge_branch_name = "B";
+        // this will checkout main again so we can try to merge
+
+        let history_before = repositories::commits::list(repo)?.len();
+        populate_threeway_merge_repo(repo, merge_branch_name).await?;
+
+        {
             // Make sure the merger can detect the three way merge
-            let guess =
-                repositories::merge::lowest_common_ancestor_from_commits(&repo, &lca, &lca)?
-                    .unwrap();
-            assert_eq!(lca.id, guess.id);
+            let merge_commit = repositories::merge::merge(repo, merge_branch_name)
+                .await?
+                .unwrap();
 
-            Ok(())
-        })
-        .await
+            // Two way merge should have two parent IDs so we know where the merge came from
+            assert_eq!(merge_commit.parent_ids.len(), 2);
+
+            // There should be 5 files: [a.txt, b.txt, c.txt, d.txt e.txt]
+            let file_prefixes = ["a", "b", "c", "d", "e"];
+            for prefix in file_prefixes.iter() {
+                let filename = format!("{prefix}.txt");
+                let filepath = repo.path.join(filename);
+                assert!(filepath.exists(), "the merge brings in {filepath:?}");
+            }
+        }
+
+        let commit_history = repositories::commits::list(repo)?;
+
+        // We should have the merge commit + the branch commits here
+        assert_eq!(commit_history.len(), history_before + 6);
+
+        Ok(())
+    }
+
+    async fn case_merge_three_way_no_content_delta_client_side(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Three-way merge where merge isn't an ancestor of base but contributes no new content —
+        // base squash-replayed the merge branch. Pre-fix this 500ed with "No changes to commit".
+        // Post-fix: succeeds and produces an empty merge commit with two parents and base's tree.
+        let feature_branch = "feature";
+        let main_head_before_merge =
+            populate_already_up_to_date_three_way(repo, feature_branch).await?;
+        let feature_tip = repositories::revisions::get(repo, feature_branch)?
+            .expect("feature branch should resolve");
+
+        let result = repositories::merge::merge(repo, feature_branch).await?;
+        let merge_commit = result.expect("merge should succeed and produce a commit");
+
+        assert_empty_merge_commit(repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
+        // Client-side merge advances HEAD to the new merge commit.
+        let current_head = repositories::commits::head_commit(repo)?;
+        assert_eq!(current_head.id, merge_commit.id);
+
+        Ok(())
+    }
+
+    async fn case_merge_three_way_no_content_delta_server_side(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Server-side equivalent — exercises `merge_into_base`, the path called from the
+        // oxen-server `/api/repos/.../merge/{base..head}` controller.
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let feature_branch_name = "feature";
+        let main_head_before_merge =
+            populate_already_up_to_date_three_way(repo, feature_branch_name).await?;
+
+        let base_branch = repositories::branches::get_by_name(repo, &main_branch.name)?;
+        let merge_branch = repositories::branches::get_by_name(repo, feature_branch_name)?;
+        let feature_tip = repositories::revisions::get(repo, feature_branch_name)?
+            .expect("feature branch should resolve");
+
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        assert_empty_merge_commit(repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
+        // Server-side: base branch ref is advanced to the new merge commit.
+        let base_after = repositories::branches::get_by_name(repo, &main_branch.name)?;
+        assert_eq!(base_after.commit_id, merge_commit.id);
+
+        Ok(())
+    }
+
+    async fn case_merge_conflict_three_way_merge(repo: &LocalRepository) -> Result<(), OxenError> {
+        // This test has a conflict where user on the main line, and user on the branch, both modify a.txt
+
+        // Ex) We want to merge E into D to create F
+        // A - C - D - F
+        //    \      /
+        //     B - E
+
+        let a_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let a_path = repo.path.join("a.txt");
+        util::fs::write_to_path(&a_path, "a")?;
+        repositories::add(repo, &a_path).await?;
+        // Return the lowest common ancestor for the tests
+        repositories::commit(repo, "Committing a.txt file")?;
+
+        // Make changes on B
+        let merge_branch_name = "B";
+        repositories::branches::create_checkout(repo, merge_branch_name)?;
+
+        // Add a text new text file
+        let b_path = repo.path.join("b.txt");
+        util::fs::write_to_path(&b_path, "b")?;
+        repositories::add(repo, &b_path).await?;
+
+        // Modify the text file a.txt
+        test::modify_txt_file(&a_path, "a modified from branch")?;
+        repositories::add(repo, &a_path).await?;
+
+        // Commit changes
+        repositories::commit(repo, "Committing b.txt file")?;
+
+        // Checkout main branch again to make another change
+        repositories::checkout(repo, &a_branch.name).await?;
+
+        // Add new file c.txt on main branch
+        let c_path = repo.path.join("c.txt");
+        util::fs::write_to_path(&c_path, "c")?;
+        repositories::add(repo, &c_path).await?;
+
+        // Modify a.txt from main branch
+        test::modify_txt_file(&a_path, "a modified from main line")?;
+        repositories::add(repo, &a_path).await?;
+
+        // Commit changes to main branch
+        repositories::commit(repo, "Committing c.txt file")?;
+
+        // Commit some more changes to main branch
+        let d_path = repo.path.join("d.txt");
+        util::fs::write_to_path(&d_path, "d")?;
+        repositories::add(repo, &d_path).await?;
+        repositories::commit(repo, "Committing d.txt file")?;
+
+        // Checkout merge branch (B) to make another change
+        repositories::checkout(repo, merge_branch_name).await?;
+
+        // Add another branch
+        let e_path = repo.path.join("e.txt");
+        util::fs::write_to_path(&e_path, "e")?;
+        repositories::add(repo, &e_path).await?;
+        repositories::commit(repo, "Committing e.txt file")?;
+
+        // Checkout the OG branch again so that we can merge into it
+        repositories::checkout(repo, &a_branch.name).await?;
+
+        repositories::merge::merge(repo, merge_branch_name).await?;
+
+        let conflict_reader = NodeMergeConflictReader::new(repo)?;
+        let has_conflicts = conflict_reader.has_conflicts()?;
+        let conflicts = conflict_reader.list_conflicts()?;
+
+        assert!(has_conflicts);
+        assert_eq!(conflicts.len(), 1);
+
+        let local_a_path = util::fs::path_relative_to_dir(&a_path, &repo.path)?;
+        assert_eq!(conflicts[0].base_entry.1, local_a_path);
+
+        Ok(())
+    }
+
+    async fn case_merge_conflict_three_way_merge_post_merge_branch(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
+        // should have a conflict from the LCA
+
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let labels_path = repo.path.join("labels.txt");
+        util::fs::write_to_path(&labels_path, "cat\ndog")?;
+        repositories::add(repo, &labels_path).await?;
+        // Return the lowest common ancestor for the tests
+        repositories::commit(repo, "Add initial labels.txt file with cat and dog")?;
+
+        // Add a fish label to the file on a branch
+        let fish_branch_name = "add-fish-label";
+        repositories::branches::create_checkout(repo, fish_branch_name)?;
+        let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+        repositories::add(repo, &labels_path).await?;
+        repositories::commit(repo, "Adding fish to labels.txt file")?;
+
+        // Checkout main, and branch from it to another branch to add a human label
+        repositories::checkout(repo, &og_branch.name).await?;
+        let human_branch_name = "add-human-label";
+        repositories::branches::create_checkout(repo, human_branch_name)?;
+        let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
+        repositories::add(repo, labels_path).await?;
+        let human_commit = repositories::commit(repo, "Adding human to labels.txt file")?;
+
+        // Checkout main again
+        repositories::checkout(repo, &og_branch.name).await?;
+
+        // Merge the fish branch in, and then the human branch should have conflicts
+        let result_commit = repositories::merge::merge(repo, fish_branch_name).await?;
+        let base_commit = result_commit.expect("the fish branch fast-forwards");
+
+        // Before merging, both the branch check and the commit listing find the conflict
+        let base_branch = repositories::branches::get_by_name(repo, &og_branch.name)?;
+        let merge_branch = repositories::branches::get_by_name(repo, human_branch_name)?;
+        let has_conflicts =
+            repositories::merge::has_conflicts(repo, &base_branch, &merge_branch).await?;
+        assert!(has_conflicts);
+        let conflicts =
+            repositories::merge::list_conflicts_between_commits(repo, &base_commit, &human_commit)
+                .await?;
+        assert_eq!(conflicts.len(), 1, "one file is in conflict");
+
+        // Checkout main again, merge again
+        repositories::checkout(repo, &og_branch.name).await?;
+        repositories::merge::merge(repo, human_branch_name).await?;
+
+        let conflict_reader = NodeMergeConflictReader::new(repo)?;
+        let has_conflicts = conflict_reader.has_conflicts()?;
+        let conflicts = conflict_reader.list_conflicts()?;
+
+        assert!(has_conflicts);
+        assert_eq!(conflicts.len(), 1);
+
+        Ok(())
+    }
+
+    async fn case_merge_no_commit_needed(repo: &LocalRepository) -> Result<(), OxenError> {
+        // 1. Commit something in main branch
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let labels_path = repo.path.join("labels.txt");
+        util::fs::write_to_path(&labels_path, "cat\ndog")?;
+        repositories::add(repo, &labels_path).await?;
+        repositories::commit(repo, "Add initial labels.txt file with cat and dog")?;
+
+        // 2. Create a new branch
+        let new_branch_name = "new_branch";
+        repositories::branches::create_checkout(repo, new_branch_name)?;
+
+        // 3. Commit something in new branch
+        let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
+        repositories::add(repo, &labels_path).await?;
+        repositories::commit(repo, "Adding fish to labels.txt file")?;
+
+        // 4. merge main onto new branch (re-fetch branches to get current commit IDs)
+        let og_branch = repositories::branches::get_by_name(repo, &og_branch.name)?;
+        let new_branch = repositories::branches::get_by_name(repo, new_branch_name)?;
+        let merge_commit = merge_into_base(repo, &og_branch, &new_branch, &test_author()).await?;
+
+        // 5. Already up to date: merge_into_base returns base unchanged, no new commit.
+        assert_eq!(merge_commit.id, new_branch.commit_id);
+        let new_branch_after = repositories::branches::get_by_name(repo, new_branch_name)?;
+        assert_eq!(new_branch_after.commit_id, new_branch.commit_id);
+
+        Ok(())
+    }
+
+    async fn case_merge_client_equal_tips_returns_base(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Equal-tip merge on the client path: a sibling branch points at the same commit as HEAD.
+        // Must report "Already up to date" — Some(base) — rather than None (which is what
+        // fast_forward_merge used to return for this case before the equal-tip dispatch fix).
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+        repositories::branches::create_from_head(repo, "twin")?;
+
+        let merged = repositories::merge::merge(repo, "twin").await?;
+        assert_eq!(
+            merged.map(|c| c.id),
+            Some(base_branch.commit_id.clone()),
+            "client merge of equal tips must return the base commit, not None"
+        );
+
+        // HEAD must remain on the same commit.
+        let head_commit = repositories::commits::head_commit(repo)?;
+        assert_eq!(head_commit.id, base_branch.commit_id);
+
+        Ok(())
+    }
+
+    async fn case_merge_diverged_branches_then_merge_again(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // 1. Commit something in main branch
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+        let file1_path = repo.path.join("file1.txt");
+        util::fs::write_to_path(&file1_path, "Initial content for file1")?;
+        repositories::add(repo, &file1_path).await?;
+        let _ = repositories::commit(repo, "Commit file1 to main")?;
+
+        // 2. Create and checkout a new branch
+        let new_branch_name = "feature-branch";
+        repositories::branches::create_checkout(repo, new_branch_name)?;
+
+        // 3. Commit something in new branch
+        let file2_path = repo.path.join("file2.txt");
+        util::fs::write_to_path(&file2_path, "Content for file2 in feature branch")?;
+        repositories::add(repo, &file2_path).await?;
+        let feature_commit1 = repositories::commit(repo, "Commit file2 to feature-branch")?;
+
+        // 4. Checkout main branch
+        repositories::checkout(repo, &og_branch.name).await?;
+
+        // 5. Commit something in main branch to make it diverge
+        let file3_path = repo.path.join("file3.txt");
+        util::fs::write_to_path(&file3_path, "Content for file3 in main branch")?;
+        repositories::add(repo, &file3_path).await?;
+        let main_commit2 = repositories::commit(repo, "Commit file3 to main, diverging")?;
+
+        // 6. Merge new branch onto main branch
+        // There should be a new merge commit
+        let merge_result1 = repositories::merge::merge(repo, new_branch_name).await?;
+        assert!(
+            merge_result1.is_some(),
+            "First merge should create a merge commit"
+        );
+        let merge_commit1 = merge_result1.unwrap();
+        assert_ne!(
+            merge_commit1.id, main_commit2.id,
+            "Merge commit ID should be new"
+        );
+        assert_ne!(
+            merge_commit1.id, feature_commit1.id,
+            "Merge commit ID should be new"
+        );
+        assert_eq!(
+            merge_commit1.parent_ids.len(),
+            2,
+            "Merge commit should have two parents"
+        );
+
+        // 7. Merge new branch onto main branch again.
+        // Already up to date: no new merge commit, HEAD stays at the first merge commit.
+        let merge_result2 = repositories::merge::merge(repo, new_branch_name).await?;
+        let merge_commit2 =
+            merge_result2.expect("second merge should succeed (already up to date)");
+        assert_eq!(
+            merge_commit2.id, merge_commit1.id,
+            "Second merge attempt should not create a new commit as it's already merged"
+        );
+
+        // Verify HEAD is still the first merge commit
+        let head_commit_after_second_merge = repositories::commits::head_commit(repo)?;
+        assert_eq!(
+            head_commit_after_second_merge.id, merge_commit1.id,
+            "HEAD should remain at the first merge commit"
+        );
+
+        Ok(())
+    }
+
+    // Regression test: files modified only on the merge branch whose parent directory
+    // hash is shared between the LCA and base should not trigger "your local changes
+    // would be overwritten."
+    async fn case_merge_three_way_file_modified_only_on_merge_branch(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Setup: create initial files in a subdirectory
+        let models_dir = repo.path.join("models");
+        util::fs::create_dir_all(&models_dir)?;
+
+        let a_path = models_dir.join("a.toml");
+        let b_path = models_dir.join("b.toml");
+        util::fs::write_to_path(&a_path, "version = 1")?;
+        util::fs::write_to_path(&b_path, "version = 1")?;
+        repositories::add(repo, &models_dir).await?;
+        repositories::commit(repo, "Add models/a.toml and models/b.toml")?;
+
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Create branch B and modify models/a.toml
+        let merge_branch_name = "B";
+        repositories::branches::create_checkout(repo, merge_branch_name)?;
+        util::fs::write_to_path(&a_path, "version = 2")?;
+        repositories::add(repo, &a_path).await?;
+        let new_path = repo.path.join("new.txt");
+        util::fs::write_to_path(&new_path, "new")?;
+        repositories::add(repo, &new_path).await?;
+        repositories::commit(repo, "Update models/a.toml and add new.txt on branch B")?;
+
+        // Back on main, make a diverging commit (different file, outside models/)
+        repositories::checkout(repo, &main_branch.name).await?;
+        let other_path = repo.path.join("other.txt");
+        util::fs::write_to_path(&other_path, "hello")?;
+        repositories::add(repo, &other_path).await?;
+        repositories::commit(repo, "Add other.txt on main")?;
+
+        // A different mtime on models/a.toml and on an untracked copy of the file B adds, so the
+        // merge compares their content and metadata with the commits'
+        let past = FileTime::from_unix_time(1_000_000_000, 0);
+        set_file_mtime(&a_path, past)?;
+        util::fs::write_to_path(&new_path, "new")?;
+        set_file_mtime(&new_path, past)?;
+
+        // Merge branch B into main — this should succeed without conflict
+        let merge_commit = repositories::merge::merge(repo, merge_branch_name).await?;
+        assert!(
+            merge_commit.is_some(),
+            "Merge should succeed without conflict, from outside the repository, over a \
+             touched models/a.toml and an untracked copy of new.txt"
+        );
+
+        // Verify the merged file has the updated content from branch B
+        let content = util::fs::read_from_path(&a_path)?;
+        assert_eq!(content, "version = 2");
+
+        // Verify the other files are still intact
+        assert!(b_path.exists());
+        assert!(other_path.exists());
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_fast_forward(repo: &LocalRepository) -> Result<(), OxenError> {
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Add a file and commit on main
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, &hello_file).await?;
+        repositories::commit(repo, "Adding hello file")?;
+
+        // Create a feature branch and add a commit
+        repositories::branches::create_checkout(repo, "feature")?;
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Adding world file")?;
+
+        // Go back to main so HEAD is on the base branch
+        repositories::checkout(repo, &base_branch.name).await?;
+
+        // Re-fetch branches to get current commit IDs
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch.name)?;
+
+        // Server-side merge: should succeed and update the branch ref
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        assert_eq!(merge_commit.id, merge_branch.commit_id);
+
+        // The base branch ref should now point to the merge commit
+        let updated_branch = repositories::branches::get_by_name(repo, &base_branch.name)?;
+        assert_eq!(updated_branch.commit_id, merge_commit.id);
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_equal_tips_returns_base(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Equal-tip merge on the server path: a sibling branch points at the same commit as the
+        // base branch. Must succeed and return base unchanged — previously this returned
+        // Err("No changes to merge").
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+        repositories::branches::create_from_head(repo, "twin")?;
+        let merge_branch = repositories::branches::get_by_name(repo, "twin")?;
+
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+        assert_eq!(merge_commit.id, base_branch.commit_id);
+
+        // The base branch ref must still point at the same commit.
+        let updated_base = repositories::branches::get_by_name(repo, &base_branch.name)?;
+        assert_eq!(updated_base.commit_id, base_branch.commit_id);
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_no_conflicts(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // Commit a file on main (LCA)
+        let a_file = repo.path.join("a.txt");
+        util::fs::write_to_path(&a_file, "a")?;
+        repositories::add(repo, &a_file).await?;
+        repositories::commit(repo, "Adding a.txt")?;
+
+        // Create feature branch and add a different file
+        repositories::branches::create_checkout(repo, "feature")?;
+        let b_file = repo.path.join("b.txt");
+        util::fs::write_to_path(&b_file, "b")?;
+        repositories::add(repo, &b_file).await?;
+        repositories::commit(repo, "Adding b.txt on feature")?;
+
+        // Go back to main and add another different file (diverge)
+        repositories::checkout(repo, &base_branch_name).await?;
+        let c_file = repo.path.join("c.txt");
+        util::fs::write_to_path(&c_file, "c")?;
+        repositories::add(repo, &c_file).await?;
+        repositories::commit(repo, "Adding c.txt on main")?;
+
+        // Re-fetch branches
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        // Server-side three-way merge should succeed
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        // Merge commit should have two parents
+        assert_eq!(merge_commit.parent_ids.len(), 2);
+        assert!(merge_commit.parent_ids.contains(&base_branch.commit_id));
+        assert!(merge_commit.parent_ids.contains(&merge_branch.commit_id));
+
+        // Merge commit is attributed to the provided author.
+        assert_eq!(merge_commit.author, test_author().name);
+        assert_eq!(merge_commit.email, test_author().email);
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_with_conflicts(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // Commit a file on main (LCA)
+        let labels_file = repo.path.join("labels.txt");
+        util::fs::write_to_path(&labels_file, "cat\ndog")?;
+        repositories::add(repo, &labels_file).await?;
+        repositories::commit(repo, "Adding labels.txt")?;
+
+        // Create feature branch and modify the same file
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&labels_file, "cat\ndog\nfish")?;
+        repositories::add(repo, &labels_file).await?;
+        repositories::commit(repo, "Adding fish on feature")?;
+
+        // Go back to main and modify the same file differently (conflict)
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::write_to_path(&labels_file, "cat\ndog\nbird")?;
+        repositories::add(repo, &labels_file).await?;
+        repositories::commit(repo, "Adding bird on main")?;
+
+        // Re-fetch branches
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        // Server-side merge should return UpstreamMergeConflict error
+        let result = merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, OxenError::UpstreamMergeConflict(_)),
+            "Expected UpstreamMergeConflict, got: {err:?}"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_does_not_modify_working_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Commit a file on main
+        let hello_file = repo.path.join("hello.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, &hello_file).await?;
+        repositories::commit(repo, "Adding hello file")?;
+
+        // Create feature branch and add a new file
+        repositories::branches::create_checkout(repo, "feature")?;
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Adding world file")?;
+
+        // Go back to main — world.txt should not exist in working dir
+        repositories::checkout(repo, &base_branch.name).await?;
+        assert!(!world_file.exists());
+
+        // Re-fetch branches
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch.name)?;
+
+        // Server-side merge
+        merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        // world.txt should STILL not exist — server merge doesn't touch working dir
+        assert!(
+            !world_file.exists(),
+            "Server-side merge should not create files in working directory"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_ff_with_deletion(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        let hello_file = repo.path.join("hello.txt");
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &hello_file).await?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Adding files")?;
+
+        // Feature branch deletes world.txt
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::remove_file(&world_file)?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Removing world file")?;
+
+        repositories::checkout(repo, &base_branch.name).await?;
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch.name)?;
+
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        assert_eq!(merge_commit.id, merge_branch.commit_id);
+
+        // Working dir should still have the file (server merge doesn't touch it)
+        assert!(world_file.exists());
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_with_subdirectories(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // Create initial files in subdirectories
+        let models_dir = repo.path.join("models");
+        util::fs::create_dir_all(&models_dir)?;
+        let file_a = models_dir.join("a.toml");
+        util::fs::write_to_path(&file_a, "version = 1")?;
+        repositories::add(repo, &file_a).await?;
+        repositories::commit(repo, "Adding models/a.toml")?;
+
+        // Feature branch adds a new file in the same subdirectory
+        repositories::branches::create_checkout(repo, "feature")?;
+        let file_b = models_dir.join("b.toml");
+        util::fs::write_to_path(&file_b, "version = 1")?;
+        repositories::add(repo, &file_b).await?;
+        repositories::commit(repo, "Adding models/b.toml on feature")?;
+
+        // Main branch adds a file in a different subdirectory (diverge, no conflict)
+        repositories::checkout(repo, &base_branch_name).await?;
+        let scripts_dir = repo.path.join("scripts");
+        util::fs::create_dir_all(&scripts_dir)?;
+        let file_c = scripts_dir.join("deploy.sh");
+        util::fs::write_to_path(&file_c, "#!/bin/bash")?;
+        repositories::add(repo, &file_c).await?;
+        repositories::commit(repo, "Adding scripts/deploy.sh on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        assert_eq!(merge_commit.parent_ids.len(), 2);
+
+        // Working dir should not have the feature branch file
+        assert!(
+            !file_b.exists(),
+            "Server merge should not create models/b.toml on disk"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_conflict_in_subdirectory(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        let models_dir = repo.path.join("models");
+        util::fs::create_dir_all(&models_dir)?;
+        let config = models_dir.join("config.toml");
+        util::fs::write_to_path(&config, "version = 1")?;
+        repositories::add(repo, &config).await?;
+        repositories::commit(repo, "Adding models/config.toml")?;
+
+        // Feature branch modifies the config
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&config, "version = 2")?;
+        repositories::add(repo, &config).await?;
+        repositories::commit(repo, "Updating config on feature")?;
+
+        // Main branch also modifies the same config (conflict)
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::write_to_path(&config, "version = 3")?;
+        repositories::add(repo, &config).await?;
+        repositories::commit(repo, "Updating config on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let result = merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            OxenError::UpstreamMergeConflict(_)
+        ));
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_both_add_same_path(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: no new.txt yet
+        let placeholder = repo.path.join("placeholder.txt");
+        util::fs::write_to_path(&placeholder, "anchor")?;
+        repositories::add(repo, &placeholder).await?;
+        repositories::commit(repo, "Anchor commit")?;
+
+        // Feature branch adds new.txt
+        repositories::branches::create_checkout(repo, "feature")?;
+        let new_file = repo.path.join("new.txt");
+        util::fs::write_to_path(&new_file, "from feature")?;
+        repositories::add(repo, &new_file).await?;
+        repositories::commit(repo, "Adding new.txt on feature")?;
+
+        // Main branch also adds new.txt with different content
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::write_to_path(&new_file, "from main")?;
+        repositories::add(repo, &new_file).await?;
+        repositories::commit(repo, "Adding new.txt on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let result = merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await;
+        assert!(matches!(
+            result.unwrap_err(),
+            OxenError::UpstreamMergeConflict(_)
+        ));
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_modify_delete_conflict(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: create a file
+        let file = repo.path.join("shared.txt");
+        util::fs::write_to_path(&file, "original")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Adding shared.txt")?;
+
+        // Feature branch deletes the file
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::remove_file(&file)?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Deleting shared.txt on feature")?;
+
+        // Main branch modifies the same file
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::write_to_path(&file, "modified on main")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Modifying shared.txt on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let result = merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await;
+        assert!(
+            matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
+            "Modify on base + delete on merge should be a conflict"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_base_deletes_merge_unchanged(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: create two files
+        let file_a = repo.path.join("a.txt");
+        let file_b = repo.path.join("b.txt");
+        util::fs::write_to_path(&file_a, "a")?;
+        util::fs::write_to_path(&file_b, "b")?;
+        repositories::add(repo, &file_a).await?;
+        repositories::add(repo, &file_b).await?;
+        repositories::commit(repo, "Adding a.txt and b.txt")?;
+
+        // Feature branch makes an unrelated change (doesn't touch a.txt)
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&file_b, "b modified on feature")?;
+        repositories::add(repo, &file_b).await?;
+        repositories::commit(repo, "Modifying b.txt on feature")?;
+
+        // Main branch deletes a.txt
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::remove_file(&file_a)?;
+        repositories::add(repo, &file_a).await?;
+        repositories::commit(repo, "Deleting a.txt on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        // Base's deletion should win since merge didn't change the file
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+
+        assert_eq!(merge_commit.parent_ids.len(), 2);
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_delete_modify_conflict(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: create a file
+        let file = repo.path.join("shared.txt");
+        util::fs::write_to_path(&file, "original")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Adding shared.txt")?;
+
+        // Feature branch modifies the file
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&file, "modified on feature")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Modifying shared.txt on feature")?;
+
+        // Main branch deletes the same file
+        repositories::checkout(repo, &base_branch_name).await?;
+        util::fs::remove_file(&file)?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "Deleting shared.txt on main")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let result = merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await;
+        assert!(
+            matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
+            "Delete on base + modify on merge should be a conflict"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_into_base_three_way_dir_metadata(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: create three files (a.txt, b.txt, c.txt)
+        let file_a = repo.path.join("a.txt");
+        let file_b = repo.path.join("b.txt");
+        let file_c = repo.path.join("c.txt");
+        util::fs::write_to_path(&file_a, "aaa")?; // 3 bytes
+        util::fs::write_to_path(&file_b, "bbb")?; // 3 bytes
+        util::fs::write_to_path(&file_c, "ccc")?; // 3 bytes
+        repositories::add(repo, &file_a).await?;
+        repositories::add(repo, &file_b).await?;
+        repositories::add(repo, &file_c).await?;
+        let lca_commit = repositories::commit(repo, "LCA: adding a, b, c")?;
+
+        // Snapshot the LCA root metadata for reference
+        let lca_root =
+            repositories::tree::get_dir_without_children(repo, &lca_commit, "", None)?.unwrap();
+        let lca_dir = lca_root.dir()?;
+        // The initial commit from run_one_commit_local_repo_test_async adds a file too, so
+        // we track the LCA state as our baseline rather than hardcoding counts.
+        let lca_num_files = lca_dir.num_files();
+        let lca_num_bytes = lca_dir.num_bytes();
+
+        // Feature branch: add d.txt, modify b.txt, delete c.txt
+        repositories::branches::create_checkout(repo, "feature")?;
+        let file_d = repo.path.join("d.txt");
+        util::fs::write_to_path(&file_d, "ddddd")?; // 5 bytes (added)
+        util::fs::write_to_path(&file_b, "bbbbbbb")?; // 7 bytes (was 3)
+        util::fs::remove_file(&file_c)?; // removed (was 3 bytes)
+        repositories::add(repo, &file_d).await?;
+        repositories::add(repo, &file_b).await?;
+        repositories::add(repo, &file_c).await?;
+        repositories::commit(repo, "Feature: add d, modify b, delete c")?;
+
+        // Main branch: add e.txt to diverge (forces three-way merge)
+        repositories::checkout(repo, &base_branch_name).await?;
+        let file_e = repo.path.join("e.txt");
+        util::fs::write_to_path(&file_e, "ee")?; // 2 bytes
+        repositories::add(repo, &file_e).await?;
+        repositories::commit(repo, "Main: add e")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        // Server-side three-way merge
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+        assert_eq!(merge_commit.parent_ids.len(), 2);
+
+        // Read the root DirNode from the merge commit
+        let merge_root =
+            repositories::tree::get_dir_without_children(repo, &merge_commit, "", None)?.unwrap();
+        let merge_dir = merge_root.dir()?;
+
+        // Expected changes relative to LCA:
+        //   +1 file (d.txt added), +1 file (e.txt added), -1 file (c.txt deleted) = net +1
+        assert_eq!(
+            merge_dir.num_files(),
+            lca_num_files + 1, // net +1 file
+            "num_files: LCA had {lca_num_files}, merge should have +1 (add d, add e, del c)"
+        );
+
+        // Expected byte changes relative to LCA:
+        //   b.txt: 3 -> 7 (+4), d.txt: +5, e.txt: +2, c.txt: -3 = net +8
+        assert_eq!(
+            merge_dir.num_bytes(),
+            lca_num_bytes + 8,
+            "num_bytes: LCA had {lca_num_bytes}, merge should have +8 bytes"
+        );
+
+        // Verify the right files exist in the merge commit tree
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "a.txt")?.is_some(),
+            "a.txt should exist"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "b.txt")?.is_some(),
+            "b.txt should exist"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "c.txt")?.is_none(),
+            "c.txt should be deleted"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "d.txt")?.is_some(),
+            "d.txt should exist"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "e.txt")?.is_some(),
+            "e.txt should exist"
+        );
+
+        Ok(())
+    }
+
+    /// Regression test: deletion of a file in a directory that's shared between LCA and base
+    /// (i.e., the directory hash is identical in both, so `unique_dir_entries` prunes it).
+    /// The merge branch deletes a file from that shared directory.
+    async fn case_merge_into_base_three_way_delete_in_shared_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch_name = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        // LCA: create files in a subdirectory
+        let dir = repo.path.join("data");
+        util::fs::create_dir_all(&dir)?;
+        let file_a = dir.join("a.txt");
+        let file_b = dir.join("b.txt");
+        util::fs::write_to_path(&file_a, "aaa")?;
+        util::fs::write_to_path(&file_b, "bbb")?;
+        repositories::add(repo, &file_a).await?;
+        repositories::add(repo, &file_b).await?;
+        repositories::commit(repo, "LCA: adding data/a.txt and data/b.txt")?;
+
+        // Feature branch: delete data/b.txt (leaving data/a.txt untouched)
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::remove_file(&file_b)?;
+        repositories::add(repo, &file_b).await?;
+        repositories::commit(repo, "Feature: delete data/b.txt")?;
+
+        // Main branch: add an unrelated file to force divergence (3-way merge).
+        // Crucially, do NOT touch data/ — so data/ is identical in LCA and base.
+        repositories::checkout(repo, &base_branch_name).await?;
+        let unrelated = repo.path.join("other.txt");
+        util::fs::write_to_path(&unrelated, "x")?;
+        repositories::add(repo, &unrelated).await?;
+        repositories::commit(repo, "Main: add other.txt")?;
+
+        let merge_branch = repositories::branches::get_by_name(repo, "feature")?;
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch_name)?;
+
+        let merge_commit =
+            merge_into_base(repo, &merge_branch, &base_branch, &test_author()).await?;
+        assert_eq!(merge_commit.parent_ids.len(), 2);
+
+        // data/a.txt should still exist, data/b.txt should be deleted
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "data/a.txt")?.is_some(),
+            "data/a.txt should exist in merge commit"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &merge_commit, "data/b.txt")?.is_none(),
+            "data/b.txt should be deleted in merge commit"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_commit_into_base_on_branch_ancestor_is_no_op(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // When the merge commit is an ancestor of the base commit (lca == merge), the merge is a
+        // no-op. The branch ref must NOT advance to a fabricated empty merge commit.
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // First commit on main becomes the "ancestor" we'll later try to merge into HEAD.
+        let f1 = repo.path.join("f1.txt");
+        util::fs::write_to_path(&f1, "one")?;
+        repositories::add(repo, &f1).await?;
+        let ancestor_commit = repositories::commit(repo, "Add f1")?;
+
+        // Advance main with a second commit so base != merge but lca == merge.
+        let f2 = repo.path.join("f2.txt");
+        util::fs::write_to_path(&f2, "two")?;
+        repositories::add(repo, &f2).await?;
+        let head_commit = repositories::commit(repo, "Add f2")?;
+
+        let base_branch = repositories::branches::get_by_name(repo, &base_branch.name)?;
+        let merge_commit_result = repositories::merge::merge_commit_into_base_on_branch(
+            repo,
+            &ancestor_commit,
+            &head_commit,
+            &base_branch,
+        )
+        .await?;
+
+        // Should return base unchanged, not a new (empty) merge commit.
+        assert_eq!(merge_commit_result.id, head_commit.id);
+        assert_eq!(merge_commit_result.parent_ids, head_commit.parent_ids);
+
+        // Branch ref must still point at the original head commit.
+        let branch_after = repositories::branches::get_by_name(repo, &base_branch.name)?;
+        assert_eq!(branch_after.commit_id, head_commit.id);
+
+        Ok(())
+    }
+
+    async fn case_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Verifies that merge_commit_into_base_server_safe succeeds even when
+        // stale files exist in the repo directory (no "local changes would be
+        // overwritten" error).
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Add a file and commit
+        let readme = repo.path.join("README.md");
+        util::fs::write_to_path(&readme, "original")?;
+        repositories::add(repo, &readme).await?;
+        let base_commit = repositories::commit(repo, "Add README")?;
+
+        // Branch, modify the file, and commit
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&readme, "modified on feature")?;
+        repositories::add(repo, &readme).await?;
+        let feature_commit = repositories::commit(repo, "Modify README")?;
+
+        // Go back to main so HEAD is at base_commit (FF scenario)
+        repositories::checkout(repo, &main_branch.name).await?;
+
+        // Simulate server state: write a stale/different file at the path.
+        // On a real server there is no checkout, but the repo directory may
+        // contain leftover files that differ from the tree.
+        util::fs::write_to_path(&readme, "stale server copy")?;
+
+        // Server-safe merge should NOT check working-dir files → no error
+        let result = repositories::merge::merge_commit_into_base_server_safe(
+            repo,
+            &feature_commit,
+            &base_commit,
+        )
+        .await?;
+
+        assert!(result.is_some(), "FF merge should return the merge commit");
+        assert_eq!(result.unwrap().id, feature_commit.id);
+
+        // The stale file on disk should be UNTOUCHED (server never writes)
+        let on_disk = util::fs::read_from_path(&readme)?;
+        assert_eq!(
+            on_disk, "stale server copy",
+            "server-safe merge must not modify files on disk"
+        );
+
+        Ok(())
+    }
+
+    async fn case_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Verifies that merge_commit_into_base_server_safe uses the server-safe
+        // three-way merge path and never touches the working directory.
+        let main_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Shared ancestor
+        let a_path = repo.path.join("a.txt");
+        util::fs::write_to_path(&a_path, "a")?;
+        repositories::add(repo, &a_path).await?;
+        repositories::commit(repo, "Add a.txt")?;
+
+        // Feature branch: add b.txt
+        repositories::branches::create_checkout(repo, "feature")?;
+        let b_path = repo.path.join("b.txt");
+        util::fs::write_to_path(&b_path, "b")?;
+        repositories::add(repo, &b_path).await?;
+        let feature_commit = repositories::commit(repo, "Add b.txt")?;
+
+        // Back to main: add c.txt (diverge → forces three-way merge)
+        repositories::checkout(repo, &main_branch.name).await?;
+        let c_path = repo.path.join("c.txt");
+        util::fs::write_to_path(&c_path, "c")?;
+        repositories::add(repo, &c_path).await?;
+        let base_commit = repositories::commit(repo, "Add c.txt")?;
+
+        // Simulate stale server state
+        util::fs::write_to_path(&a_path, "stale")?;
+
+        // Server-safe merge should succeed without checking disk
+        let result = repositories::merge::merge_commit_into_base_server_safe(
+            repo,
+            &feature_commit,
+            &base_commit,
+        )
+        .await?;
+        assert!(
+            result.is_some(),
+            "three-way merge should return a merge commit"
+        );
+
+        // Stale file should be untouched
+        let on_disk = util::fs::read_from_path(&a_path)?;
+        assert_eq!(
+            on_disk, "stale",
+            "server-safe merge must not modify files on disk"
+        );
+
+        Ok(())
+    }
+
+    // Simulates an `oxen pull` that was killed mid-restore after it had already
+    // rewritten a tracked file to the merge target's content but before HEAD
+    // was advanced. On resume the file differs from HEAD (commit A) yet matches
+    // the merge target (commit B), and must be treated as a successful no-op
+    // rather than flagged as "cannot_overwrite".
+    async fn case_merge_resumes_after_partial_fast_forward(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let og_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Commit A on main: world.txt = "World"
+        let world_file = repo.path.join("world.txt");
+        util::fs::write_to_path(&world_file, "World")?;
+        repositories::add(repo, &world_file).await?;
+        repositories::commit(repo, "Adding world file")?;
+
+        // Commit B on feature: modify world.txt
+        let branch_name = "update-world";
+        repositories::branches::create_checkout(repo, branch_name)?;
+        util::fs::write_to_path(&world_file, "World2")?;
+        repositories::add(repo, &world_file).await?;
+        let target_commit = repositories::commit(repo, "Updating world")?;
+        let merge_branch = repositories::branches::current_branch(repo)?.unwrap();
+
+        // Back on main: checkout restores world.txt to commit A's content.
+        repositories::checkout(repo, &og_branch.name).await?;
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+
+        // Simulate an interrupted fast-forward merge: the previous pull
+        // rewrote world.txt to the target's content on disk but crashed
+        // before advancing HEAD. HEAD still points to commit A.
+        util::fs::write_to_path(&world_file, "World2")?;
+
+        // The resumed merge must not fail with `cannot_overwrite_files`:
+        // world.txt differs from HEAD (= commit A) but already matches the
+        // merge target, so restoring is a safe no-op.
+        let commit = repositories::merge::merge(repo, &merge_branch.name)
+            .await?
+            .expect("resumed fast-forward merge should produce a commit");
+
+        assert_eq!(commit.id, target_commit.id);
+        let head_commit = repositories::commits::head_commit(repo)?;
+        assert_eq!(head_commit.id, target_commit.id);
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
+        Ok(())
+    }
+
+    // A truncated file (content matches neither base nor target) must still resume
+    // cleanly when the MERGE_IN_PROGRESS marker names the same target commit: is_resume
+    // bypasses the conflict check and force-restores the file from the version store.
+    async fn case_merge_resume_truncated_fast_forward(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let (_main, _base, target) = make_feature_branch_with_modification(
+            repo,
+            "world.txt",
+            "World",
+            "World2",
+            "update-world",
+        )
+        .await?;
+
+        let world_file = repo.path.join("world.txt");
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+
+        // Simulate an interrupted merge that truncated the file mid-write:
+        // content matches neither base ("World") nor target ("World2").
+        util::fs::write_to_path(&world_file, "partial")?;
+        merge_marker::write(repo, &target.id).await?;
+
+        let commit = repositories::merge::merge(repo, "update-world")
+            .await?
+            .expect("resumed merge should produce a commit");
+        assert_eq!(commit.id, target.id);
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
+        assert!(
+            !merge_marker::exists(repo).await?,
+            "marker must be cleared after a successful resume"
+        );
+        Ok(())
+    }
+
+    // If the marker names a different target than the current merge, abort with
+    // MergeInProgressMismatch without touching the marker or the working tree.
+    async fn case_merge_aborts_on_marker_mismatch(repo: &LocalRepository) -> Result<(), OxenError> {
+        let (_main, _base, _target) = make_feature_branch_with_modification(
+            repo,
+            "world.txt",
+            "World",
+            "World2",
+            "update-world",
+        )
+        .await?;
+
+        // A stale marker points at an unrelated commit id (e.g. from a previous
+        // merge against a different branch).
+        let stale = "deadbeefdeadbeefdeadbeefdeadbeef";
+        merge_marker::write(repo, stale).await?;
+
+        let err = repositories::merge::merge(repo, "update-world")
+            .await
+            .expect_err("mismatched marker must abort the new merge");
+        match err {
+            OxenError::MergeInProgressMismatch { ref expected, .. } => {
+                assert_eq!(expected, stale);
+            }
+            other => panic!("expected MergeInProgressMismatch, got {other:?}"),
+        }
+
+        // Marker is untouched so the user can run `oxen merge --abort`.
+        let current = merge_marker::read(repo).await?;
+        assert_eq!(current.as_deref(), Some(stale));
+        Ok(())
+    }
+
+    // A normal successful merge never leaves MERGE_IN_PROGRESS behind.
+    async fn case_merge_clears_marker_on_success(repo: &LocalRepository) -> Result<(), OxenError> {
+        let (_main, _base, _target) = make_feature_branch_with_modification(
+            repo,
+            "world.txt",
+            "World",
+            "World2",
+            "update-world",
+        )
+        .await?;
+
+        assert!(!merge_marker::exists(repo).await?);
+        repositories::merge::merge(repo, "update-world")
+            .await?
+            .unwrap();
+        assert!(
+            !merge_marker::exists(repo).await?,
+            "marker must be absent after a clean merge"
+        );
+
+        let main = repositories::branches::current_branch(repo)?.expect("on a branch");
+        repositories::branches::create_checkout(repo, "oxen-dir")?;
+        let data_dir = repo.path.join("data");
+        util::fs::create_dir_all(data_dir.join(".OXEN"))?;
+        util::fs::write_to_path(data_dir.join("ok.txt"), "ok")?;
+        util::fs::write_to_path(data_dir.join(".OXEN").join("config.toml"), "not a config")?;
+        repositories::add(repo, &data_dir).await?;
+        repositories::commit(repo, "add data/.OXEN/config.toml")?;
+        repositories::checkout(repo, &main.name).await?;
+        util::fs::remove_dir_all(&data_dir)?;
+
+        for merge_kind in ["fast-forward", "three-way"] {
+            if merge_kind == "three-way" {
+                util::fs::write_to_path(repo.path.join("main.txt"), "main")?;
+                repositories::add(repo, &repo.path.join("main.txt")).await?;
+                repositories::commit(repo, "diverge main")?;
+            }
+            let result = repositories::merge::merge(repo, "oxen-dir").await;
+            assert!(
+                matches!(result, Err(OxenError::InvalidTreePath(_))),
+                "{merge_kind}: {result:?}"
+            );
+            assert!(
+                !merge_marker::exists(repo).await? && !data_dir.join("ok.txt").exists(),
+                "{merge_kind}: a merge refused over a .oxen path writes nothing"
+            );
+        }
+        Ok(())
+    }
+
+    // A successful no-op (already-up-to-date) merge must also clear any stale marker for the
+    // same target left behind by a prior interrupted attempt — otherwise the next merge of a
+    // different target would error with MergeInProgressMismatch.
+    async fn case_merge_clears_marker_on_already_up_to_date(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Create commit A on main, then advance main with commit B. Make a sibling branch
+        // "ancestor" pointing at A so merging it into main hits is_already_up_to_date.
+        let f1 = repo.path.join("f1.txt");
+        util::fs::write_to_path(&f1, "one")?;
+        repositories::add(repo, &f1).await?;
+        let ancestor_commit = repositories::commit(repo, "Add f1")?;
+        repositories::branches::create(repo, "ancestor", &ancestor_commit.id)?;
+
+        let f2 = repo.path.join("f2.txt");
+        util::fs::write_to_path(&f2, "two")?;
+        repositories::add(repo, &f2).await?;
+        repositories::commit(repo, "Add f2")?;
+
+        // Simulate a prior interrupted merge of "ancestor" by writing a stale marker.
+        merge_marker::write(repo, &ancestor_commit.id).await?;
+
+        let merged = repositories::merge::merge(repo, "ancestor").await?;
+        assert!(merged.is_some(), "no-op merge should succeed");
+        assert!(
+            !merge_marker::exists(repo).await?,
+            "marker must be cleared after an already-up-to-date merge"
+        );
+        Ok(())
+    }
+
+    // An interrupted merge can leave a file truncated mid-write: its hash matches neither the
+    // pre-merge base nor the merge target. Abort must force-restore HEAD's version regardless —
+    // the core motivating case for Fix B.
+    async fn case_merge_abort_resets_truncated_file(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let (_main, base, target) = make_feature_branch_with_modification(
+            repo,
+            "world.txt",
+            "World",
+            "World2",
+            "update-world",
+        )
+        .await?;
+
+        let world_file = repo.path.join("world.txt");
+        // Content matches neither base ("World") nor target ("World2").
+        util::fs::write_to_path(&world_file, "TRUNC")?;
+        merge_marker::write(repo, &target.id).await?;
+
+        repositories::merge::abort_merge(repo).await?;
+
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+        assert!(!merge_marker::exists(repo).await?);
+        let head = repositories::commits::head_commit(repo)?;
+        assert_eq!(head.id, base.id);
+        Ok(())
+    }
+
+    // Abort wipes the 3-way merge conflict state (MERGE_HEAD / ORIG_HEAD / conflict DB)
+    // left behind when a 3-way merge detects conflicts.
+    async fn case_merge_abort_clears_conflict_state(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        let file = repo.path.join("shared.txt");
+        util::fs::write_to_path(&file, "lca")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "lca")?;
+
+        repositories::branches::create_checkout(repo, "feature")?;
+        util::fs::write_to_path(&file, "feature side")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "feature modification")?;
+
+        repositories::checkout(repo, &base_branch).await?;
+        util::fs::write_to_path(&file, "base side")?;
+        repositories::add(repo, &file).await?;
+        repositories::commit(repo, "base modification")?;
+
+        // Conflicting 3-way merge: leaves MERGE_HEAD / ORIG_HEAD / conflicts DB.
+        let merge_result = repositories::merge::merge(repo, "feature").await?;
+        assert!(merge_result.is_none(), "expected a conflict");
+
+        let hidden = util::fs::oxen_hidden_dir(&repo.path);
+        assert!(hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
+        assert!(hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
+
+        repositories::merge::abort_merge(repo).await?;
+
+        assert!(!hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
+        assert!(!hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
+        assert!(
+            !hidden
+                .join(crate::constants::MERGE_IN_PROGRESS_FILE)
+                .exists()
+        );
+        Ok(())
+    }
+
+    // A marker left over from a merge whose target commit no longer exists locally — exactly the
+    // "retry the original target" escape hatch in the MergeInProgressMismatch hint. Abort must
+    // still clean up the working tree and the marker without requiring the target to be resolvable.
+    async fn case_merge_abort_with_unknown_marker_target(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let (_main, base, _target) = make_feature_branch_with_modification(
+            repo,
+            "world.txt",
+            "World",
+            "World2",
+            "update-world",
+        )
+        .await?;
+
+        let world_file = repo.path.join("world.txt");
+        // Simulate an interrupted merge mid-write.
+        util::fs::write_to_path(&world_file, "TRUNC")?;
+        // Marker points at a commit id that does not exist in this repo.
+        let unknown = "deadbeefdeadbeefdeadbeefdeadbeef";
+        merge_marker::write(repo, unknown).await?;
+
+        repositories::merge::abort_merge(repo).await?;
+
+        assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+        assert!(!merge_marker::exists(repo).await?);
+        let head = repositories::commits::head_commit(repo)?;
+        assert_eq!(head.id, base.id);
+        Ok(())
+    }
+
+    // Abort with nothing to abort returns a specific error variant, not a silent no-op.
+    async fn case_merge_abort_errors_when_nothing_to_abort(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let err = repositories::merge::abort_merge(repo)
+            .await
+            .expect_err("abort on a clean repo should error");
+        assert!(
+            matches!(err, OxenError::NoMergeInProgress),
+            "expected NoMergeInProgress, got {err:?}"
+        );
+        Ok(())
+    }
+
+    /// Starts a fresh branch named `case` from the fixture's commit, abandoning any merge in
+    /// progress and removing other branches and files. Its first commit gives the case a parent no
+    /// other case shares, so two cases making the same commit in the same second get distinct ids.
+    async fn start_case(
+        repo: &LocalRepository,
+        fixture_entries: &[PathBuf],
+        case: &str,
+    ) -> Result<(), OxenError> {
+        match repositories::merge::abort_merge(repo).await {
+            Ok(()) | Err(OxenError::NoMergeInProgress) => {}
+            Err(err) => return Err(err),
+        }
+        for entry in std::fs::read_dir(&repo.path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if fixture_entries.contains(&path) {
+                continue;
+            }
+            if entry.file_type()?.is_dir() {
+                util::fs::remove_dir_all(&path)?;
+            } else {
+                util::fs::remove_file(&path)?;
+            }
+        }
+        repositories::checkout(repo, DEFAULT_BRANCH_NAME).await?;
+        for branch in repositories::branches::list(repo).await? {
+            if branch.name != DEFAULT_BRANCH_NAME {
+                repositories::branches::force_delete(repo, &branch.name)?;
+            }
+        }
+        repositories::branches::create_checkout(repo, case)?;
+        let marker = repo.path.join("case.txt");
+        util::fs::write_to_path(&marker, case)?;
+        repositories::add(repo, &marker).await?;
+        repositories::commit(repo, &format!("Start {case}"))?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_merge_no_conflict_three_way_merge() -> Result<(), OxenError> {
+    async fn test_merge_cases_on_one_commit_repo() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
-            let merge_branch_name = "B";
-            // this will checkout main again so we can try to merge
+            let fixture_entries = std::fs::read_dir(&repo.path)?
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<Result<Vec<_>, _>>()?;
 
-            populate_threeway_merge_repo(&repo, merge_branch_name).await?;
+            start_case(&repo, &fixture_entries, "merge-one-commit-add-fast-forward").await?;
+            case_merge_one_commit_add_fast_forward(&repo).await?;
 
-            {
-                // Make sure the merger can detect the three way merge
-                let merge_commit = repositories::merge::merge(&repo, merge_branch_name)
-                    .await?
-                    .unwrap();
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-one-commit-remove-fast-forward",
+            )
+            .await?;
+            case_merge_one_commit_remove_fast_forward(&repo).await?;
 
-                // Two way merge should have two parent IDs so we know where the merge came from
-                assert_eq!(merge_commit.parent_ids.len(), 2);
+            start_case(
+                &repo,
+                &fixture_entries,
+                "lowest-common-ancestor-picks-the-most-recent-merge-base",
+            )
+            .await?;
+            case_lowest_common_ancestor_picks_the_most_recent_merge_base(&repo).await?;
 
-                // There should be 5 files: [a.txt, b.txt, c.txt, d.txt e.txt]
-                let file_prefixes = ["a", "b", "c", "d", "e"];
-                for prefix in file_prefixes.iter() {
-                    let filename = format!("{prefix}.txt");
-                    let filepath = repo.path.join(filename);
-                    println!(
-                        "test_merge_no_conflict_three_way_merge checking file exists {filepath:?}"
-                    );
-                    assert!(filepath.exists());
-                }
-            }
+            start_case(&repo, &fixture_entries, "merge-get-lowest-common-ancestor").await?;
+            case_merge_get_lowest_common_ancestor(&repo).await?;
 
-            let commit_history = repositories::commits::list(&repo)?;
+            start_case(&repo, &fixture_entries, "merge-no-conflict-three-way-merge").await?;
+            case_merge_no_conflict_three_way_merge(&repo).await?;
 
-            // We should have the merge commit + the branch commits here
-            assert_eq!(7, commit_history.len());
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-three-way-no-content-delta-client-side",
+            )
+            .await?;
+            case_merge_three_way_no_content_delta_client_side(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-three-way-no-content-delta-server-side",
+            )
+            .await?;
+            case_merge_three_way_no_content_delta_server_side(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-conflict-three-way-merge").await?;
+            case_merge_conflict_three_way_merge(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-conflict-three-way-merge-post-merge-branch",
+            )
+            .await?;
+            case_merge_conflict_three_way_merge_post_merge_branch(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-no-commit-needed").await?;
+            case_merge_no_commit_needed(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-client-equal-tips-returns-base",
+            )
+            .await?;
+            case_merge_client_equal_tips_returns_base(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-diverged-branches-then-merge-again",
+            )
+            .await?;
+            case_merge_diverged_branches_then_merge_again(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-three-way-file-modified-only-on-merge-branch",
+            )
+            .await?;
+            case_merge_three_way_file_modified_only_on_merge_branch(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-into-base-fast-forward").await?;
+            case_merge_into_base_fast_forward(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-equal-tips-returns-base",
+            )
+            .await?;
+            case_merge_into_base_equal_tips_returns_base(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-no-conflicts",
+            )
+            .await?;
+            case_merge_into_base_three_way_no_conflicts(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-with-conflicts",
+            )
+            .await?;
+            case_merge_into_base_three_way_with_conflicts(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-does-not-modify-working-dir",
+            )
+            .await?;
+            case_merge_into_base_does_not_modify_working_dir(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-into-base-ff-with-deletion").await?;
+            case_merge_into_base_ff_with_deletion(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-with-subdirectories",
+            )
+            .await?;
+            case_merge_into_base_three_way_with_subdirectories(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-conflict-in-subdirectory",
+            )
+            .await?;
+            case_merge_into_base_three_way_conflict_in_subdirectory(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-both-add-same-path",
+            )
+            .await?;
+            case_merge_into_base_three_way_both_add_same_path(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-modify-delete-conflict",
+            )
+            .await?;
+            case_merge_into_base_three_way_modify_delete_conflict(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-base-deletes-merge-unchanged",
+            )
+            .await?;
+            case_merge_into_base_three_way_base_deletes_merge_unchanged(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-delete-modify-conflict",
+            )
+            .await?;
+            case_merge_into_base_three_way_delete_modify_conflict(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-dir-metadata",
+            )
+            .await?;
+            case_merge_into_base_three_way_dir_metadata(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-into-base-three-way-delete-in-shared-dir",
+            )
+            .await?;
+            case_merge_into_base_three_way_delete_in_shared_dir(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-commit-into-base-on-branch-ancestor-is-no-op",
+            )
+            .await?;
+            case_merge_commit_into_base_on_branch_ancestor_is_no_op(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-commit-into-base-server-safe-ff-does-not-touch-working-dir",
+            )
+            .await?;
+            case_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-commit-into-base-server-safe-three-way-does-not-touch-working-dir",
+            )
+            .await?;
+            case_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir(&repo)
+                .await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-resumes-after-partial-fast-forward",
+            )
+            .await?;
+            case_merge_resumes_after_partial_fast_forward(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-resume-truncated-fast-forward",
+            )
+            .await?;
+            case_merge_resume_truncated_fast_forward(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-aborts-on-marker-mismatch").await?;
+            case_merge_aborts_on_marker_mismatch(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-clears-marker-on-success").await?;
+            case_merge_clears_marker_on_success(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-clears-marker-on-already-up-to-date",
+            )
+            .await?;
+            case_merge_clears_marker_on_already_up_to_date(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-abort-resets-truncated-file").await?;
+            case_merge_abort_resets_truncated_file(&repo).await?;
+
+            start_case(&repo, &fixture_entries, "merge-abort-clears-conflict-state").await?;
+            case_merge_abort_clears_conflict_state(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-abort-with-unknown-marker-target",
+            )
+            .await?;
+            case_merge_abort_with_unknown_marker_target(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-abort-errors-when-nothing-to-abort",
+            )
+            .await?;
+            case_merge_abort_errors_when_nothing_to_abort(&repo).await?;
 
             Ok(())
         })
@@ -451,295 +2163,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_merge_three_way_no_content_delta_client_side() -> Result<(), OxenError> {
-        // Three-way merge where merge isn't an ancestor of base but contributes no new content —
-        // base squash-replayed the merge branch. Pre-fix this 500ed with "No changes to commit".
-        // Post-fix: succeeds and produces an empty merge commit with two parents and base's tree.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let feature_branch = "feature";
-            let main_head_before_merge =
-                populate_already_up_to_date_three_way(&repo, feature_branch).await?;
-            let feature_tip = repositories::revisions::get(&repo, feature_branch)?
-                .expect("feature branch should resolve");
-
-            let result = repositories::merge::merge(&repo, feature_branch).await?;
-            let merge_commit = result.expect("merge should succeed and produce a commit");
-
-            assert_empty_merge_commit(&repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
-            // Client-side merge advances HEAD to the new merge commit.
-            let current_head = repositories::commits::head_commit(&repo)?;
-            assert_eq!(current_head.id, merge_commit.id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_three_way_no_content_delta_server_side() -> Result<(), OxenError> {
-        // Server-side equivalent — exercises `merge_into_base`, the path called from the
-        // oxen-server `/api/repos/.../merge/{base..head}` controller.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let feature_branch_name = "feature";
-            let main_head_before_merge =
-                populate_already_up_to_date_three_way(&repo, feature_branch_name).await?;
-
-            let base_branch = repositories::branches::get_by_name(&repo, &main_branch.name)?;
-            let merge_branch = repositories::branches::get_by_name(&repo, feature_branch_name)?;
-            let feature_tip = repositories::revisions::get(&repo, feature_branch_name)?
-                .expect("feature branch should resolve");
-
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            assert_empty_merge_commit(&repo, &merge_commit, &main_head_before_merge, &feature_tip)?;
-            // Server-side: base branch ref is advanced to the new merge commit.
-            let base_after = repositories::branches::get_by_name(&repo, &main_branch.name)?;
-            assert_eq!(base_after.commit_id, merge_commit.id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_conflict_three_way_merge() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // This test has a conflict where user on the main line, and user on the branch, both modify a.txt
-
-            // Ex) We want to merge E into D to create F
-            // A - C - D - F
-            //    \      /
-            //     B - E
-
-            let a_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let a_path = repo.path.join("a.txt");
-            util::fs::write_to_path(&a_path, "a")?;
-            repositories::add(&repo, &a_path).await?;
-            // Return the lowest common ancestor for the tests
-            repositories::commit(&repo, "Committing a.txt file")?;
-
-            // Make changes on B
-            let merge_branch_name = "B";
-            repositories::branches::create_checkout(&repo, merge_branch_name)?;
-
-            // Add a text new text file
-            let b_path = repo.path.join("b.txt");
-            util::fs::write_to_path(&b_path, "b")?;
-            repositories::add(&repo, &b_path).await?;
-
-            // Modify the text file a.txt
-            test::modify_txt_file(&a_path, "a modified from branch")?;
-            repositories::add(&repo, &a_path).await?;
-
-            // Commit changes
-            repositories::commit(&repo, "Committing b.txt file")?;
-
-            // Checkout main branch again to make another change
-            repositories::checkout(&repo, &a_branch.name).await?;
-
-            // Add new file c.txt on main branch
-            let c_path = repo.path.join("c.txt");
-            util::fs::write_to_path(&c_path, "c")?;
-            repositories::add(&repo, &c_path).await?;
-
-            // Modify a.txt from main branch
-            test::modify_txt_file(&a_path, "a modified from main line")?;
-            repositories::add(&repo, &a_path).await?;
-
-            // Commit changes to main branch
-            repositories::commit(&repo, "Committing c.txt file")?;
-
-            // Commit some more changes to main branch
-            let d_path = repo.path.join("d.txt");
-            util::fs::write_to_path(&d_path, "d")?;
-            repositories::add(&repo, &d_path).await?;
-            repositories::commit(&repo, "Committing d.txt file")?;
-
-            // Checkout merge branch (B) to make another change
-            repositories::checkout(&repo, merge_branch_name).await?;
-
-            // Add another branch
-            let e_path = repo.path.join("e.txt");
-            util::fs::write_to_path(&e_path, "e")?;
-            repositories::add(&repo, &e_path).await?;
-            repositories::commit(&repo, "Committing e.txt file")?;
-
-            // Checkout the OG branch again so that we can merge into it
-            repositories::checkout(&repo, &a_branch.name).await?;
-
-            repositories::merge::merge(&repo, merge_branch_name).await?;
-
-            let conflict_reader = NodeMergeConflictReader::new(&repo)?;
-            let has_conflicts = conflict_reader.has_conflicts()?;
-            let conflicts = conflict_reader.list_conflicts()?;
-
-            assert!(has_conflicts);
-            assert_eq!(conflicts.len(), 1);
-
-            let local_a_path = util::fs::path_relative_to_dir(&a_path, &repo.path)?;
-            assert_eq!(conflicts[0].base_entry.1, local_a_path);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_conflict_three_way_merge_post_merge_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
-            // should have a conflict from the LCA
-
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(&labels_path, "cat\ndog")?;
-            repositories::add(&repo, &labels_path).await?;
-            // Return the lowest common ancestor for the tests
-            repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
-
-            // Add a fish label to the file on a branch
-            let fish_branch_name = "add-fish-label";
-            repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
-            repositories::add(&repo, &labels_path).await?;
-            repositories::commit(&repo, "Adding fish to labels.txt file")?;
-
-            // Checkout main, and branch from it to another branch to add a human label
-            repositories::checkout(&repo, &og_branch.name).await?;
-            let human_branch_name = "add-human-label";
-            repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
-            repositories::commit(&repo, "Adding human to labels.txt file")?;
-
-            // Checkout main again
-            repositories::checkout(&repo, &og_branch.name).await?;
-
-            // Merge in a scope so that it closes the db
-            repositories::merge::merge(&repo, fish_branch_name).await?;
-
-            // Checkout main again, merge again
-            repositories::checkout(&repo, &og_branch.name).await?;
-            repositories::merge::merge(&repo, human_branch_name).await?;
-
-            let conflict_reader = NodeMergeConflictReader::new(&repo)?;
-            let has_conflicts = conflict_reader.has_conflicts()?;
-            let conflicts = conflict_reader.list_conflicts()?;
-
-            assert!(has_conflicts);
-            assert_eq!(conflicts.len(), 1);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merger_has_merge_conflicts_without_merging() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
-            // should have a conflict from the LCA
-
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(&labels_path, "cat\ndog")?;
-            repositories::add(&repo, &labels_path).await?;
-            // Return the lowest common ancestor for the tests
-            repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
-
-            // Add a fish label to the file on a branch
-            let fish_branch_name = "add-fish-label";
-            repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
-            repositories::add(&repo, &labels_path).await?;
-            repositories::commit(&repo, "Adding fish to labels.txt file")?;
-
-            // Checkout main, and branch from it to another branch to add a human label
-            repositories::checkout(&repo, &og_branch.name).await?;
-            let human_branch_name = "add-human-label";
-            repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
-            repositories::commit(&repo, "Adding human to labels.txt file")?;
-
-            // Checkout main again
-            repositories::checkout(&repo, &og_branch.name).await?;
-
-            // Merge the fish branch in, and then the human branch should have conflicts
-
-            let result = repositories::merge::merge(&repo, fish_branch_name).await?;
-            assert!(result.is_some());
-
-            // But now there should be conflicts when trying to merge in the human branch
-            let base_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
-            let merge_branch = repositories::branches::get_by_name(&repo, human_branch_name)?;
-
-            // Check if there are conflicts
-            let has_conflicts =
-                repositories::merge::has_conflicts(&repo, &base_branch, &merge_branch).await?;
-            assert!(has_conflicts);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_list_merge_conflicts_without_merging() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // This case for a three way merge was failing, if one branch gets fast forwarded, then the next
-            // should have a conflict from the LCA
-
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(&labels_path, "cat\ndog")?;
-            repositories::add(&repo, &labels_path).await?;
-            // Return the lowest common ancestor for the tests
-            repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
-
-            // Add a fish label to the file on a branch
-            let fish_branch_name = "add-fish-label";
-            repositories::branches::create_checkout(&repo, fish_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
-            repositories::add(&repo, &labels_path).await?;
-            repositories::commit(&repo, "Adding fish to labels.txt file")?;
-
-            // Checkout main, and branch from it to another branch to add a human label
-            repositories::checkout(&repo, &og_branch.name).await?;
-            let human_branch_name = "add-human-label";
-            repositories::branches::create_checkout(&repo, human_branch_name)?;
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nhuman")?;
-            repositories::add(&repo, labels_path).await?;
-            let human_commit = repositories::commit(&repo, "Adding human to labels.txt file")?;
-
-            // Checkout main again
-            repositories::checkout(&repo, &og_branch.name).await?;
-
-            // Merge the fish branch in, and then the human branch should have conflicts
-            let result_commit = repositories::merge::merge(&repo, fish_branch_name).await?;
-
-            assert!(result_commit.is_some());
-
-            // There should be one file that is in conflict
-            let base_commit = result_commit.unwrap();
-            let conflicts = repositories::merge::list_conflicts_between_commits(
-                &repo,
-                &base_commit,
-                &human_commit,
-            )
-            .await?;
-            assert_eq!(conflicts.len(), 1);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_both_added_rows() -> Result<(), OxenError> {
+    async fn test_command_merge_dataframe_conflicts() -> Result<(), OxenError> {
         test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let fixture_commit = repositories::commits::head_commit(&repo)?;
+
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -790,14 +2217,11 @@ mod tests {
                 "the combined file carries one new row from each branch"
             );
 
-            Ok(())
-        })
-        .await
-    }
+            // The added-column case starts again from the fixture's commit
+            repositories::merge::abort_merge(&repo).await?;
+            repositories::branches::create(&repo, "added-col-base", &fixture_commit.id)?;
+            repositories::checkout(&repo, "added-col-base").await?;
 
-    #[tokio::test]
-    async fn test_command_merge_dataframe_conflict_error_added_col() -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
             let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
 
             let bbox_filename = Path::new("annotations")
@@ -917,1026 +2341,9 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn test_merge_no_commit_needed() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // 1. Commit something in main branch
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let labels_path = repo.path.join("labels.txt");
-            util::fs::write_to_path(&labels_path, "cat\ndog")?;
-            repositories::add(&repo, &labels_path).await?;
-            repositories::commit(&repo, "Add initial labels.txt file with cat and dog")?;
-
-            // 2. Create a new branch
-            let new_branch_name = "new_branch";
-            repositories::branches::create_checkout(&repo, new_branch_name)?;
-
-            // 3. Commit something in new branch
-            let labels_path = test::modify_txt_file(labels_path, "cat\ndog\nfish")?;
-            repositories::add(&repo, &labels_path).await?;
-            repositories::commit(&repo, "Adding fish to labels.txt file")?;
-
-            // 4. merge main onto new branch (re-fetch branches to get current commit IDs)
-            let og_branch = repositories::branches::get_by_name(&repo, &og_branch.name)?;
-            let new_branch = repositories::branches::get_by_name(&repo, new_branch_name)?;
-            let merge_commit =
-                merge_into_base(&repo, &og_branch, &new_branch, &test_author()).await?;
-
-            // 5. Already up to date: merge_into_base returns base unchanged, no new commit.
-            assert_eq!(merge_commit.id, new_branch.commit_id);
-            let new_branch_after = repositories::branches::get_by_name(&repo, new_branch_name)?;
-            assert_eq!(new_branch_after.commit_id, new_branch.commit_id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_client_equal_tips_returns_base() -> Result<(), OxenError> {
-        // Equal-tip merge on the client path: a sibling branch points at the same commit as HEAD.
-        // Must report "Already up to date" — Some(base) — rather than None (which is what
-        // fast_forward_merge used to return for this case before the equal-tip dispatch fix).
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            repositories::branches::create_from_head(&repo, "twin")?;
-
-            let merged = repositories::merge::merge(&repo, "twin").await?;
-            assert_eq!(
-                merged.map(|c| c.id),
-                Some(base_branch.commit_id.clone()),
-                "client merge of equal tips must return the base commit, not None"
-            );
-
-            // HEAD must remain on the same commit.
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, base_branch.commit_id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_diverged_branches_then_merge_again() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // 1. Commit something in main branch
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            let file1_path = repo.path.join("file1.txt");
-            util::fs::write_to_path(&file1_path, "Initial content for file1")?;
-            repositories::add(&repo, &file1_path).await?;
-            let _ = repositories::commit(&repo, "Commit file1 to main")?;
-
-            // 2. Create and checkout a new branch
-            let new_branch_name = "feature-branch";
-            repositories::branches::create_checkout(&repo, new_branch_name)?;
-
-            // 3. Commit something in new branch
-            let file2_path = repo.path.join("file2.txt");
-            util::fs::write_to_path(&file2_path, "Content for file2 in feature branch")?;
-            repositories::add(&repo, &file2_path).await?;
-            let feature_commit1 = repositories::commit(&repo, "Commit file2 to feature-branch")?;
-
-            // 4. Checkout main branch
-            repositories::checkout(&repo, &og_branch.name).await?;
-
-            // 5. Commit something in main branch to make it diverge
-            let file3_path = repo.path.join("file3.txt");
-            util::fs::write_to_path(&file3_path, "Content for file3 in main branch")?;
-            repositories::add(&repo, &file3_path).await?;
-            let main_commit2 = repositories::commit(&repo, "Commit file3 to main, diverging")?;
-
-            // 6. Merge new branch onto main branch
-            // There should be a new merge commit
-            let merge_result1 = repositories::merge::merge(&repo, new_branch_name).await?;
-            assert!(
-                merge_result1.is_some(),
-                "First merge should create a merge commit"
-            );
-            let merge_commit1 = merge_result1.unwrap();
-            assert_ne!(
-                merge_commit1.id, main_commit2.id,
-                "Merge commit ID should be new"
-            );
-            assert_ne!(
-                merge_commit1.id, feature_commit1.id,
-                "Merge commit ID should be new"
-            );
-            assert_eq!(
-                merge_commit1.parent_ids.len(),
-                2,
-                "Merge commit should have two parents"
-            );
-
-            // 7. Merge new branch onto main branch again.
-            // Already up to date: no new merge commit, HEAD stays at the first merge commit.
-            let merge_result2 = repositories::merge::merge(&repo, new_branch_name).await?;
-            let merge_commit2 =
-                merge_result2.expect("second merge should succeed (already up to date)");
-            assert_eq!(
-                merge_commit2.id, merge_commit1.id,
-                "Second merge attempt should not create a new commit as it's already merged"
-            );
-
-            // Verify HEAD is still the first merge commit
-            let head_commit_after_second_merge = repositories::commits::head_commit(&repo)?;
-            assert_eq!(
-                head_commit_after_second_merge.id, merge_commit1.id,
-                "HEAD should remain at the first merge commit"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    // Regression test: files modified only on the merge branch whose parent directory
-    // hash is shared between the LCA and base should not trigger "your local changes
-    // would be overwritten."
-    #[tokio::test]
-    async fn test_merge_three_way_file_modified_only_on_merge_branch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Setup: create initial files in a subdirectory
-            let models_dir = repo.path.join("models");
-            util::fs::create_dir_all(&models_dir)?;
-
-            let a_path = models_dir.join("a.toml");
-            let b_path = models_dir.join("b.toml");
-            util::fs::write_to_path(&a_path, "version = 1")?;
-            util::fs::write_to_path(&b_path, "version = 1")?;
-            repositories::add(&repo, &models_dir).await?;
-            repositories::commit(&repo, "Add models/a.toml and models/b.toml")?;
-
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Create branch B and modify models/a.toml
-            let merge_branch_name = "B";
-            repositories::branches::create_checkout(&repo, merge_branch_name)?;
-            util::fs::write_to_path(&a_path, "version = 2")?;
-            repositories::add(&repo, &a_path).await?;
-            let new_path = repo.path.join("new.txt");
-            util::fs::write_to_path(&new_path, "new")?;
-            repositories::add(&repo, &new_path).await?;
-            repositories::commit(&repo, "Update models/a.toml and add new.txt on branch B")?;
-
-            // Back on main, make a diverging commit (different file, outside models/)
-            repositories::checkout(&repo, &main_branch.name).await?;
-            let other_path = repo.path.join("other.txt");
-            util::fs::write_to_path(&other_path, "hello")?;
-            repositories::add(&repo, &other_path).await?;
-            repositories::commit(&repo, "Add other.txt on main")?;
-
-            // A different mtime on models/a.toml and on an untracked copy of the file B adds, so the
-            // merge compares their content and metadata with the commits'
-            let past = FileTime::from_unix_time(1_000_000_000, 0);
-            set_file_mtime(&a_path, past)?;
-            util::fs::write_to_path(&new_path, "new")?;
-            set_file_mtime(&new_path, past)?;
-
-            // Merge branch B into main — this should succeed without conflict
-            let merge_commit = repositories::merge::merge(&repo, merge_branch_name).await?;
-            assert!(
-                merge_commit.is_some(),
-                "Merge should succeed without conflict, from outside the repository, over a \
-                 touched models/a.toml and an untracked copy of new.txt"
-            );
-
-            // Verify the merged file has the updated content from branch B
-            let content = util::fs::read_from_path(&a_path)?;
-            assert_eq!(content, "version = 2");
-
-            // Verify the other files are still intact
-            assert!(b_path.exists());
-            assert!(other_path.exists());
-
-            Ok(())
-        })
-        .await
-    }
-
     // --- Client-side merge tests for delete edge cases ---
 
     // --- Server-side merge tests (merge_into_base) ---
-
-    #[tokio::test]
-    async fn test_merge_into_base_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Add a file and commit on main
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::commit(&repo, "Adding hello file")?;
-
-            // Create a feature branch and add a commit
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Adding world file")?;
-
-            // Go back to main so HEAD is on the base branch
-            repositories::checkout(&repo, &base_branch.name).await?;
-
-            // Re-fetch branches to get current commit IDs
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-
-            // Server-side merge: should succeed and update the branch ref
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            assert_eq!(merge_commit.id, merge_branch.commit_id);
-
-            // The base branch ref should now point to the merge commit
-            let updated_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-            assert_eq!(updated_branch.commit_id, merge_commit.id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_equal_tips_returns_base() -> Result<(), OxenError> {
-        // Equal-tip merge on the server path: a sibling branch points at the same commit as the
-        // base branch. Must succeed and return base unchanged — previously this returned
-        // Err("No changes to merge").
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-            repositories::branches::create_from_head(&repo, "twin")?;
-            let merge_branch = repositories::branches::get_by_name(&repo, "twin")?;
-
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-            assert_eq!(merge_commit.id, base_branch.commit_id);
-
-            // The base branch ref must still point at the same commit.
-            let updated_base = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-            assert_eq!(updated_base.commit_id, base_branch.commit_id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_no_conflicts() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // Commit a file on main (LCA)
-            let a_file = repo.path.join("a.txt");
-            util::fs::write_to_path(&a_file, "a")?;
-            repositories::add(&repo, &a_file).await?;
-            repositories::commit(&repo, "Adding a.txt")?;
-
-            // Create feature branch and add a different file
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let b_file = repo.path.join("b.txt");
-            util::fs::write_to_path(&b_file, "b")?;
-            repositories::add(&repo, &b_file).await?;
-            repositories::commit(&repo, "Adding b.txt on feature")?;
-
-            // Go back to main and add another different file (diverge)
-            repositories::checkout(&repo, &base_branch_name).await?;
-            let c_file = repo.path.join("c.txt");
-            util::fs::write_to_path(&c_file, "c")?;
-            repositories::add(&repo, &c_file).await?;
-            repositories::commit(&repo, "Adding c.txt on main")?;
-
-            // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            // Server-side three-way merge should succeed
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            // Merge commit should have two parents
-            assert_eq!(merge_commit.parent_ids.len(), 2);
-            assert!(merge_commit.parent_ids.contains(&base_branch.commit_id));
-            assert!(merge_commit.parent_ids.contains(&merge_branch.commit_id));
-
-            // Merge commit is attributed to the provided author.
-            assert_eq!(merge_commit.author, test_author().name);
-            assert_eq!(merge_commit.email, test_author().email);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_with_conflicts() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // Commit a file on main (LCA)
-            let labels_file = repo.path.join("labels.txt");
-            util::fs::write_to_path(&labels_file, "cat\ndog")?;
-            repositories::add(&repo, &labels_file).await?;
-            repositories::commit(&repo, "Adding labels.txt")?;
-
-            // Create feature branch and modify the same file
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&labels_file, "cat\ndog\nfish")?;
-            repositories::add(&repo, &labels_file).await?;
-            repositories::commit(&repo, "Adding fish on feature")?;
-
-            // Go back to main and modify the same file differently (conflict)
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::write_to_path(&labels_file, "cat\ndog\nbird")?;
-            repositories::add(&repo, &labels_file).await?;
-            repositories::commit(&repo, "Adding bird on main")?;
-
-            // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            // Server-side merge should return UpstreamMergeConflict error
-            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
-            assert!(result.is_err());
-            let err = result.unwrap_err();
-            assert!(
-                matches!(err, OxenError::UpstreamMergeConflict(_)),
-                "Expected UpstreamMergeConflict, got: {err:?}"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_does_not_modify_working_dir() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Commit a file on main
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::commit(&repo, "Adding hello file")?;
-
-            // Create feature branch and add a new file
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Adding world file")?;
-
-            // Go back to main — world.txt should not exist in working dir
-            repositories::checkout(&repo, &base_branch.name).await?;
-            assert!(!world_file.exists());
-
-            // Re-fetch branches
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-
-            // Server-side merge
-            merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            // world.txt should STILL not exist — server merge doesn't touch working dir
-            assert!(
-                !world_file.exists(),
-                "Server-side merge should not create files in working directory"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_ff_with_deletion() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            let hello_file = repo.path.join("hello.txt");
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Adding files")?;
-
-            // Feature branch deletes world.txt
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::remove_file(&world_file)?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Removing world file")?;
-
-            repositories::checkout(&repo, &base_branch.name).await?;
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            assert_eq!(merge_commit.id, merge_branch.commit_id);
-
-            // Working dir should still have the file (server merge doesn't touch it)
-            assert!(world_file.exists());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_with_subdirectories() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // Create initial files in subdirectories
-            let models_dir = repo.path.join("models");
-            util::fs::create_dir_all(&models_dir)?;
-            let file_a = models_dir.join("a.toml");
-            util::fs::write_to_path(&file_a, "version = 1")?;
-            repositories::add(&repo, &file_a).await?;
-            repositories::commit(&repo, "Adding models/a.toml")?;
-
-            // Feature branch adds a new file in the same subdirectory
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let file_b = models_dir.join("b.toml");
-            util::fs::write_to_path(&file_b, "version = 1")?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::commit(&repo, "Adding models/b.toml on feature")?;
-
-            // Main branch adds a file in a different subdirectory (diverge, no conflict)
-            repositories::checkout(&repo, &base_branch_name).await?;
-            let scripts_dir = repo.path.join("scripts");
-            util::fs::create_dir_all(&scripts_dir)?;
-            let file_c = scripts_dir.join("deploy.sh");
-            util::fs::write_to_path(&file_c, "#!/bin/bash")?;
-            repositories::add(&repo, &file_c).await?;
-            repositories::commit(&repo, "Adding scripts/deploy.sh on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            assert_eq!(merge_commit.parent_ids.len(), 2);
-
-            // Working dir should not have the feature branch file
-            assert!(
-                !file_b.exists(),
-                "Server merge should not create models/b.toml on disk"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_conflict_in_subdirectory() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            let models_dir = repo.path.join("models");
-            util::fs::create_dir_all(&models_dir)?;
-            let config = models_dir.join("config.toml");
-            util::fs::write_to_path(&config, "version = 1")?;
-            repositories::add(&repo, &config).await?;
-            repositories::commit(&repo, "Adding models/config.toml")?;
-
-            // Feature branch modifies the config
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&config, "version = 2")?;
-            repositories::add(&repo, &config).await?;
-            repositories::commit(&repo, "Updating config on feature")?;
-
-            // Main branch also modifies the same config (conflict)
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::write_to_path(&config, "version = 3")?;
-            repositories::add(&repo, &config).await?;
-            repositories::commit(&repo, "Updating config on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
-            assert!(matches!(
-                result.unwrap_err(),
-                OxenError::UpstreamMergeConflict(_)
-            ));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_both_add_same_path() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: no new.txt yet
-            let placeholder = repo.path.join("placeholder.txt");
-            util::fs::write_to_path(&placeholder, "anchor")?;
-            repositories::add(&repo, &placeholder).await?;
-            repositories::commit(&repo, "Anchor commit")?;
-
-            // Feature branch adds new.txt
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let new_file = repo.path.join("new.txt");
-            util::fs::write_to_path(&new_file, "from feature")?;
-            repositories::add(&repo, &new_file).await?;
-            repositories::commit(&repo, "Adding new.txt on feature")?;
-
-            // Main branch also adds new.txt with different content
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::write_to_path(&new_file, "from main")?;
-            repositories::add(&repo, &new_file).await?;
-            repositories::commit(&repo, "Adding new.txt on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
-            assert!(matches!(
-                result.unwrap_err(),
-                OxenError::UpstreamMergeConflict(_)
-            ));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_modify_delete_conflict() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: create a file
-            let file = repo.path.join("shared.txt");
-            util::fs::write_to_path(&file, "original")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Adding shared.txt")?;
-
-            // Feature branch deletes the file
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::remove_file(&file)?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Deleting shared.txt on feature")?;
-
-            // Main branch modifies the same file
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::write_to_path(&file, "modified on main")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Modifying shared.txt on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
-            assert!(
-                matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
-                "Modify on base + delete on merge should be a conflict"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_base_deletes_merge_unchanged() -> Result<(), OxenError>
-    {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: create two files
-            let file_a = repo.path.join("a.txt");
-            let file_b = repo.path.join("b.txt");
-            util::fs::write_to_path(&file_a, "a")?;
-            util::fs::write_to_path(&file_b, "b")?;
-            repositories::add(&repo, &file_a).await?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::commit(&repo, "Adding a.txt and b.txt")?;
-
-            // Feature branch makes an unrelated change (doesn't touch a.txt)
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&file_b, "b modified on feature")?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::commit(&repo, "Modifying b.txt on feature")?;
-
-            // Main branch deletes a.txt
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::remove_file(&file_a)?;
-            repositories::add(&repo, &file_a).await?;
-            repositories::commit(&repo, "Deleting a.txt on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            // Base's deletion should win since merge didn't change the file
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-
-            assert_eq!(merge_commit.parent_ids.len(), 2);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_delete_modify_conflict() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: create a file
-            let file = repo.path.join("shared.txt");
-            util::fs::write_to_path(&file, "original")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Adding shared.txt")?;
-
-            // Feature branch modifies the file
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&file, "modified on feature")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Modifying shared.txt on feature")?;
-
-            // Main branch deletes the same file
-            repositories::checkout(&repo, &base_branch_name).await?;
-            util::fs::remove_file(&file)?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "Deleting shared.txt on main")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let result = merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await;
-            assert!(
-                matches!(result.unwrap_err(), OxenError::UpstreamMergeConflict(_)),
-                "Delete on base + modify on merge should be a conflict"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_dir_metadata() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: create three files (a.txt, b.txt, c.txt)
-            let file_a = repo.path.join("a.txt");
-            let file_b = repo.path.join("b.txt");
-            let file_c = repo.path.join("c.txt");
-            util::fs::write_to_path(&file_a, "aaa")?; // 3 bytes
-            util::fs::write_to_path(&file_b, "bbb")?; // 3 bytes
-            util::fs::write_to_path(&file_c, "ccc")?; // 3 bytes
-            repositories::add(&repo, &file_a).await?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::add(&repo, &file_c).await?;
-            let lca_commit = repositories::commit(&repo, "LCA: adding a, b, c")?;
-
-            // Snapshot the LCA root metadata for reference
-            let lca_root =
-                repositories::tree::get_dir_without_children(&repo, &lca_commit, "", None)?
-                    .unwrap();
-            let lca_dir = lca_root.dir()?;
-            // The initial commit from run_one_commit_local_repo_test_async adds a file too, so
-            // we track the LCA state as our baseline rather than hardcoding counts.
-            let lca_num_files = lca_dir.num_files();
-            let lca_num_bytes = lca_dir.num_bytes();
-
-            // Feature branch: add d.txt, modify b.txt, delete c.txt
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let file_d = repo.path.join("d.txt");
-            util::fs::write_to_path(&file_d, "ddddd")?; // 5 bytes (added)
-            util::fs::write_to_path(&file_b, "bbbbbbb")?; // 7 bytes (was 3)
-            util::fs::remove_file(&file_c)?; // removed (was 3 bytes)
-            repositories::add(&repo, &file_d).await?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::add(&repo, &file_c).await?;
-            repositories::commit(&repo, "Feature: add d, modify b, delete c")?;
-
-            // Main branch: add e.txt to diverge (forces three-way merge)
-            repositories::checkout(&repo, &base_branch_name).await?;
-            let file_e = repo.path.join("e.txt");
-            util::fs::write_to_path(&file_e, "ee")?; // 2 bytes
-            repositories::add(&repo, &file_e).await?;
-            repositories::commit(&repo, "Main: add e")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            // Server-side three-way merge
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-            assert_eq!(merge_commit.parent_ids.len(), 2);
-
-            // Read the root DirNode from the merge commit
-            let merge_root =
-                repositories::tree::get_dir_without_children(&repo, &merge_commit, "", None)?
-                    .unwrap();
-            let merge_dir = merge_root.dir()?;
-
-            // Expected changes relative to LCA:
-            //   +1 file (d.txt added), +1 file (e.txt added), -1 file (c.txt deleted) = net +1
-            assert_eq!(
-                merge_dir.num_files(),
-                lca_num_files + 1, // net +1 file
-                "num_files: LCA had {lca_num_files}, merge should have +1 (add d, add e, del c)"
-            );
-
-            // Expected byte changes relative to LCA:
-            //   b.txt: 3 -> 7 (+4), d.txt: +5, e.txt: +2, c.txt: -3 = net +8
-            assert_eq!(
-                merge_dir.num_bytes(),
-                lca_num_bytes + 8,
-                "num_bytes: LCA had {lca_num_bytes}, merge should have +8 bytes"
-            );
-
-            // Verify the right files exist in the merge commit tree
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "a.txt")?.is_some(),
-                "a.txt should exist"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "b.txt")?.is_some(),
-                "b.txt should exist"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "c.txt")?.is_none(),
-                "c.txt should be deleted"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "d.txt")?.is_some(),
-                "d.txt should exist"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "e.txt")?.is_some(),
-                "e.txt should exist"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    /// Regression test: deletion of a file in a directory that's shared between LCA and base
-    /// (i.e., the directory hash is identical in both, so `unique_dir_entries` prunes it).
-    /// The merge branch deletes a file from that shared directory.
-    #[tokio::test]
-    async fn test_merge_into_base_three_way_delete_in_shared_dir() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch_name = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            // LCA: create files in a subdirectory
-            let dir = repo.path.join("data");
-            util::fs::create_dir_all(&dir)?;
-            let file_a = dir.join("a.txt");
-            let file_b = dir.join("b.txt");
-            util::fs::write_to_path(&file_a, "aaa")?;
-            util::fs::write_to_path(&file_b, "bbb")?;
-            repositories::add(&repo, &file_a).await?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::commit(&repo, "LCA: adding data/a.txt and data/b.txt")?;
-
-            // Feature branch: delete data/b.txt (leaving data/a.txt untouched)
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::remove_file(&file_b)?;
-            repositories::add(&repo, &file_b).await?;
-            repositories::commit(&repo, "Feature: delete data/b.txt")?;
-
-            // Main branch: add an unrelated file to force divergence (3-way merge).
-            // Crucially, do NOT touch data/ — so data/ is identical in LCA and base.
-            repositories::checkout(&repo, &base_branch_name).await?;
-            let unrelated = repo.path.join("other.txt");
-            util::fs::write_to_path(&unrelated, "x")?;
-            repositories::add(&repo, &unrelated).await?;
-            repositories::commit(&repo, "Main: add other.txt")?;
-
-            let merge_branch = repositories::branches::get_by_name(&repo, "feature")?;
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch_name)?;
-
-            let merge_commit =
-                merge_into_base(&repo, &merge_branch, &base_branch, &test_author()).await?;
-            assert_eq!(merge_commit.parent_ids.len(), 2);
-
-            // data/a.txt should still exist, data/b.txt should be deleted
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "data/a.txt")?.is_some(),
-                "data/a.txt should exist in merge commit"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &merge_commit, "data/b.txt")?.is_none(),
-                "data/b.txt should be deleted in merge commit"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_commit_into_base_on_branch_ancestor_is_no_op() -> Result<(), OxenError> {
-        // When the merge commit is an ancestor of the base commit (lca == merge), the merge is a
-        // no-op. The branch ref must NOT advance to a fabricated empty merge commit.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // First commit on main becomes the "ancestor" we'll later try to merge into HEAD.
-            let f1 = repo.path.join("f1.txt");
-            util::fs::write_to_path(&f1, "one")?;
-            repositories::add(&repo, &f1).await?;
-            let ancestor_commit = repositories::commit(&repo, "Add f1")?;
-
-            // Advance main with a second commit so base != merge but lca == merge.
-            let f2 = repo.path.join("f2.txt");
-            util::fs::write_to_path(&f2, "two")?;
-            repositories::add(&repo, &f2).await?;
-            let head_commit = repositories::commit(&repo, "Add f2")?;
-
-            let base_branch = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-            let merge_commit_result = repositories::merge::merge_commit_into_base_on_branch(
-                &repo,
-                &ancestor_commit,
-                &head_commit,
-                &base_branch,
-            )
-            .await?;
-
-            // Should return base unchanged, not a new (empty) merge commit.
-            assert_eq!(merge_commit_result.id, head_commit.id);
-            assert_eq!(merge_commit_result.parent_ids, head_commit.parent_ids);
-
-            // Branch ref must still point at the original head commit.
-            let branch_after = repositories::branches::get_by_name(&repo, &base_branch.name)?;
-            assert_eq!(branch_after.commit_id, head_commit.id);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_commit_into_base_server_safe_ff_does_not_touch_working_dir()
-    -> Result<(), OxenError> {
-        // Verifies that merge_commit_into_base_server_safe succeeds even when
-        // stale files exist in the repo directory (no "local changes would be
-        // overwritten" error).
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Add a file and commit
-            let readme = repo.path.join("README.md");
-            util::fs::write_to_path(&readme, "original")?;
-            repositories::add(&repo, &readme).await?;
-            let base_commit = repositories::commit(&repo, "Add README")?;
-
-            // Branch, modify the file, and commit
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&readme, "modified on feature")?;
-            repositories::add(&repo, &readme).await?;
-            let feature_commit = repositories::commit(&repo, "Modify README")?;
-
-            // Go back to main so HEAD is at base_commit (FF scenario)
-            repositories::checkout(&repo, &main_branch.name).await?;
-
-            // Simulate server state: write a stale/different file at the path.
-            // On a real server there is no checkout, but the repo directory may
-            // contain leftover files that differ from the tree.
-            util::fs::write_to_path(&readme, "stale server copy")?;
-
-            // Server-safe merge should NOT check working-dir files → no error
-            let result = repositories::merge::merge_commit_into_base_server_safe(
-                &repo,
-                &feature_commit,
-                &base_commit,
-            )
-            .await?;
-
-            assert!(result.is_some(), "FF merge should return the merge commit");
-            assert_eq!(result.unwrap().id, feature_commit.id);
-
-            // The stale file on disk should be UNTOUCHED (server never writes)
-            let on_disk = util::fs::read_from_path(&readme)?;
-            assert_eq!(
-                on_disk, "stale server copy",
-                "server-safe merge must not modify files on disk"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_merge_commit_into_base_server_safe_three_way_does_not_touch_working_dir()
-    -> Result<(), OxenError> {
-        // Verifies that merge_commit_into_base_server_safe uses the server-safe
-        // three-way merge path and never touches the working directory.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Shared ancestor
-            let a_path = repo.path.join("a.txt");
-            util::fs::write_to_path(&a_path, "a")?;
-            repositories::add(&repo, &a_path).await?;
-            repositories::commit(&repo, "Add a.txt")?;
-
-            // Feature branch: add b.txt
-            repositories::branches::create_checkout(&repo, "feature")?;
-            let b_path = repo.path.join("b.txt");
-            util::fs::write_to_path(&b_path, "b")?;
-            repositories::add(&repo, &b_path).await?;
-            let feature_commit = repositories::commit(&repo, "Add b.txt")?;
-
-            // Back to main: add c.txt (diverge → forces three-way merge)
-            repositories::checkout(&repo, &main_branch.name).await?;
-            let c_path = repo.path.join("c.txt");
-            util::fs::write_to_path(&c_path, "c")?;
-            repositories::add(&repo, &c_path).await?;
-            let base_commit = repositories::commit(&repo, "Add c.txt")?;
-
-            // Simulate stale server state
-            util::fs::write_to_path(&a_path, "stale")?;
-
-            // Server-safe merge should succeed without checking disk
-            let result = repositories::merge::merge_commit_into_base_server_safe(
-                &repo,
-                &feature_commit,
-                &base_commit,
-            )
-            .await?;
-            assert!(
-                result.is_some(),
-                "three-way merge should return a merge commit"
-            );
-
-            // Stale file should be untouched
-            let on_disk = util::fs::read_from_path(&a_path)?;
-            assert_eq!(
-                on_disk, "stale",
-                "server-safe merge must not modify files on disk"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    // Simulates an `oxen pull` that was killed mid-restore after it had already
-    // rewritten a tracked file to the merge target's content but before HEAD
-    // was advanced. On resume the file differs from HEAD (commit A) yet matches
-    // the merge target (commit B), and must be treated as a successful no-op
-    // rather than flagged as "cannot_overwrite".
-    #[tokio::test]
-    async fn test_merge_resumes_after_partial_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let og_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Commit A on main: world.txt = "World"
-            let world_file = repo.path.join("world.txt");
-            util::fs::write_to_path(&world_file, "World")?;
-            repositories::add(&repo, &world_file).await?;
-            repositories::commit(&repo, "Adding world file")?;
-
-            // Commit B on feature: modify world.txt
-            let branch_name = "update-world";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-            util::fs::write_to_path(&world_file, "World2")?;
-            repositories::add(&repo, &world_file).await?;
-            let target_commit = repositories::commit(&repo, "Updating world")?;
-            let merge_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // Back on main: checkout restores world.txt to commit A's content.
-            repositories::checkout(&repo, &og_branch.name).await?;
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
-
-            // Simulate an interrupted fast-forward merge: the previous pull
-            // rewrote world.txt to the target's content on disk but crashed
-            // before advancing HEAD. HEAD still points to commit A.
-            util::fs::write_to_path(&world_file, "World2")?;
-
-            // The resumed merge must not fail with `cannot_overwrite_files`:
-            // world.txt differs from HEAD (= commit A) but already matches the
-            // merge target, so restoring is a safe no-op.
-            let commit = repositories::merge::merge(&repo, &merge_branch.name)
-                .await?
-                .expect("resumed fast-forward merge should produce a commit");
-
-            assert_eq!(commit.id, target_commit.id);
-            let head_commit = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head_commit.id, target_commit.id);
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
-            Ok(())
-        })
-        .await
-    }
 
     // Helper: build a feature branch with a single file-modification commit, return
     // (branch_name, target_commit_id) back on main.
@@ -1960,290 +2367,5 @@ mod tests {
 
         repositories::checkout(repo, &og_branch.name).await?;
         Ok((og_branch.name, base_commit, target_commit))
-    }
-
-    // A truncated file (content matches neither base nor target) must still resume
-    // cleanly when the MERGE_IN_PROGRESS marker names the same target commit: is_resume
-    // bypasses the conflict check and force-restores the file from the version store.
-    #[tokio::test]
-    async fn test_merge_resume_truncated_fast_forward() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let (_main, _base, target) = make_feature_branch_with_modification(
-                &repo,
-                "world.txt",
-                "World",
-                "World2",
-                "update-world",
-            )
-            .await?;
-
-            let world_file = repo.path.join("world.txt");
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
-
-            // Simulate an interrupted merge that truncated the file mid-write:
-            // content matches neither base ("World") nor target ("World2").
-            util::fs::write_to_path(&world_file, "partial")?;
-            merge_marker::write(&repo, &target.id).await?;
-
-            let commit = repositories::merge::merge(&repo, "update-world")
-                .await?
-                .expect("resumed merge should produce a commit");
-            assert_eq!(commit.id, target.id);
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World2");
-            assert!(
-                !merge_marker::exists(&repo).await?,
-                "marker must be cleared after a successful resume"
-            );
-            Ok(())
-        })
-        .await
-    }
-
-    // If the marker names a different target than the current merge, abort with
-    // MergeInProgressMismatch without touching the marker or the working tree.
-    #[tokio::test]
-    async fn test_merge_aborts_on_marker_mismatch() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let (_main, _base, _target) = make_feature_branch_with_modification(
-                &repo,
-                "world.txt",
-                "World",
-                "World2",
-                "update-world",
-            )
-            .await?;
-
-            // A stale marker points at an unrelated commit id (e.g. from a previous
-            // merge against a different branch).
-            let stale = "deadbeefdeadbeefdeadbeefdeadbeef";
-            merge_marker::write(&repo, stale).await?;
-
-            let err = repositories::merge::merge(&repo, "update-world")
-                .await
-                .expect_err("mismatched marker must abort the new merge");
-            match err {
-                OxenError::MergeInProgressMismatch { ref expected, .. } => {
-                    assert_eq!(expected, stale);
-                }
-                other => panic!("expected MergeInProgressMismatch, got {other:?}"),
-            }
-
-            // Marker is untouched so the user can run `oxen merge --abort`.
-            let current = merge_marker::read(&repo).await?;
-            assert_eq!(current.as_deref(), Some(stale));
-            Ok(())
-        })
-        .await
-    }
-
-    // A normal successful merge never leaves MERGE_IN_PROGRESS behind.
-    #[tokio::test]
-    async fn test_merge_clears_marker_on_success() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let (_main, _base, _target) = make_feature_branch_with_modification(
-                &repo,
-                "world.txt",
-                "World",
-                "World2",
-                "update-world",
-            )
-            .await?;
-
-            assert!(!merge_marker::exists(&repo).await?);
-            repositories::merge::merge(&repo, "update-world")
-                .await?
-                .unwrap();
-            assert!(
-                !merge_marker::exists(&repo).await?,
-                "marker must be absent after a clean merge"
-            );
-
-            let main = repositories::branches::current_branch(&repo)?.expect("on a branch");
-            repositories::branches::create_checkout(&repo, "oxen-dir")?;
-            let data_dir = repo.path.join("data");
-            util::fs::create_dir_all(data_dir.join(".OXEN"))?;
-            util::fs::write_to_path(data_dir.join("ok.txt"), "ok")?;
-            util::fs::write_to_path(data_dir.join(".OXEN").join("config.toml"), "not a config")?;
-            repositories::add(&repo, &data_dir).await?;
-            repositories::commit(&repo, "add data/.OXEN/config.toml")?;
-            repositories::checkout(&repo, &main.name).await?;
-            util::fs::remove_dir_all(&data_dir)?;
-
-            for merge_kind in ["fast-forward", "three-way"] {
-                if merge_kind == "three-way" {
-                    util::fs::write_to_path(repo.path.join("main.txt"), "main")?;
-                    repositories::add(&repo, &repo.path.join("main.txt")).await?;
-                    repositories::commit(&repo, "diverge main")?;
-                }
-                let result = repositories::merge::merge(&repo, "oxen-dir").await;
-                assert!(
-                    matches!(result, Err(OxenError::InvalidTreePath(_))),
-                    "{merge_kind}: {result:?}"
-                );
-                assert!(
-                    !merge_marker::exists(&repo).await? && !data_dir.join("ok.txt").exists(),
-                    "{merge_kind}: a merge refused over a .oxen path writes nothing"
-                );
-            }
-            Ok(())
-        })
-        .await
-    }
-
-    // A successful no-op (already-up-to-date) merge must also clear any stale marker for the
-    // same target left behind by a prior interrupted attempt — otherwise the next merge of a
-    // different target would error with MergeInProgressMismatch.
-    #[tokio::test]
-    async fn test_merge_clears_marker_on_already_up_to_date() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            // Create commit A on main, then advance main with commit B. Make a sibling branch
-            // "ancestor" pointing at A so merging it into main hits is_already_up_to_date.
-            let f1 = repo.path.join("f1.txt");
-            util::fs::write_to_path(&f1, "one")?;
-            repositories::add(&repo, &f1).await?;
-            let ancestor_commit = repositories::commit(&repo, "Add f1")?;
-            repositories::branches::create(&repo, "ancestor", &ancestor_commit.id)?;
-
-            let f2 = repo.path.join("f2.txt");
-            util::fs::write_to_path(&f2, "two")?;
-            repositories::add(&repo, &f2).await?;
-            repositories::commit(&repo, "Add f2")?;
-
-            // Simulate a prior interrupted merge of "ancestor" by writing a stale marker.
-            merge_marker::write(&repo, &ancestor_commit.id).await?;
-
-            let merged = repositories::merge::merge(&repo, "ancestor").await?;
-            assert!(merged.is_some(), "no-op merge should succeed");
-            assert!(
-                !merge_marker::exists(&repo).await?,
-                "marker must be cleared after an already-up-to-date merge"
-            );
-            Ok(())
-        })
-        .await
-    }
-
-    // An interrupted merge can leave a file truncated mid-write: its hash matches neither the
-    // pre-merge base nor the merge target. Abort must force-restore HEAD's version regardless —
-    // the core motivating case for Fix B.
-    #[tokio::test]
-    async fn test_merge_abort_resets_truncated_file() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let (_main, base, target) = make_feature_branch_with_modification(
-                &repo,
-                "world.txt",
-                "World",
-                "World2",
-                "update-world",
-            )
-            .await?;
-
-            let world_file = repo.path.join("world.txt");
-            // Content matches neither base ("World") nor target ("World2").
-            util::fs::write_to_path(&world_file, "TRUNC")?;
-            merge_marker::write(&repo, &target.id).await?;
-
-            repositories::merge::abort_merge(&repo).await?;
-
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
-            assert!(!merge_marker::exists(&repo).await?);
-            let head = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head.id, base.id);
-            Ok(())
-        })
-        .await
-    }
-
-    // Abort wipes the 3-way merge conflict state (MERGE_HEAD / ORIG_HEAD / conflict DB)
-    // left behind when a 3-way merge detects conflicts.
-    #[tokio::test]
-    async fn test_merge_abort_clears_conflict_state() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let base_branch = repositories::branches::current_branch(&repo)?.unwrap().name;
-
-            let file = repo.path.join("shared.txt");
-            util::fs::write_to_path(&file, "lca")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "lca")?;
-
-            repositories::branches::create_checkout(&repo, "feature")?;
-            util::fs::write_to_path(&file, "feature side")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "feature modification")?;
-
-            repositories::checkout(&repo, &base_branch).await?;
-            util::fs::write_to_path(&file, "base side")?;
-            repositories::add(&repo, &file).await?;
-            repositories::commit(&repo, "base modification")?;
-
-            // Conflicting 3-way merge: leaves MERGE_HEAD / ORIG_HEAD / conflicts DB.
-            let merge_result = repositories::merge::merge(&repo, "feature").await?;
-            assert!(merge_result.is_none(), "expected a conflict");
-
-            let hidden = util::fs::oxen_hidden_dir(&repo.path);
-            assert!(hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
-            assert!(hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
-
-            repositories::merge::abort_merge(&repo).await?;
-
-            assert!(!hidden.join(crate::constants::MERGE_HEAD_FILE).exists());
-            assert!(!hidden.join(crate::constants::ORIG_HEAD_FILE).exists());
-            assert!(
-                !hidden
-                    .join(crate::constants::MERGE_IN_PROGRESS_FILE)
-                    .exists()
-            );
-            Ok(())
-        })
-        .await
-    }
-
-    // A marker left over from a merge whose target commit no longer exists locally — exactly the
-    // "retry the original target" escape hatch in the MergeInProgressMismatch hint. Abort must
-    // still clean up the working tree and the marker without requiring the target to be resolvable.
-    #[tokio::test]
-    async fn test_merge_abort_with_unknown_marker_target() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let (_main, base, _target) = make_feature_branch_with_modification(
-                &repo,
-                "world.txt",
-                "World",
-                "World2",
-                "update-world",
-            )
-            .await?;
-
-            let world_file = repo.path.join("world.txt");
-            // Simulate an interrupted merge mid-write.
-            util::fs::write_to_path(&world_file, "TRUNC")?;
-            // Marker points at a commit id that does not exist in this repo.
-            let unknown = "deadbeefdeadbeefdeadbeefdeadbeef";
-            merge_marker::write(&repo, unknown).await?;
-
-            repositories::merge::abort_merge(&repo).await?;
-
-            assert_eq!(util::fs::read_from_path(&world_file)?, "World");
-            assert!(!merge_marker::exists(&repo).await?);
-            let head = repositories::commits::head_commit(&repo)?;
-            assert_eq!(head.id, base.id);
-            Ok(())
-        })
-        .await
-    }
-
-    // Abort with nothing to abort returns a specific error variant, not a silent no-op.
-    #[tokio::test]
-    async fn test_merge_abort_errors_when_nothing_to_abort() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let err = repositories::merge::abort_merge(&repo)
-                .await
-                .expect_err("abort on a clean repo should error");
-            assert!(
-                matches!(err, OxenError::NoMergeInProgress),
-                "expected NoMergeInProgress, got {err:?}"
-            );
-            Ok(())
-        })
-        .await
     }
 }
