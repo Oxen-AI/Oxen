@@ -300,7 +300,9 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::BadRequest()
                             .json(StatusMessageDescription::bad_request(error.to_string()))
                     }
-                    OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => {
+                    OxenError::PathOutsideWorkingTree { .. }
+                    | OxenError::EmptyPath
+                    | OxenError::InvalidCommitArchiveEntry(_) => {
                         log::warn!("Rejected request path: {error}");
                         HttpResponse::BadRequest()
                             .json(StatusMessageDescription::bad_request(error.to_string()))

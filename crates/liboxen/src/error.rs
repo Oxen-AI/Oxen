@@ -295,6 +295,11 @@ pub enum OxenError {
         reason: &'static str,
     },
 
+    /// A pushed commit archive holds an entry other than a commit's `dirs` or `dir_hashes` under
+    /// `history/<commit_id>/`, so nothing is written for it.
+    #[error("Commit archive entry is not a commit's dirs or dir_hashes: {0}")]
+    InvalidCommitArchiveEntry(PathBufError),
+
     /// A path a request supplied normalizes to the repository root where a file path is expected.
     #[error("Expected a file path, but the path is empty")]
     EmptyPath,
@@ -1108,6 +1113,7 @@ impl OxenError {
             OxenError::InvalidFileType(_) => true,
             OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
             OxenError::InvalidTreePath(_) => true,
+            OxenError::InvalidCommitArchiveEntry(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             OxenError::VersionUploadRefused(_) => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the

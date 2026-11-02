@@ -1074,7 +1074,6 @@ async fn unpack_entry_tarball_async(
     compressed_data: Vec<u8>,
 ) -> Result<(), OxenError> {
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let version_store = repo.version_store();
 
     // Create async gzip decoder and tar archive
     let reader = Cursor::new(compressed_data);
@@ -1090,81 +1089,44 @@ async fn unpack_entry_tarball_async(
             .path()
             .map_err(|e| OxenError::basic_str(format!("Invalid path in archive: {e}")))?;
 
-        if path.starts_with("versions") && path.to_string_lossy().contains("files") {
-            // Handle version files with streaming
-            let hash = extract_hash_from_path(&path)?;
-            let entry_size = file.header().raw_file_size()?;
-
-            version_store
-                .store_version_from_reader(&hash, Box::new(file), entry_size)
-                .await?;
-        } else {
-            // We manually construct the path and check for traversal instead of using unpack_in(),
-            // because unpack_in() calls canonicalize() internally, which fails on Windows ramdisks
-            // (imdisk).
-            let entry_type = file.header().entry_type();
-            if !entry_type.is_file() && !entry_type.is_dir() {
-                return Err(OxenError::basic_str(format!(
-                    "Unsupported archive entry type for {}: only regular files and \
-                     directories are allowed",
-                    path.display()
-                )));
-            }
-            let mut dest = hidden_dir.clone();
-            for component in path.components() {
-                match component {
-                    std::path::Component::Normal(part) => dest.push(part),
-                    std::path::Component::ParentDir => {
-                        return Err(OxenError::basic_str(format!(
-                            "Path traversal detected in archive entry: {}",
-                            path.display()
-                        )));
-                    }
-                    _ => continue,
-                }
-            }
-            // Skip empty paths (e.g. entries that were only "." or "/")
-            if dest == hidden_dir {
-                continue;
-            }
-            if let Some(parent) = dest.parent() {
-                util::fs::create_dir_all(parent)?;
-            }
-            file.unpack(&dest)
-                .await
-                .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
+        // A push sends only a commit's `history/<commit_id>/dirs` and `history/<commit_id>/dir_hashes`
+        // and their contents, so every other entry is refused.
+        let refused = || OxenError::InvalidCommitArchiveEntry(path.as_ref().into());
+        let relative = util::fs::normalize_relative_path(&path).map_err(|_| refused())?;
+        let mut parts = relative.iter();
+        let accepted = parts.next().is_some_and(|part| part == HISTORY_DIR)
+            && parts
+                .next()
+                .and_then(|part| part.to_str())
+                .is_some_and(|commit_id| MerkleHash::from_str(commit_id).is_ok())
+            && parts
+                .next()
+                .is_some_and(|part| part == DIRS_DIR || part == DIR_HASHES_DIR);
+        if !accepted {
+            return Err(refused());
         }
+
+        // We construct the destination ourselves instead of using unpack_in(), because unpack_in()
+        // calls canonicalize() internally, which fails on Windows ramdisks (imdisk).
+        let dest = hidden_dir.join(&relative);
+        let entry_type = file.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(OxenError::basic_str(format!(
+                "Unsupported archive entry type for {}: only regular files and directories are \
+                 allowed",
+                path.display()
+            )));
+        }
+        if let Some(parent) = dest.parent() {
+            util::fs::create_dir_all(parent)?;
+        }
+        file.unpack(&dest)
+            .await
+            .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
     }
 
     log::debug!("Done decompressing with async streaming.");
     Ok(())
-}
-
-// Helper function to extract the content hash from a version file path
-fn extract_hash_from_path(path: &Path) -> Result<String, OxenError> {
-    // Path structure is: versions/files/XX/YYYYYYYY/data
-    // where XXYYYYYYYY is the content hash
-
-    // Split the path and look for the pattern
-    let parts: Vec<_> = path.components().map(|comp| comp.as_os_str()).collect();
-    if parts.len() >= 5 && parts[0] == "versions" && parts[1] == "files" {
-        // The hash is composed of the directory names: XX/YYYYYYYY
-        let top_dir = parts[2];
-        let sub_dir = parts[3];
-
-        // Ensure we have a valid hash structure
-        if top_dir.len() == 2 && !sub_dir.is_empty() {
-            return Ok(format!(
-                "{}{}",
-                top_dir.to_string_lossy(),
-                sub_dir.to_string_lossy()
-            ));
-        }
-    }
-
-    Err(OxenError::basic_str(format!(
-        "Could not get hash for file: {path:?}"
-    )))
 }
 
 #[cfg(test)]
@@ -1172,6 +1134,7 @@ mod tests {
     use super::*;
     use crate::test;
     use liboxen::util::hasher;
+    use std::fs;
 
     /// Writes `parts` as sorted chunk files under `sync_dir` and returns their paths in order.
     fn write_chunks(sync_dir: &Path, parts: &[&str]) -> Result<Vec<PathBuf>, OxenError> {
@@ -1197,8 +1160,11 @@ mod tests {
     /// payload hash the client sends. Guards two contracts `check_if_upload_complete_and_unpack`
     /// relies on: callers sort the chunk paths, so slice order is byte-offset order; and the hex
     /// `hash_buffer` produces round-trips into the `MerkleHash` the publish checks against.
-    #[test]
-    fn test_unpack_to_file_concatenates_chunks_in_order() -> Result<(), OxenError> {
+    ///
+    /// A pushed commit archive unpacks a commit's `dirs` and `dir_hashes`, packed the way the client
+    /// packs them, and refuses any other entry under `.oxen` without writing it.
+    #[actix_web::test]
+    async fn test_unpack_publishes_chunks_and_only_commit_history() -> Result<(), OxenError> {
         let sync_dir = test::get_sync_dir()?;
         let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
 
@@ -1211,6 +1177,51 @@ mod tests {
             util::fs::read_from_path(published_path(&repo))?,
             "alphabetagamma"
         );
+
+        let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+        let commit_dir = Path::new(HISTORY_DIR).join("0123456789abcdef0123456789abcdef");
+
+        let local_commit_dir = sync_dir.join("local_commit");
+        let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        for dir in [DIRS_DIR, DIR_HASHES_DIR] {
+            util::fs::write_to_path(local_commit_dir.join(dir).join("node"), dir)?;
+            tar.append_dir_all(commit_dir.join(dir), local_commit_dir.join(dir))?;
+        }
+        unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await?;
+        for dir in [DIRS_DIR, DIR_HASHES_DIR] {
+            let unpacked = hidden_dir.join(&commit_dir).join(dir).join("node");
+            assert_eq!(util::fs::read_from_path(unpacked)?, dir);
+        }
+
+        let planted = b"planted";
+        for entry in [
+            PathBuf::from("config.toml"),
+            PathBuf::from("refs/heads/main"),
+            commit_dir.join("objects/node"),
+            commit_dir.join(DIRS_DIR).join(".oxen/config.toml"),
+            Path::new(HISTORY_DIR)
+                .join("not-a-commit-id")
+                .join(DIRS_DIR)
+                .join("node"),
+        ] {
+            let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+            let mut header = tar::Header::new_gnu();
+            header.set_size(planted.len() as u64);
+            header.set_mode(0o644);
+            tar.append_data(&mut header, &entry, &planted[..])?;
+
+            let result = unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await;
+
+            assert!(
+                matches!(result, Err(OxenError::InvalidCommitArchiveEntry(_))),
+                "{entry:?}: expected a refused entry, got {result:?}"
+            );
+            assert_ne!(
+                fs::read(hidden_dir.join(&entry)).ok().as_deref(),
+                Some(&planted[..]),
+                "{entry:?} must not be written"
+            );
+        }
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
