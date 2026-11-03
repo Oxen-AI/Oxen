@@ -599,20 +599,6 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let new_path_exists = {
-        let workspace = workspace.clone();
-        let new_path = new_path.clone();
-        tasks::spawn_blocking(move || {
-            repositories::entries::get_file(&repo, &workspace.commit, &new_path)
-        })
-        .await
-        .map_err(OxenError::from)??
-        .is_some()
-    };
-    if new_path_exists {
-        return Err(OxenHttpError::BadRequest("new_path already exists".into()));
-    }
-
     repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))

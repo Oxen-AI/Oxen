@@ -11,7 +11,7 @@ use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::staged::staged_db_manager::StagedDBManager;
 use crate::core::v_latest::workspaces::files::{
-    add, refuse_destination_under_file, track_modified_data_frame,
+    add, refuse_destination, refuse_destination_under_file,
 };
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
@@ -505,8 +505,10 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
     Ok(())
 }
 
-/// Renames the data frame at `path` to `new_path`, both relative to the workspace, and returns
-/// `new_path` normalized. Refuses either path if it leaves the workspace or is empty.
+/// Moves the workspace's version of the data frame at `path` (its staged entry and index, so its
+/// edits) to `new_path`, both relative to the workspace, and returns `new_path` normalized. `path`
+/// is left as the commit has it, unlike a [`super::files::mv`]. Refuses either path if it leaves the
+/// workspace or is empty, and a destination the commit already has.
 pub async fn rename(
     workspace: &Workspace,
     path: &Path,
@@ -530,12 +532,10 @@ pub async fn rename(
             {
                 return Err(OxenError::PathStagedForRemoval(path.into()));
             }
-            if staged_db_manager.exists(&new_path)? {
-                return Err(OxenError::DestinationAlreadyStaged(new_path.into()));
-            }
             refuse_destination_under_file(&workspace, &new_path, |p| {
                 staged_db_manager.read_from_staged_db(p)
             })?;
+            refuse_destination(&workspace, &new_path, |p| staged_db_manager.exists(p))?;
 
             move_index(&workspace, &path, &new_path)?;
 
@@ -563,21 +563,13 @@ pub async fn rename(
                 (file_node.hash().to_string(), mtime)
             });
 
-            // Check if the new path exists in the merkle tree, if it does, it is modified
-            let is_modified = repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
-                &new_path,
-            )?
-            .is_some();
-
-            Ok(ControlFlow::Continue((existing_version, is_modified)))
+            Ok(ControlFlow::Continue(existing_version))
         })
         .await??
     };
-    let (existing_version, is_modified) = match progress {
+    let existing_version = match progress {
         ControlFlow::Break(relative_path) => return Ok(relative_path),
-        ControlFlow::Continue(rest) => rest,
+        ControlFlow::Continue(existing_version) => existing_version,
     };
 
     let workspace_file_path = workspace.workspace_repo.path.join(&new_path);
@@ -590,17 +582,10 @@ pub async fn rename(
             .await?;
     }
 
-    log::debug!("rename is_modified: {is_modified:?} workspace_file_path: {workspace_file_path:?}");
-
-    if !is_modified {
-        add(workspace, &workspace_file_path).await?;
-    }
+    add(workspace, &workspace_file_path).await?;
 
     let workspace = workspace.clone();
     spawn_blocking(move || {
-        if is_modified {
-            track_modified_data_frame(&workspace, &new_path)?;
-        }
         // Read the staged entry again after adding
         let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
         let staged_entry = staged_db_manager.read_from_staged_db(&new_path)?;

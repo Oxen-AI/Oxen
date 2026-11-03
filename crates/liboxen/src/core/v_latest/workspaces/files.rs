@@ -1336,30 +1336,11 @@ fn has_dir_node(
     }
 }
 
-/// True if `path` is a directory in the workspace: committed as one in the base commit, or holding
-/// staged entries below it.
-pub async fn is_dir(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
-    let workspace = workspace.clone();
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        if let Some(node) =
-            repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, &path)?
-            && node.is_dir()
-        {
-            return Ok(true);
-        }
-        Ok(get_staged_db_manager(&workspace.workspace_repo)?
-            .read_entries_under(&path)?
-            .iter()
-            .any(|(entry_path, entry)| entry_path != &path || entry.node.is_dir()))
-    })
-    .await?
-}
-
 /// Move or rename a file or directory within a workspace.
 /// Each moved file's old path is staged as "Removed" (or unstaged, if it exists only in the
-/// workspace) and its new path as "Added". A directory moves every live file under it. Refuses
-/// either path if it leaves the workspace or is empty.
+/// workspace) and its new path as "Added", and a data frame's index moves with it. A directory
+/// moves every live file under it. Refuses either path if it leaves the workspace or is empty, and a
+/// destination the commit already has or the workspace stages.
 pub async fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
     let workspace = workspace.clone();
     let path = util::fs::validate_and_normalize_path(path)?;
@@ -1393,17 +1374,7 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
     let source_exists_in_base = source_in_base.is_some();
 
     if let Some(file_node) = staged_file.or(source_in_base) {
-        if read_from_db(&db, new_path)?.is_some() {
-            return Err(OxenError::DestinationAlreadyStaged(
-                new_path.to_path_buf().into(),
-            ));
-        }
-        let dest_exists_in_base = repositories::tree::get_file_by_path(
-            &workspace.base_repo,
-            &workspace.commit,
-            new_path,
-        )?
-        .is_some();
+        refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
         let mut batch = StagedWriteBatch::default();
         mv_file_node(
             &mut batch,
@@ -1411,9 +1382,8 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
             new_path,
             &file_node,
             source_exists_in_base,
-            dest_exists_in_base,
         );
-        return batch.write(&db);
+        return write_moving_indexes(workspace, &db, batch, &[(path, new_path)]);
     }
 
     mv_dir(workspace, &db, path, new_path)
@@ -1473,16 +1443,7 @@ fn stage_copy(
         Some(_) => return Err(OxenError::SourceHasStagedChanges(path.to_path_buf().into())),
         None => {}
     }
-    if read_from_db(&db, new_path)?.is_some() {
-        return Err(OxenError::DestinationAlreadyStaged(
-            new_path.to_path_buf().into(),
-        ));
-    }
-    if repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, new_path)?
-        .is_some()
-    {
-        return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
-    }
+    refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
     refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
 
     file_node.set_name(&new_path.to_string_lossy());
@@ -1490,6 +1451,28 @@ fn stage_copy(
     batch.upsert_file_node(new_path, StagedEntryStatus::Added, &file_node);
     batch.add_parent_directories(new_path);
     batch.write(&db)
+}
+
+/// Refuse a copy's or move's destination when the base commit already has it, or else when
+/// `is_staged` says the workspace stages something there. The commit comes first because unstaging
+/// can't free a committed path, so only a destination that is merely staged gets the answer to
+/// unstage it.
+pub(super) fn refuse_destination(
+    workspace: &Workspace,
+    new_path: &Path,
+    is_staged: impl FnOnce(&Path) -> Result<bool, OxenError>,
+) -> Result<(), OxenError> {
+    if repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, new_path)?
+        .is_some()
+    {
+        return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
+    }
+    if is_staged(new_path)? {
+        return Err(OxenError::DestinationAlreadyStaged(
+            new_path.to_path_buf().into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Refuse a destination beneath a file: one the workspace stages, or one in the base commit that
@@ -1527,16 +1510,10 @@ fn mv_file_node(
     new_path: &Path,
     file_node: &FileNode,
     source_exists_in_base: bool,
-    dest_exists_in_base: bool,
 ) {
     let mut new_file_node = file_node.clone();
     new_file_node.set_name(new_path.to_str().unwrap());
-    let new_status = if dest_exists_in_base {
-        StagedEntryStatus::Modified
-    } else {
-        StagedEntryStatus::Added
-    };
-    batch.upsert_file_node(new_path, new_status, &new_file_node);
+    batch.upsert_file_node(new_path, StagedEntryStatus::Added, &new_file_node);
 
     if source_exists_in_base {
         let mut removed_file_node = file_node.clone();
@@ -1608,14 +1585,9 @@ fn mv_dir(
     }
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // A committed destination staged for removal still has that staged entry, so this refuses it.
-    if repositories::tree::get_node_by_path(base_repo, commit, new_path)?.is_some()
-        || !staged_entries_under(new_path, db)?.is_empty()
-    {
-        return Err(OxenError::DestinationAlreadyStaged(
-            new_path.to_path_buf().into(),
-        ));
-    }
+    refuse_destination(workspace, new_path, |p| {
+        Ok(!staged_entries_under(p, db)?.is_empty())
+    })?;
 
     // Collecting the components drops the trailing separator `join` appends for `path` itself,
     // whose remainder is empty: a staged `new_path/` is a second spelling of the directory.
@@ -1630,7 +1602,7 @@ fn mv_dir(
 
     let mut batch = StagedWriteBatch::default();
     for (p, dest, file_node, in_base) in &moves {
-        mv_file_node(&mut batch, p, dest, file_node, *in_base, false);
+        mv_file_node(&mut batch, p, dest, file_node, *in_base);
     }
 
     // Empty directories have no file to carry their parents across.
@@ -1671,11 +1643,26 @@ fn mv_dir(
         batch.add_parent_directories(path);
     }
 
-    // A data frame's staged edits live in its DuckDB index, keyed by path.
-    let mut moved_indexes: Vec<(&Path, &Path)> = vec![];
-    for (p, dest, _, _) in &moves {
-        match core::v_latest::workspaces::data_frames::move_index(workspace, p, dest) {
-            Ok(true) => moved_indexes.push((p, dest)),
+    let index_moves: Vec<(&Path, &Path)> = moves
+        .iter()
+        .map(|(p, dest, _, _)| (*p, dest.as_path()))
+        .collect();
+    write_moving_indexes(workspace, db, batch, &index_moves)
+}
+
+/// Move the data frame index of each `(source, destination)` that has one, then write `batch`. A
+/// data frame's staged edits live in its DuckDB index, keyed by path, so when either step fails the
+/// indexes already moved go back and nothing is written.
+fn write_moving_indexes(
+    workspace: &Workspace,
+    db: &RwLockWriteGuard<DB>,
+    batch: StagedWriteBatch,
+    moves: &[(&Path, &Path)],
+) -> Result<(), OxenError> {
+    let mut moved_indexes = vec![];
+    for &(path, dest) in moves {
+        match core::v_latest::workspaces::data_frames::move_index(workspace, path, dest) {
+            Ok(true) => moved_indexes.push((path, dest)),
             Ok(false) => {}
             Err(err) => {
                 restore_indexes(workspace, &moved_indexes);
@@ -1683,7 +1670,6 @@ fn mv_dir(
             }
         }
     }
-
     if let Err(err) = batch.write(db) {
         restore_indexes(workspace, &moved_indexes);
         return Err(err);
@@ -1700,7 +1686,7 @@ fn restore_indexes(workspace: &Workspace, moved: &[(&Path, &Path)]) {
                 oxen.file_path = %path.display(),
                 oxen.new_file_path = %dest.display(),
                 exception.message = %err,
-                "Could not move a data frame index back after a failed directory move"
+                "Could not move a data frame index back after a failed move"
             );
         }
     }

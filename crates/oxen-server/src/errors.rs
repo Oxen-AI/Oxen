@@ -603,12 +603,15 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::DestinationExists(path) => {
-                        tracing::warn!(oxen.file_path = %path, "Copy refused, destination exists");
+                        tracing::warn!(
+                            oxen.file_path = %path,
+                            "Copy or move refused, the commit already has the destination"
+                        );
                         let error_json = json!({
                             "error": {
                                 "type": "destination_exists",
                                 "title": "Destination already exists",
-                                "detail": format!("{path} already exists. Choose another destination."),
+                                "detail": format!("{path} already exists in the commit. Choose another destination."),
                             },
                             "status": STATUS_ERROR,
                             "status_message": MSG_CONFLICT,

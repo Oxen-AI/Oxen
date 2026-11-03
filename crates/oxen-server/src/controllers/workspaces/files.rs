@@ -330,9 +330,9 @@ pub async fn validate(req: HttpRequest, _body: String) -> Result<HttpResponse, O
     ),
     responses(
         (status = 200, description = "File successfully moved/renamed", body = StatusMessage),
-        (status = 400, description = "Invalid request (empty new_path, a file's new_path already exists, or new_path is the source or inside it)"),
+        (status = 400, description = "Invalid request (an empty or out-of-workspace path, or new_path is the source or inside it)"),
         (status = 404, description = "Workspace or file not found"),
-        (status = 409, description = "A directory's new_path already exists, something is staged at new_path, a file is at a parent of new_path, or the path is staged for removal (including a directory already moved away)")
+        (status = 409, description = "new_path already exists in the commit or something is staged there, a file is at a parent of new_path, or the path is staged for removal (including a directory already moved away)")
     )
 )]
 pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
@@ -351,26 +351,7 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let is_dir = repositories::workspaces::files::is_dir(&workspace, &path).await?;
-
-    // A file move onto an existing path is a bad request. A directory move checks its
-    // destination itself and refuses an existing one with a 409.
-    if !is_dir
-        && repositories::tree::get_node_by_path_async(&repo, &workspace.commit, &new_path)
-            .await?
-            .is_some()
-    {
-        return Err(OxenHttpError::BadRequest(
-            "new_path already exists in the repository".into(),
-        ));
-    }
-
-    // For tabular files, use the data_frames rename instead
-    if util::fs::is_tabular(&path) && !is_dir {
-        repositories::workspaces::data_frames::rename(&workspace, &path, &new_path).await?;
-    } else {
-        repositories::workspaces::files::mv(&workspace, &path, &new_path).await?;
-    }
+    repositories::workspaces::files::mv(&workspace, &path, &new_path).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
@@ -590,6 +571,7 @@ mod tests {
     use liboxen::constants::stream_segment_size;
     use liboxen::core::staged::get_staged_db_manager;
     use liboxen::error::OxenError;
+    use liboxen::model::StagedEntryStatus;
     use liboxen::model::merkle_tree::node::EMerkleTreeNode;
     use liboxen::model::metadata::generic_metadata::GenericMetadata;
     use liboxen::repositories;
@@ -626,6 +608,11 @@ mod tests {
         util::fs::write_to_path(repo.path.join("exports.csv/b.csv"), "x,y\n1,2\n")?;
         let rows = "id,label\n1,a\n2,b\n";
         write_to_path(repo.path.join("tables").join("rows.csv"), rows)?;
+        write_to_path(
+            repo.path.join("frames/frame.json"),
+            r#"[{"id":1},{"id":2}]"#,
+        )?;
+        write_to_path(repo.path.join("frames/rows.csv"), rows)?;
         repositories::add(&repo, &repo.path).await?;
         let commit = repositories::commit(&repo, "First commit")?;
 
@@ -1173,16 +1160,24 @@ mod tests {
             "a truncated body reports the multipart error's own reason"
         );
 
-        // A directory named like a tabular file moves as a directory, not through the data frame
-        // rename, whether it is committed or exists only as staged files. These moves run in a
-        // workspace of their own.
+        // A directory moves whether it is committed or exists only as staged files, and a data
+        // frame moves with its index and leaves its committed source staged for removal. These
+        // moves run in a workspace of their own.
         let workspace_id = uuid::Uuid::new_v4().to_string();
         let workspace = repositories::workspaces::create(&repo, &commit, &workspace_id, true)?;
         let fresh = workspace.workspace_repo.path.join("fresh.csv/x.txt");
         util::fs::write_to_path(&fresh, "X")?;
         repositories::workspaces::files::add(&workspace, &fresh).await?;
+        let frame = Path::new("frames/frame.json");
+        let moved_frame = Path::new("frames/moved.json");
+        workspaces::data_frames::index(&repo, &workspace, frame).await?;
 
-        for (path, new_path) in [("exports.csv", "renamed"), ("fresh.csv", "fresh_renamed")] {
+        for (path, new_path) in [
+            ("exports.csv", "renamed"),
+            ("fresh.csv", "fresh_renamed"),
+            ("frames/frame.json", "frames/moved.json"),
+            ("frames/rows.csv", "frames/moved.csv"),
+        ] {
             let uri =
                 format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}");
             let req = TestRequest::patch()
@@ -1219,15 +1214,52 @@ mod tests {
             );
         }
 
+        // A file move onto a file or directory the commit has is refused.
+        let uri =
+            format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/hello.txt");
+        for new_path in ["tables/rows.csv", "tables"] {
+            let req = TestRequest::patch()
+                .uri(&uri)
+                .set_json(RenameRequest {
+                    new_path: new_path.to_string(),
+                })
+                .to_request();
+            let resp = call_service(&app, req).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::CONFLICT,
+                "moving hello.txt to {new_path}"
+            );
+            let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
+            assert_eq!(
+                body["error"]["type"], "destination_exists",
+                "moving hello.txt to {new_path} is refused as such: {body}"
+            );
+        }
+
+        assert!(
+            workspaces::data_frames::duckdb_path(&workspace, moved_frame).exists(),
+            "the moved data frame keeps its index"
+        );
+        assert!(!workspaces::data_frames::duckdb_path(&workspace, frame).exists());
+
         let status = repositories::workspaces::status::status(&workspace)?;
-        for path in ["renamed/a.txt", "renamed/b.csv", "fresh_renamed/x.txt"] {
+        for (path, expected) in [
+            ("renamed/a.txt", StagedEntryStatus::Added),
+            ("renamed/b.csv", StagedEntryStatus::Added),
+            ("fresh_renamed/x.txt", StagedEntryStatus::Added),
+            ("frames/moved.json", StagedEntryStatus::Added),
+            ("frames/moved.csv", StagedEntryStatus::Added),
+            ("frames/frame.json", StagedEntryStatus::Removed),
+            ("frames/rows.csv", StagedEntryStatus::Removed),
+        ] {
             assert_eq!(
                 status
                     .staged_files
                     .get(Path::new(path))
                     .map(|entry| entry.status.clone()),
-                Some(liboxen::model::StagedEntryStatus::Added),
-                "{path} should be staged as added"
+                Some(expected.clone()),
+                "{path} should be staged as {expected:?}"
             );
         }
 

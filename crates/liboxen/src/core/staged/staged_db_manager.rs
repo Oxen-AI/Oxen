@@ -596,6 +596,7 @@ impl StagedDBManager {
     }
 
     /// Every staged entry at or below `path`, with its path.
+    #[cfg(test)]
     pub(crate) fn read_entries_under(
         &self,
         path: &Path,
