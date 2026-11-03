@@ -1358,11 +1358,12 @@ pub async fn is_dir(workspace: &Workspace, path: &Path) -> Result<bool, OxenErro
 
 /// Move or rename a file or directory within a workspace.
 /// Each moved file's old path is staged as "Removed" (or unstaged, if it exists only in the
-/// workspace) and its new path as "Added". A directory moves every live file under it.
+/// workspace) and its new path as "Added". A directory moves every live file under it. Refuses
+/// either path if it leaves the workspace or is empty.
 pub async fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
     let workspace = workspace.clone();
-    let path = path.to_path_buf();
-    let new_path = new_path.to_path_buf();
+    let path = util::fs::validate_and_normalize_path(path)?;
+    let new_path = util::fs::validate_and_normalize_path(new_path)?;
     tokio::task::spawn_blocking(move || mv_sync(&workspace, &path, &new_path)).await?
 }
 

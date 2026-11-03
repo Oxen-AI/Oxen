@@ -498,6 +498,8 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
+    let body: FileMoveBody = serde_json::from_str(&body)?;
+    let new_path = request_relative_path(Path::new(&body.new_path), false, "new_path")?;
     let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
@@ -511,17 +513,6 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
         .ok_or_else(|| OxenError::local_branch_not_found(resource.version.to_string_lossy()))?;
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let source_path = resource.path;
-
-    // Parse the request body
-    let body: FileMoveBody = serde_json::from_str(&body)?;
-
-    // Validate new_path is not empty
-    if body.new_path.is_empty() {
-        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
-    }
-
-    // Validate and normalize new_path
-    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     // Verify source file exists. Both this and the collision check below walk the Merkle tree
     // synchronously, so they go off the worker the same way the move itself does.

@@ -592,8 +592,8 @@ mod tests {
                 &["data", "data/new.txt", "data/fresh"],
             );
 
-            // A directory move onto an existing or staged path, into itself, or from a missing
-            // source is refused and stages nothing.
+            // A directory move onto an existing or staged path, into itself, outside the
+            // workspace, or from a missing source is refused and stages nothing.
             let workspace = repositories::workspaces::create(&repo, &commit, "refused", true)?;
             stage_new_file(&workspace, "staged/z.txt").await?;
             for dest in ["other.txt", "staged"] {
@@ -604,12 +604,24 @@ mod tests {
                     "moving onto {dest} should be refused, got {result:?}"
                 );
             }
-            for dest in ["data", "data/sub/inner"] {
+            for (source, dest) in [
+                ("data", "data"),
+                ("data", "data/sub/inner"),
+                ("./data", "data/sub/inner"),
+            ] {
                 let result =
-                    workspaces::files::mv(&workspace, Path::new("data"), Path::new(dest)).await;
+                    workspaces::files::mv(&workspace, Path::new(source), Path::new(dest)).await;
                 assert!(
                     matches!(result, Err(OxenError::MoveIntoItself(_))),
-                    "moving into {dest} should be refused, got {result:?}"
+                    "moving {source} into {dest} should be refused, got {result:?}"
+                );
+            }
+            for (source, dest) in [("data", "../outside"), ("../data", "elsewhere")] {
+                let result =
+                    workspaces::files::mv(&workspace, Path::new(source), Path::new(dest)).await;
+                assert!(
+                    matches!(result, Err(OxenError::PathOutsideWorkingTree { .. })),
+                    "moving {source} to {dest} should be refused, got {result:?}"
                 );
             }
             let result =
@@ -633,14 +645,30 @@ mod tests {
             }
             let result = repositories::workspaces::data_frames::rename(
                 &workspace,
-                "table.csv",
-                "other.txt/table.csv",
+                Path::new("table.csv"),
+                Path::new("other.txt/table.csv"),
             )
             .await;
             assert!(
                 matches!(result, Err(OxenError::NotADirectory(_))),
                 "renaming a data frame beneath a file should be refused, got {result:?}"
             );
+            // A rename with either path outside the workspace is refused and writes nothing.
+            let absolute = workspace.workspace_repo.path.join("../absolute.csv");
+            for (source, dest) in [
+                (Path::new("table.csv"), Path::new("../outside.csv")),
+                (Path::new("table.csv"), absolute.as_path()),
+                (Path::new("../table.csv"), Path::new("elsewhere.csv")),
+            ] {
+                let result =
+                    repositories::workspaces::data_frames::rename(&workspace, source, dest).await;
+                let written = workspace.workspace_repo.path.join(dest);
+                assert!(!written.exists(), "a refused rename wrote {written:?}");
+                assert!(
+                    matches!(result, Err(OxenError::PathOutsideWorkingTree { .. })),
+                    "renaming {source:?} to {dest:?} should be refused, got {result:?}"
+                );
+            }
             assert_eq!(staged_status(&workspace, "data/a.txt"), None);
             assert_eq!(staged_status(&workspace, "other.txt"), None);
             assert_eq!(
@@ -648,8 +676,12 @@ mod tests {
                 Some(StagedEntryStatus::Added)
             );
             // A data frame the workspace never indexed renames too.
-            repositories::workspaces::data_frames::rename(&workspace, "table.csv", "renamed.csv")
-                .await?;
+            repositories::workspaces::data_frames::rename(
+                &workspace,
+                Path::new("table.csv"),
+                Path::new("renamed.csv"),
+            )
+            .await?;
             assert_eq!(
                 staged_status(&workspace, "renamed.csv"),
                 Some(StagedEntryStatus::Added)
@@ -672,9 +704,12 @@ mod tests {
                 Some(StagedEntryStatus::Removed)
             );
             workspaces::files::rm(&workspace, &[PathBuf::from("table.csv")]).await?;
-            let result =
-                repositories::workspaces::data_frames::rename(&workspace, "table.csv", "moved.csv")
-                    .await;
+            let result = repositories::workspaces::data_frames::rename(
+                &workspace,
+                Path::new("table.csv"),
+                Path::new("moved.csv"),
+            )
+            .await;
             assert!(
                 matches!(result, Err(OxenError::PathStagedForRemoval(_))),
                 "{result:?}"
@@ -719,8 +754,8 @@ mod tests {
             repositories::workspaces::data_frames::index(&repo, &workspace, "table.csv").await?;
             let result = repositories::workspaces::data_frames::rename(
                 &workspace,
-                "table.csv",
-                "staged.csv",
+                Path::new("table.csv"),
+                Path::new("staged.csv"),
             )
             .await;
             assert!(

@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo_async;
-use crate::params::{DFOptsQuery, PageNumQuery, app_data, df_opts_query, path_param, query_param};
+use crate::params::{
+    DFOptsQuery, PageNumQuery, app_data, df_opts_query, path_param, query_param,
+    request_relative_path,
+};
 use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -585,18 +588,11 @@ pub async fn rename(req: HttpRequest, body: String) -> Result<HttpResponse, Oxen
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let path = request_relative_path(Path::new(path_param(&req, "path")?), false, "path")?;
+    let body: RenameRequest = serde_json::from_str(&body)?;
+    let new_path = request_relative_path(Path::new(&body.new_path), false, "new_path")?;
     let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
-    let path = PathBuf::from(path_param(&req, "path")?);
-    // Attempt to parse the body
-    let body: RenameRequest = serde_json::from_str(&body)?; // Use the Json wrapper to get the inner value
-
-    // Check if new_path is valid
-    if body.new_path.is_empty() {
-        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
-    }
-
-    let new_path = PathBuf::from(body.new_path);
 
     let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
@@ -636,6 +632,7 @@ mod tests {
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
+    use liboxen::view::workspaces::RenameRequest;
     use serde_json::json;
 
     #[actix_web::test]
@@ -648,7 +645,7 @@ mod tests {
 
         let csv_dir = repo.path.join("data");
         util::fs::create_dir_all(&csv_dir)?;
-        for name in ["test.csv", "stale.csv"] {
+        for name in ["test.csv", "stale.csv", "unstaged.csv"] {
             util::fs::write_to_path(csv_dir.join(name), "col_a,col_b\n1,2\n3,4\n")?;
         }
         // 25 rows, larger than the page_size of 10 the pagination checks request, so their pages
@@ -684,6 +681,10 @@ mod tests {
                 .route(
                     "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/download/{path:.*}",
                     web::get().to(controllers::workspaces::data_frames::download),
+                )
+                .route(
+                    "/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/data_frames/rename/{path:.*}",
+                    web::put().to(controllers::workspaces::data_frames::rename),
                 ),
         )
         .await;
@@ -1016,6 +1017,40 @@ mod tests {
         .await;
         assert!(copy_page.is_indexed);
         assert_eq!(page_ids(&copy_page), (20..25).collect::<Vec<i64>>());
+
+        // A rename's new path stays inside the workspace, or the rename is a 400 that writes
+        // nothing. The source is committed and not staged, so an accepted rename writes its bytes.
+        let outside = sync_dir.join("renamed.csv");
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "{workspace_uri}/data_frames/rename/data/unstaged.csv"
+            ))
+            .set_json(RenameRequest {
+                new_path: outside.to_string_lossy().into_owned(),
+            })
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        assert!(
+            !outside.exists(),
+            "a refused rename must not write {outside:?}"
+        );
+        // So is a source path that leaves the workspace.
+        let req = actix_web::test::TestRequest::put()
+            .uri(&format!(
+                "{workspace_uri}/data_frames/rename/data/../unstaged.csv"
+            ))
+            .set_json(RenameRequest {
+                new_path: "renamed.csv".to_string(),
+            })
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        let body = actix_web::test::read_body(resp).await;
+        assert!(
+            String::from_utf8_lossy(&body).contains("Invalid path"),
+            "the 400 should refuse the source path, got {body:?}"
+        );
 
         drop((app, workspace));
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;

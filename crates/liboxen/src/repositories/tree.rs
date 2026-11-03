@@ -3596,6 +3596,10 @@ mod tests {
                     .await?
                     .is_none()
             );
+            // So does a path that ends in `..`, which has no file name.
+            assert!(
+                repositories::tree::get_file_by_path(&repo, &commit, "hello.txt/..")?.is_none()
+            );
 
             Ok(())
         })
