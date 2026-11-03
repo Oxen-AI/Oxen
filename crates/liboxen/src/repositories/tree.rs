@@ -3600,6 +3600,14 @@ mod tests {
             assert!(
                 repositories::tree::get_file_by_path(&repo, &commit, "hello.txt/..")?.is_none()
             );
+            // And a path whose file name is not UTF-8.
+            #[cfg(unix)]
+            {
+                use std::ffi::OsStr;
+                use std::os::unix::ffi::OsStrExt;
+                let name = Path::new(OsStr::from_bytes(b"hello\xff.txt"));
+                assert!(repositories::tree::get_file_by_path(&repo, &commit, name)?.is_none());
+            }
 
             Ok(())
         })
