@@ -1190,15 +1190,36 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK, "moving {path} to {new_path}");
         }
 
-        let uri = format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/renamed");
-        for (new_path, status, error_type) in [
-            ("renamed/inner", StatusCode::BAD_REQUEST, "move_into_itself"),
+        // A move into itself or under a file is refused, and so is a file move onto a file or
+        // directory the commit has.
+        for (path, new_path, status, error_type) in [
             (
+                "renamed",
+                "renamed/inner",
+                StatusCode::BAD_REQUEST,
+                "move_into_itself",
+            ),
+            (
+                "renamed",
                 "fresh_renamed/x.txt/inner",
                 StatusCode::CONFLICT,
                 "not_a_directory",
             ),
+            (
+                "hello.txt",
+                "tables/rows.csv",
+                StatusCode::CONFLICT,
+                "destination_exists",
+            ),
+            (
+                "hello.txt",
+                "tables",
+                StatusCode::CONFLICT,
+                "destination_exists",
+            ),
         ] {
+            let uri =
+                format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}");
             let req = TestRequest::patch()
                 .uri(&uri)
                 .set_json(RenameRequest {
@@ -1206,34 +1227,11 @@ mod tests {
                 })
                 .to_request();
             let resp = call_service(&app, req).await;
-            assert_eq!(resp.status(), status, "moving renamed to {new_path}");
+            assert_eq!(resp.status(), status, "moving {path} to {new_path}");
             let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
             assert_eq!(
                 body["error"]["type"], error_type,
-                "moving renamed to {new_path} is refused as such: {body}"
-            );
-        }
-
-        // A file move onto a file or directory the commit has is refused.
-        let uri =
-            format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/hello.txt");
-        for new_path in ["tables/rows.csv", "tables"] {
-            let req = TestRequest::patch()
-                .uri(&uri)
-                .set_json(RenameRequest {
-                    new_path: new_path.to_string(),
-                })
-                .to_request();
-            let resp = call_service(&app, req).await;
-            assert_eq!(
-                resp.status(),
-                StatusCode::CONFLICT,
-                "moving hello.txt to {new_path}"
-            );
-            let body: serde_json::Value = actix_web::test::read_body_json(resp).await;
-            assert_eq!(
-                body["error"]["type"], "destination_exists",
-                "moving hello.txt to {new_path} is refused as such: {body}"
+                "moving {path} to {new_path} is refused as such: {body}"
             );
         }
 

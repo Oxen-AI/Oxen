@@ -491,7 +491,7 @@ pub struct FileMoveBody {
         (status = 200, description = "File moved/renamed successfully", body = CommitResponse),
         (status = 400, description = "Bad Request"),
         (status = 404, description = "Branch or file not found"),
-        (status = 409, description = "new_path already exists in the branch's commit")
+        (status = 409, description = "new_path already exists, or a file is at a parent of new_path")
     )
 )]
 pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpResponse, OxenHttpError> {
