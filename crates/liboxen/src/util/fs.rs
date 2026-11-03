@@ -1629,11 +1629,7 @@ pub(crate) fn classify_modified_from_node_with_metadata(
 // Calculate a node's last modified time
 
 pub fn last_modified_time(last_modified_seconds: i64, last_modified_nanoseconds: u32) -> FileTime {
-    let node_modified_nanoseconds = std::time::SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(last_modified_seconds as u64)
-        + std::time::Duration::from_nanos(last_modified_nanoseconds as u64);
-
-    FileTime::from_system_time(node_modified_nanoseconds)
+    FileTime::from_unix_time(last_modified_seconds, last_modified_nanoseconds)
 }
 
 /// Normalizes an untrusted path relative to a repository root: `.` components collapse, and a path

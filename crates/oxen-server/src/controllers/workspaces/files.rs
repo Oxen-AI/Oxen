@@ -384,6 +384,52 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
+/// Copy a committed file to a new path within the workspace
+#[utoipa::path(
+    post,
+    path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/copy/{path}",
+    description = "Stage a copy of a file from the workspace's base commit at a new path. The copy shares the committed file's content, so nothing is uploaded. A copy with a different extension gets the type and metadata an upload of the same bytes to the new path would.",
+    tag = "Workspace Files",
+    params(
+        ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
+        ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
+        ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
+        ("path" = String, Path, description = "The path of the committed file to copy", example = "annotations/train.csv")
+    ),
+    request_body(
+        content = RenameRequest,
+        description = "The path for the copy",
+        example = json!({"new_path": "annotations/train_results.csv"})
+    ),
+    responses(
+        (status = 200, description = "Copy staged", body = StatusMessage),
+        (status = 400, description = "Invalid request (empty new_path, or the path is a directory)"),
+        (status = 404, description = "Workspace or file not found"),
+        (status = 409, description = "new_path already exists or is staged, a file is at a parent of new_path, or the source has changes staged in the workspace")
+    )
+)]
+pub async fn copy(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let _write = repo_locks::begin_write(&repo)?;
+    let path = PathBuf::from(path_param(&req, "path")?);
+
+    let body: RenameRequest = serde_json::from_str(&body)?;
+    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
+
+    let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
+        return Ok(HttpResponse::NotFound()
+            .json(StatusMessageDescription::workspace_not_found(workspace_id)));
+    };
+
+    repositories::workspaces::files::copy(&workspace, &path, &new_path).await?;
+
+    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+}
+
 /// A file received in a multipart upload and prepared for staging.
 struct ReceivedFile {
     file: VersionFileToStage,

@@ -25,7 +25,7 @@ use crate::core::staged::staged_db_manager::{
     StagedWriteBatch, get_staged_db_manager, read_from_db, staged_entries_under,
 };
 use crate::core::v_latest::add::{
-    get_file_node, process_add_file_with_staged_db_manager, stage_version_file,
+    get_file_node, process_add_file_with_staged_db_manager, stage_version_file, version_file_node,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
 use crate::error::OxenError;
@@ -101,33 +101,7 @@ pub(crate) async fn add_stored_version_file(
     size: u64,
     lines: Option<LineCounts>,
 ) -> Result<PathBuf, OxenError> {
-    let store = workspace.base_repo.version_store();
-    let inspect = |dst_path| async move {
-        match store.version_location(&file_hash.to_string()).await? {
-            VersionLocation::Local(data_path) => {
-                spawn_blocking(move || {
-                    InspectedVersionFile::from_file(dst_path, file_hash, &data_path)
-                })
-                .await?
-            }
-            VersionLocation::S3 {
-                url,
-                region,
-                endpoint_url,
-            } => {
-                let version = StoredVersion::new(
-                    store,
-                    file_hash,
-                    size,
-                    url,
-                    &region,
-                    endpoint_url.as_deref(),
-                )
-                .await?;
-                InspectedVersionFile::from_stored(dst_path, file_hash, version, lines).await
-            }
-        }
-    };
+    let inspect = |dst_path| inspect_stored_version(workspace, dst_path, file_hash, size, lines);
     let committed = CommittedFiles::load(workspace).await?;
     let file =
         VersionFileToStage::prepare_stored(&committed, dst_path.to_path_buf(), file_hash, inspect)
@@ -142,6 +116,40 @@ pub(crate) async fn add_stored_version_file(
     .await?;
 
     Ok(dst_path.to_path_buf())
+}
+
+/// Inspect the version file `file_hash`, `size` bytes long, which the store has, to stage at
+/// `dst_path`. `lines` are its line counts, when they were taken as it arrived.
+async fn inspect_stored_version(
+    workspace: &Workspace,
+    dst_path: PathBuf,
+    file_hash: MerkleHash,
+    size: u64,
+    lines: Option<LineCounts>,
+) -> Result<InspectedVersionFile, OxenError> {
+    let store = workspace.base_repo.version_store();
+    match store.version_location(&file_hash.to_string()).await? {
+        VersionLocation::Local(data_path) => {
+            spawn_blocking(move || InspectedVersionFile::from_file(dst_path, file_hash, &data_path))
+                .await?
+        }
+        VersionLocation::S3 {
+            url,
+            region,
+            endpoint_url,
+        } => {
+            let version = StoredVersion::new(
+                store,
+                file_hash,
+                size,
+                url,
+                &region,
+                endpoint_url.as_deref(),
+            )
+            .await?;
+            InspectedVersionFile::from_stored(dst_path, file_hash, version, lines).await
+        }
+    }
 }
 
 /// The files a workspace's commit has, for looking them up by path.
@@ -370,8 +378,7 @@ pub fn track_modified_data_frame(
     let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
-    let commit = workspace.commit.clone();
-    p_modify_file(base_repo, workspace_repo, &Some(commit), filepath)?;
+    p_modify_file(base_repo, workspace_repo, &workspace.commit, filepath)?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -1270,38 +1277,40 @@ pub(crate) fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Res
 fn p_modify_file(
     base_repo: &LocalRepository,
     workspace_repo: &LocalRepository,
-    maybe_head_commit: &Option<Commit>,
+    commit: &Commit,
     path: &Path,
 ) -> Result<(), OxenError> {
-    let mut maybe_file_node = None;
-    if let Some(head_commit) = maybe_head_commit {
-        maybe_file_node = repositories::tree::get_file_by_path(base_repo, head_commit, path)?;
-    }
-    let Some(mut file_node) = maybe_file_node else {
-        return Err(OxenError::basic_str("file not found in head commit"));
-    };
-    file_node.set_name(path.to_str().unwrap());
+    let committed = repositories::tree::get_file_by_path(base_repo, commit, path)?;
     // Stamping each edit's time changes the staged node, so a commit that read it before this edit
     // leaves the path staged for the next commit.
     let edited_at = FileTime::now();
-    file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
-    log::debug!("p_modify_file file_node: {file_node}");
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     staged_db_manager.edit_staged_node(path, |staged| {
-        // The committed node knows nothing of workspace metadata edits. When
-        // the staged node holds the same content with different metadata,
-        // carry that metadata over so re-staging doesn't discard it.
-        if let Some(staged) = staged
-            && let Ok(staged_file) = staged.node.file()
-            && staged_file.hash() == file_node.hash()
-            && let Some(metadata) = staged_file.metadata()
-        {
-            file_node.set_metadata(Some(metadata));
-            file_node.recompute_metadata_hashes()?;
-        }
+        let (mut file_node, status) = match (committed, staged) {
+            (Some(mut file_node), staged) => {
+                file_node.set_name(&path.to_string_lossy());
+                // The committed node knows nothing of workspace metadata edits. When
+                // the staged node holds the same content with different metadata,
+                // carry that metadata over so re-staging doesn't discard it.
+                if let Some(staged) = staged
+                    && let Ok(staged_file) = staged.node.file()
+                    && staged_file.hash() == file_node.hash()
+                    && let Some(metadata) = staged_file.metadata()
+                {
+                    file_node.set_metadata(Some(metadata));
+                    file_node.recompute_metadata_hashes()?;
+                }
+                (file_node, StagedEntryStatus::Modified)
+            }
+            // A file only the workspace has, such as a copy, stays staged as it was added.
+            (None, Some(staged)) => (staged.node.file()?, staged.status),
+            (None, None) => return Err(OxenError::basic_str("file not found in head commit")),
+        };
+        file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
+        log::debug!("p_modify_file file_node: {file_node}");
         Ok(StagedMerkleTreeNode {
-            status: StagedEntryStatus::Modified,
+            status,
             node: MerkleTreeNode::from_file(file_node),
         })
     })?;
@@ -1367,7 +1376,7 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
     // One guard from the first read to the batch write: `begin_write` doesn't exclude other
     // writers, so a stage landing in between would be overwritten or left behind by the move.
     let db = staged_db_manager.lock_for_write();
-    refuse_move_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
+    refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
 
     let staged_file = match read_from_db(&db, path)? {
         // Moving it would restore content the workspace already deleted, as edits to removed paths
@@ -1409,9 +1418,82 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
     mv_dir(workspace, &db, path, new_path)
 }
 
+/// Stage a copy of the base commit's file at `path` as a new file at `new_path`. The copy shares the
+/// committed file's content, so nothing is uploaded. A copy with a different extension gets the type
+/// and metadata an upload of the same bytes to `new_path` would. Refused when the workspace has
+/// changes staged for `path`, or when anything is at `new_path` already.
+pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
+    let source =
+        repositories::tree::get_node_by_path_async(&workspace.base_repo, &workspace.commit, path)
+            .await?
+            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+    let EMerkleTreeNode::File(source) = source.node else {
+        return Err(OxenError::NotAFile(path.to_path_buf().into()));
+    };
+    let copy = if util::fs::file_extension(path) != util::fs::file_extension(new_path) {
+        let mut file = inspect_stored_version(
+            workspace,
+            new_path.to_path_buf(),
+            *source.hash(),
+            source.num_bytes(),
+            None,
+        )
+        .await?;
+        file.mtime = util::fs::last_modified_time(
+            source.last_modified_seconds(),
+            source.last_modified_nanoseconds(),
+        );
+        version_file_node(&workspace.workspace_repo, file, None)?
+    } else {
+        source
+    };
+    let (workspace, path, new_path) = (
+        workspace.clone(),
+        path.to_path_buf(),
+        new_path.to_path_buf(),
+    );
+    spawn_blocking(move || stage_copy(&workspace, &path, &new_path, copy)).await?
+}
+
+/// Stage `file_node` at `new_path` as a copy of the committed file at `path`, refusing the copy
+/// under the same staged-db guard as the write.
+fn stage_copy(
+    workspace: &Workspace,
+    path: &Path,
+    new_path: &Path,
+    mut file_node: FileNode,
+) -> Result<(), OxenError> {
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+    let db = staged_db_manager.lock_for_write();
+    match read_from_db(&db, path)? {
+        Some(entry) if entry.status == StagedEntryStatus::Removed => {
+            return Err(OxenError::PathStagedForRemoval(path.to_path_buf().into()));
+        }
+        Some(_) => return Err(OxenError::SourceHasStagedChanges(path.to_path_buf().into())),
+        None => {}
+    }
+    if read_from_db(&db, new_path)?.is_some() {
+        return Err(OxenError::DestinationAlreadyStaged(
+            new_path.to_path_buf().into(),
+        ));
+    }
+    if repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, new_path)?
+        .is_some()
+    {
+        return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
+    }
+    refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
+
+    file_node.set_name(&new_path.to_string_lossy());
+    let mut batch = StagedWriteBatch::default();
+    batch.upsert_file_node(new_path, StagedEntryStatus::Added, &file_node);
+    batch.add_parent_directories(new_path);
+    batch.write(&db)
+}
+
 /// Refuse a destination beneath a file: one the workspace stages, or one in the base commit that
 /// the workspace stages nothing over. `staged` reads the workspace's staged entry at a path.
-pub(super) fn refuse_move_under_file(
+pub(super) fn refuse_destination_under_file(
     workspace: &Workspace,
     new_path: &Path,
     staged: impl Fn(&Path) -> Result<Option<StagedMerkleTreeNode>, OxenError>,
