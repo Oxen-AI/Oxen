@@ -404,6 +404,8 @@ mod tests {
                 ("data", "data_copy", "NotAFile"),
                 ("missing.txt", "missing_copy.txt", "PathDoesNotExist"),
                 ("table.csv", "other.txt", "DestinationExists"),
+                // Committed and staged: unstaging can't free it, so the commit's refusal wins.
+                ("table.csv", "data/a.txt", "DestinationExists"),
                 ("table.csv", "other_copy.txt", "DestinationAlreadyStaged"),
                 ("table.csv", "other.txt/table.csv", "NotADirectory"),
             ] {

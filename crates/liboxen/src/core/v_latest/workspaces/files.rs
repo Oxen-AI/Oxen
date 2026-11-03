@@ -1443,8 +1443,8 @@ fn stage_copy(
         Some(_) => return Err(OxenError::SourceHasStagedChanges(path.to_path_buf().into())),
         None => {}
     }
-    refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
     refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
+    refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
 
     file_node.set_name(&new_path.to_string_lossy());
     let mut batch = StagedWriteBatch::default();
