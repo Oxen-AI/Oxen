@@ -230,7 +230,9 @@ mod tests {
         test::run_empty_remote_repo_test(|mut local_repo, remote_repo| async move {
             let new_file = local_repo.path.join("new_file.csv");
             util::fs::write(&new_file, "a,b\n1,2\n")?;
-            repositories::add(&local_repo, &new_file).await?;
+            // A data frame stored as a JSON array, which only its content shows to be tabular
+            util::fs::write(local_repo.path.join("labels.json"), r#"[{"a": 1}]"#)?;
+            repositories::add(&local_repo, &local_repo.path).await?;
             let commit_1 = repositories::commit(&local_repo, "Added a new file")?;
             test::append_line_txt_file(&new_file, "3,4")?;
             repositories::add(&local_repo, &new_file).await?;
@@ -252,6 +254,19 @@ mod tests {
                 "the newest version comes first"
             );
             assert_eq!(result.versions[1].commit.id, commit_1.id);
+            let json_result = list_entry_versions(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                Path::new("labels.json"),
+                &PaginateOpts::default(),
+            )
+            .await?;
+            for versions in [&result.versions, &json_result.versions] {
+                assert!(
+                    versions.iter().all(|v| v.schema_hash.is_some()),
+                    "every version of a data frame has a schema hash, got {versions:?}"
+                );
+            }
 
             let branch = create_from_branch(&remote_repo, "my-branch", DEFAULT_BRANCH_NAME).await?;
             assert_eq!(branch.name, "my-branch");

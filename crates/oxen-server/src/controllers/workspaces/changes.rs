@@ -9,7 +9,6 @@ use liboxen::core::staged::get_staged_db_manager;
 use liboxen::error::OxenError;
 use liboxen::model::Workspace;
 use liboxen::repositories;
-use liboxen::util;
 use liboxen::view::remote_staged_status::RemoteStagedStatus;
 use liboxen::view::{
     FilePathsResponse, RemoteStagedStatusResponse, StatusMessage, StatusMessageDescription,
@@ -169,11 +168,6 @@ pub async fn unstage(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    // This may not be in the commit if it's added, so have to parse tabular-ness from the path.
-    if util::fs::is_tabular(&path) {
-        repositories::workspaces::data_frames::restore(&repo, &workspace, &path).await?;
-        return Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()));
-    }
     let unstaged = tasks::spawn_blocking(move || unstage_file(&workspace, &path))
         .await
         .map_err(OxenError::from)??;
@@ -229,49 +223,29 @@ pub async fn unstage_many(
     // referenced elsewhere. In order to cleanup eagerly here we would
     // need the staged DB to track whether the version was newly added
     // or already existed.
-    let pass_workspace = workspace.clone();
-    let leftovers = tasks::spawn_blocking(move || -> Result<Vec<Leftover>, OxenError> {
+    let err_paths = tasks::spawn_blocking(move || -> Result<Vec<PathBuf>, OxenError> {
         // One handle for the whole pass, which the unstages below share rather than reopen.
-        let staged_db = get_staged_db_manager(&pass_workspace.workspace_repo)?;
-        let mut leftovers = vec![];
+        let staged_db = get_staged_db_manager(&workspace.workspace_repo)?;
+        let mut err_paths = vec![];
         for path in paths_to_remove {
             match staged_db.read_from_staged_db(&path) {
                 Ok(Some(_)) => {}
                 Ok(None) => continue,
                 Err(e) => {
                     tracing::error!(oxen.file_path = %path.display(), exception.message = ?e, "Failed to read a staged entry");
-                    leftovers.push(Leftover::Failed(path));
+                    err_paths.push(path);
                     continue;
                 }
             }
-            // This may not be in the commit if it's added, so have to parse tabular-ness from
-            // the path.
-            if util::fs::is_tabular(&path) {
-                leftovers.push(Leftover::DataFrame(path));
-            } else if let Err(e) = unstage_file(&pass_workspace, &path) {
+            if let Err(e) = unstage_file(&workspace, &path) {
                 log::debug!("Failed to unstage file {path:?}: {e:?}");
-                leftovers.push(Leftover::Failed(path));
+                err_paths.push(path);
             }
         }
-        Ok(leftovers)
+        Ok(err_paths)
     })
     .await
     .map_err(OxenError::from)??;
-
-    let mut err_paths = vec![];
-    for leftover in leftovers {
-        match leftover {
-            Leftover::Failed(path) => err_paths.push(path),
-            Leftover::DataFrame(path) => {
-                if let Err(e) =
-                    repositories::workspaces::data_frames::restore(&repo, &workspace, &path).await
-                {
-                    log::debug!("Failed to unstage file {path:?}: {e:?}");
-                    err_paths.push(path);
-                }
-            }
-        }
-    }
 
     if err_paths.is_empty() {
         Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
@@ -283,15 +257,8 @@ pub async fn unstage_many(
     }
 }
 
-/// A staged path the blocking pass of `unstage_many` left unfinished, in request order.
-enum Leftover {
-    /// A file whose staged entry could not be read, or whose unstage failed.
-    Failed(PathBuf),
-    /// A data frame, restored on the async side.
-    DataFrame(PathBuf),
-}
-
-/// Unstage the non-tabular file at `path`, or `false` if the workspace has nothing staged there.
+/// Unstage the file at `path`, discarding a data frame's staged edits with it, or `false` if the
+/// workspace has nothing staged there.
 fn unstage_file(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
     if !repositories::workspaces::files::exists(workspace, path)? {
         return Ok(false);

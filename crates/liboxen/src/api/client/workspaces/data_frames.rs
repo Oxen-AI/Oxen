@@ -239,7 +239,7 @@ mod tests {
 
     use http::StatusCode;
 
-    use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_PAGE_NUM, DEFAULT_PAGE_SIZE};
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::model::{NewCommitBody, RemoteRepository};
@@ -502,6 +502,52 @@ mod tests {
                 ),
                 "renaming onto the committed {prompts_path:?} is a conflict, got {result:?}"
             );
+
+            // Unstaging an edited data frame discards its edits, one path at a time or several,
+            // whether its extension or only its content makes it tabular
+            workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, "unstage").await?;
+            for (df_path, row, one_path) in [
+                (
+                    Path::new("labels.json"),
+                    r#"{"id": 3, "label": "bird"}"#.to_string(),
+                    true,
+                ),
+                (path.as_path(), bbox_row("unstaged.jpg"), false),
+            ] {
+                index(&remote_repo, "unstage", df_path).await?;
+                let og_height = staged_height(&remote_repo, "unstage", df_path).await?;
+                rows::add(&remote_repo, "unstage", df_path, row).await?;
+                if one_path {
+                    workspaces::changes::rm(&remote_repo, "unstage", df_path).await?;
+                } else {
+                    workspaces::files::rm_files_from_staged(
+                        &local_repo,
+                        &remote_repo,
+                        "unstage",
+                        vec![local_repo.path.join(df_path)],
+                    )
+                    .await?;
+                }
+                let status = workspaces::changes::list(
+                    &remote_repo,
+                    "unstage",
+                    Path::new(""),
+                    DEFAULT_PAGE_NUM,
+                    DEFAULT_PAGE_SIZE,
+                )
+                .await?;
+                assert!(
+                    status.modified_files.entries.is_empty(),
+                    "{df_path:?} is no longer staged, got {:?}",
+                    status.modified_files.entries
+                );
+                index(&remote_repo, "unstage", df_path).await?;
+                assert_eq!(
+                    staged_height(&remote_repo, "unstage", df_path).await?,
+                    og_height,
+                    "{df_path:?} was unstaged without its added row"
+                );
+            }
 
             // A clone fast-forwards on each pull of a data frame committed from a workspace, nested
             // or at the root
