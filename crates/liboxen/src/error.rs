@@ -314,7 +314,7 @@ pub enum OxenError {
     #[error("Destination already staged: {0}")]
     DestinationAlreadyStaged(PathBufError),
 
-    /// A copy targeted a path the workspace's base commit already holds.
+    /// A copy, move, or rename targeted a path its commit already holds.
     #[error("Destination already exists: {0}")]
     DestinationExists(PathBufError),
 

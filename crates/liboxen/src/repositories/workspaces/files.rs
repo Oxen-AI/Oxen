@@ -6,8 +6,6 @@ use std::path::PathBuf;
 
 pub use crate::core::v_latest::workspaces::files::exists;
 
-pub use crate::core::v_latest::workspaces::files::is_dir;
-
 pub use crate::core::v_latest::workspaces::files::add;
 
 pub use crate::core::v_latest::workspaces::files::rm;
@@ -406,6 +404,8 @@ mod tests {
                 ("data", "data_copy", "NotAFile"),
                 ("missing.txt", "missing_copy.txt", "PathDoesNotExist"),
                 ("table.csv", "other.txt", "DestinationExists"),
+                // Committed and staged: unstaging can't free it, so the commit's refusal wins.
+                ("table.csv", "data/a.txt", "DestinationExists"),
                 ("table.csv", "other_copy.txt", "DestinationAlreadyStaged"),
                 ("table.csv", "other.txt/table.csv", "NotADirectory"),
             ] {
@@ -596,14 +596,18 @@ mod tests {
             // workspace, or from a missing source is refused and stages nothing.
             let workspace = repositories::workspaces::create(&repo, &commit, "refused", true)?;
             stage_new_file(&workspace, "staged/z.txt").await?;
-            for dest in ["other.txt", "staged"] {
-                let result =
-                    workspaces::files::mv(&workspace, Path::new("data"), Path::new(dest)).await;
-                assert!(
-                    matches!(result, Err(OxenError::DestinationAlreadyStaged(_))),
-                    "moving onto {dest} should be refused, got {result:?}"
-                );
-            }
+            let result =
+                workspaces::files::mv(&workspace, Path::new("data"), Path::new("other.txt")).await;
+            assert!(
+                matches!(result, Err(OxenError::DestinationExists(_))),
+                "moving onto a committed path should be refused, got {result:?}"
+            );
+            let result =
+                workspaces::files::mv(&workspace, Path::new("data"), Path::new("staged")).await;
+            assert!(
+                matches!(result, Err(OxenError::DestinationAlreadyStaged(_))),
+                "moving onto a staged path should be refused, got {result:?}"
+            );
             for (source, dest) in [
                 ("data", "data"),
                 ("data", "data/sub/inner"),
@@ -688,7 +692,7 @@ mod tests {
             );
 
             // Moving or renaming a file the workspace removed would restore its content at the new
-            // path. Tabular files move through the data frame rename, which refuses it too.
+            // path, so the file move and the data frame rename both refuse it.
             let workspace = repositories::workspaces::create(&repo, &commit, "removed", true)?;
             workspaces::files::rm(&workspace, &[PathBuf::from("other.txt")]).await?;
             let result =
@@ -703,6 +707,17 @@ mod tests {
                 staged_status(&workspace, "other.txt"),
                 Some(StagedEntryStatus::Removed)
             );
+            // A committed destination the workspace removed still exists in the commit, which
+            // unstaging the removal would not change.
+            for source in ["data/a.txt", "data"] {
+                let result =
+                    workspaces::files::mv(&workspace, Path::new(source), Path::new("other.txt"))
+                        .await;
+                assert!(
+                    matches!(result, Err(OxenError::DestinationExists(_))),
+                    "moving {source} onto the removed other.txt, got {result:?}"
+                );
+            }
             workspaces::files::rm(&workspace, &[PathBuf::from("table.csv")]).await?;
             let result = repositories::workspaces::data_frames::rename(
                 &workspace,

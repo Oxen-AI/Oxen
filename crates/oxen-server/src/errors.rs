@@ -603,7 +603,10 @@ impl error::ResponseError for OxenHttpError {
                         HttpResponse::Conflict().json(error_json)
                     }
                     OxenError::DestinationExists(path) => {
-                        tracing::warn!(oxen.file_path = %path, "Copy refused, destination exists");
+                        tracing::warn!(
+                            oxen.file_path = %path,
+                            "Copy or move refused, destination exists"
+                        );
                         let error_json = json!({
                             "error": {
                                 "type": "destination_exists",

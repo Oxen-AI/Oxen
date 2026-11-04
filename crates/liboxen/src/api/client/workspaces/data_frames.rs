@@ -237,6 +237,8 @@ mod tests {
 
     use std::path::{Path, PathBuf};
 
+    use http::StatusCode;
+
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::df::tabular;
     use crate::error::OxenError;
@@ -488,6 +490,17 @@ mod tests {
             assert_eq!(
                 index(&remote_repo, "binary", binary_name).await?.status,
                 "success"
+            );
+            let result = rename_data_frame(&remote_repo, "binary", binary_name, prompts_path).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenError::HttpStatusError {
+                        status: StatusCode::CONFLICT,
+                        ..
+                    })
+                ),
+                "renaming onto the committed {prompts_path:?} is a conflict, got {result:?}"
             );
 
             // A clone fast-forwards on each pull of a data frame committed from a workspace, nested

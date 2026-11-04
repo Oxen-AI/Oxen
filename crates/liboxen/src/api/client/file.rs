@@ -230,6 +230,7 @@ mod tests {
     use crate::util::fs;
 
     use bytes::Bytes;
+    use http::StatusCode;
     #[cfg(feature = "ffmpeg")]
     use tokio_stream::StreamExt;
 
@@ -304,6 +305,26 @@ mod tests {
             let put_path = local_repo.path.join("test_data").join("test.jpeg");
             assert!(put_path.exists());
             assert!(local_repo.path.join(full_path_on_repo).exists());
+
+            // A move onto a path the branch already has is a conflict
+            let result = mv_file(
+                &remote_repo,
+                DEFAULT_BRANCH_NAME,
+                "test_data/test.jpeg",
+                full_path_on_repo,
+                Some(commit_body("Move onto an existing file")),
+            )
+            .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenError::HttpStatusError {
+                        status: StatusCode::CONFLICT,
+                        ..
+                    })
+                ),
+                "moving onto {full_path_on_repo} is a conflict, got {result:?}"
+            );
 
             // Move a file, then delete it at its new path
             let moved = "renamed/images/test_moved.jpeg";

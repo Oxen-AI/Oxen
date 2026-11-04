@@ -490,7 +490,8 @@ pub struct FileMoveBody {
     responses(
         (status = 200, description = "File moved/renamed successfully", body = CommitResponse),
         (status = 400, description = "Bad Request"),
-        (status = 404, description = "Branch or file not found")
+        (status = 404, description = "Branch or file not found"),
+        (status = 409, description = "new_path already exists, or a file is at a parent of new_path")
     )
 )]
 pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpResponse, OxenHttpError> {
@@ -514,23 +515,12 @@ pub async fn mv(req: HttpRequest, body: String) -> actix_web::Result<HttpRespons
     let commit = resource.commit.clone().ok_or(OxenHttpError::NotFound)?;
     let source_path = resource.path;
 
-    // Verify source file exists. Both this and the collision check below walk the Merkle tree
-    // synchronously, so they go off the worker the same way the move itself does.
+    // Verify the source file exists, off the worker, since the lookup walks the Merkle tree.
     if repositories::tree::get_file_by_path_async(&repo, &commit, &source_path)
         .await?
         .is_none()
     {
         return Err(OxenHttpError::NotFound);
-    }
-
-    // Check if new_path already exists (file OR directory)
-    if repositories::tree::get_node_by_path_async(&repo, &commit, &new_path)
-        .await?
-        .is_some()
-    {
-        return Err(OxenHttpError::BadRequest(
-            "new_path already exists in the repository".into(),
-        ));
     }
 
     log::debug!("file::mv creating workspace for commit: {commit}");
