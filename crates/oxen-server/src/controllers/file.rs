@@ -772,7 +772,7 @@ mod tests {
     use actix_web::http::header::{self, HeaderMap, HeaderName};
     use actix_web::http::{Method, StatusCode};
     use actix_web::{App, body, web};
-    use liboxen::view::CommitResponse;
+    use liboxen::view::{CommitResponse, StatusMessageDescription};
 
     use liboxen::error::OxenError;
     use liboxen::repositories;
@@ -780,6 +780,7 @@ mod tests {
 
     use crate::app_data::OxenAppData;
     use crate::controllers;
+    use crate::services;
 
     /// Send `method` to `uri` through the GET and HEAD routes `services::file` registers, and
     /// return the status, headers and the whole body the handler produced.
@@ -873,14 +874,7 @@ mod tests {
         let app = actix_web::test::init_service(
             App::new()
                 .app_data(OxenAppData::new(sync_dir.clone()))
-                .route(
-                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
-                    web::put().to(controllers::file::put),
-                )
-                .route(
-                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
-                    web::get().to(controllers::file::get),
-                ),
+                .service(web::scope("/oxen/{namespace}/{repo_name}").service(services::file())),
         )
         .await;
         let file_uri = |path: &str| format!("/oxen/{namespace}/{repo_name}/file/main/{path}");
@@ -1077,6 +1071,46 @@ mod tests {
         assert_eq!(
             String::from_utf8(uploaded_content).unwrap(),
             "Updated Content!"
+        );
+
+        // A file over actix-multipart's default 2 MiB memory limit commits.
+        let big: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let big_file = repo.path.join("big.bin");
+        util::fs::write(&big_file, &big)?;
+        let put_big = || {
+            put_request(
+                &sync_dir,
+                &file_uri("data"),
+                &big_file,
+                &["files[]"],
+                "application/octet-stream",
+                "big.bin",
+                Some("add big"),
+            )
+        };
+        let resp = actix_web::test::call_service(&app, put_big()).await;
+        assert_eq!(resp.status(), StatusCode::OK, "a 3 MiB upload commits");
+        let resp = actix_web::test::call_service(&app, get("data/big.bin")).await;
+        let body = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        assert_eq!(body, big, "the 3 MiB upload is stored as sent");
+
+        let limited_app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .app_data(services::file::upload_limits(1024 * 1024))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/file/{resource:.*}",
+                    web::put().to(controllers::file::put),
+                ),
+        )
+        .await;
+        let resp = actix_web::test::call_service(&limited_app, put_big()).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body: StatusMessageDescription =
+            serde_json::from_slice(&actix_http::body::to_bytes(resp.into_body()).await.unwrap())?;
+        assert!(
+            body.status_description.contains("at most 1 MiB"),
+            "the refusal gives the limit: {body:?}"
         );
 
         // A blob the tree still references is server-side data loss, not an absent resource, so
