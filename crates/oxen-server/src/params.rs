@@ -1,4 +1,5 @@
 use regex::Regex;
+use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -141,19 +142,21 @@ pub fn query_param<'a>(request: &'a HttpRequest, param: &str) -> &'a str {
     value
 }
 
-/// A path from a request, run through [`util::fs::normalize_relative_path`]. `path_label` names
-/// the path in the 400 that refuses it.
+/// A path from a request, run through [`util::fs::normalize_relative_path`]. A refused path is
+/// logged as a warning and answered with a 400 whose message is "Invalid {path_label}: <reason>".
 pub(crate) fn request_relative_path(
     path: &Path,
     allow_empty: bool,
     path_label: &str,
 ) -> Result<PathBuf, OxenHttpError> {
-    let normalized = util::fs::normalize_relative_path(path)
-        .map_err(|e| OxenHttpError::BadRequest(format!("Invalid {path_label}: {e}").into()))?;
+    let refuse = |reason: &dyn Display| {
+        let message = format!("Invalid {path_label}: {reason}");
+        tracing::warn!(oxen.file_path = ?path, exception.message = ?message, "Refused a request path");
+        OxenHttpError::BadRequest(message.into())
+    };
+    let normalized = util::fs::normalize_relative_path(path).map_err(|e| refuse(&e))?;
     if !allow_empty && normalized.as_os_str().is_empty() {
-        return Err(OxenHttpError::BadRequest(
-            format!("Invalid {path_label}: path cannot be empty").into(),
-        ));
+        return Err(refuse(&"path cannot be empty"));
     }
     Ok(normalized)
 }

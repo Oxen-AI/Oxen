@@ -505,13 +505,15 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
     Ok(())
 }
 
+/// Renames the data frame at `path` to `new_path`, both relative to the workspace, and returns
+/// `new_path` normalized. Refuses either path if it leaves the workspace or is empty.
 pub async fn rename(
     workspace: &Workspace,
-    path: impl AsRef<Path>,
-    new_path: impl AsRef<Path>,
+    path: &Path,
+    new_path: &Path,
 ) -> Result<PathBuf, OxenError> {
-    let path = path.as_ref().to_path_buf();
-    let new_path = new_path.as_ref().to_path_buf();
+    let path = util::fs::validate_and_normalize_path(path)?;
+    let new_path = util::fs::validate_and_normalize_path(new_path)?;
 
     let progress = {
         let workspace = workspace.clone();

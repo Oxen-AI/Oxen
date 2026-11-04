@@ -453,7 +453,7 @@ impl CommitMerkleTree {
             let Some(root) = CommitMerkleTree::read_depth(repo, &node_hash, depth)? else {
                 return Err(OxenError::basic_str(format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 )));
             };
@@ -465,7 +465,7 @@ impl CommitMerkleTree {
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or_else(|| {
                 OxenError::basic_str(format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 ))
             })?
@@ -502,7 +502,7 @@ impl CommitMerkleTree {
             else {
                 return Err(OxenError::basic_str(format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 )));
             };
@@ -514,7 +514,7 @@ impl CommitMerkleTree {
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or_else(|| {
                 OxenError::basic_str(format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 ))
             })?
@@ -551,7 +551,7 @@ impl CommitMerkleTree {
             else {
                 return Err(OxenError::basic_str(format!(
                     "Merkle tree hash not found for dir: '{}' in commit: {:?}",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 )));
             };
@@ -563,7 +563,7 @@ impl CommitMerkleTree {
             CommitMerkleTree::read_file(repo, &dir_hashes, &node_path)?.ok_or_else(|| {
                 OxenError::basic_str(format!(
                     "Merkle tree hash not found for file: '{}' in commit: '{}'",
-                    node_path.to_str().unwrap(),
+                    node_path.display(),
                     commit.id
                 ))
             })?
@@ -780,10 +780,13 @@ impl CommitMerkleTree {
     ) -> Result<Option<MerkleTreeNode>, OxenError> {
         // Get the directory from the path
         let path = path.as_ref();
-        let Some(parent_path) = path.parent() else {
+        let (Some(path_str), Some(parent_path), Some(file_name)) = (
+            path.to_str(),
+            path.parent(),
+            path.file_name().and_then(|name| name.to_str()),
+        ) else {
             return Ok(None);
         };
-        let file_name = path.file_name().unwrap().to_str().unwrap();
 
         log::debug!("read_file path {path:?} parent_path {parent_path:?} file_name {file_name:?}");
 
@@ -821,7 +824,7 @@ impl CommitMerkleTree {
         }
 
         // Calculate the bucket to skip to based on the path and the number of vnodes
-        let path_hash = hasher::hash_buffer_128bit(path.to_str().unwrap().as_bytes());
+        let path_hash = hasher::hash_buffer_128bit(path_str.as_bytes());
         let bucket = path_hash % num_vnodes;
 
         log::debug!("read_file bucket: {bucket}");

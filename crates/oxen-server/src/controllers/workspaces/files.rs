@@ -2,7 +2,7 @@ use crate::errors::OxenHttpError;
 use crate::helpers::{
     BodyEncoding, ReceivedBody, file_stream_response, get_repo, get_repo_async, receive_body,
 };
-use crate::params::{app_data, path_param};
+use crate::params::{app_data, path_param, request_relative_path};
 use crate::tasks;
 
 use liboxen::constants::{MAX_FILE_SIZE, stream_segment_size};
@@ -340,20 +340,11 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let path = request_relative_path(Path::new(path_param(&req, "path")?), false, "path")?;
+    let body: RenameRequest = serde_json::from_str(&body)?;
+    let new_path = request_relative_path(Path::new(&body.new_path), false, "new_path")?;
     let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
-    let path = PathBuf::from(path_param(&req, "path")?);
-
-    // Parse request body
-    let body: RenameRequest = serde_json::from_str(&body)?;
-
-    // Validate new_path is not empty
-    if body.new_path.is_empty() {
-        return Err(OxenHttpError::BadRequest("new_path cannot be empty".into()));
-    }
-
-    // Validate and normalize new_path
-    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
