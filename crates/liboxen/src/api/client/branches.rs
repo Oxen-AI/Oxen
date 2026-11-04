@@ -261,6 +261,7 @@ mod tests {
                 &PaginateOpts::default(),
             )
             .await?;
+            assert_eq!(json_result.versions.len(), 1, "labels.json has one version");
             for versions in [&result.versions, &json_result.versions] {
                 assert!(
                     versions.iter().all(|v| v.schema_hash.is_some()),
