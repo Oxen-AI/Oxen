@@ -167,10 +167,6 @@ pub enum OxenError {
     #[error("HEAD not found.")]
     HeadNotFound,
 
-    /// Missing a file name
-    #[error("{0}")]
-    MissingFileName(StringError),
-
     //
     // Diff errors
     //

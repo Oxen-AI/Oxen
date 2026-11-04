@@ -32,10 +32,10 @@ use futures_util::TryStreamExt;
 use http::header::CONTENT_LENGTH;
 use indicatif::{ProgressBar, ProgressStyle};
 
-pub struct ChunkParams {
-    pub chunk_num: usize,
-    pub total_chunks: usize,
-    pub total_size: usize,
+struct ChunkParams {
+    chunk_num: usize,
+    total_chunks: usize,
+    total_size: usize,
 }
 
 pub async fn get_by_id(
@@ -494,53 +494,6 @@ pub async fn post_commits_to_server(
     Ok(())
 }
 
-pub async fn post_commit_dir_hashes_to_server(
-    local_repo: &LocalRepository,
-    remote_repo: &RemoteRepository,
-    commit: &Commit,
-) -> Result<(), OxenError> {
-    let commit_dir = util::fs::oxen_hidden_dir(&local_repo.path)
-        .join(HISTORY_DIR)
-        .join(commit.id.clone());
-
-    // This will be the subdir within the tarball
-    let tar_subdir = Path::new(HISTORY_DIR).join(commit.id.clone());
-
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
-    let mut tar = tar::Builder::new(enc);
-
-    // Don't send any errantly downloaded local cache files (from old versions of oxen clone)
-    let dirs_to_compress = vec![DIRS_DIR, DIR_HASHES_DIR];
-
-    for dir in &dirs_to_compress {
-        let full_path = commit_dir.join(dir);
-        let tar_path = tar_subdir.join(dir);
-        if full_path.exists() {
-            tar.append_dir_all(&tar_path, full_path)?;
-        }
-    }
-
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-
-    let is_compressed = true;
-    let filename = None;
-
-    let quiet_bar = Arc::new(ProgressBar::hidden());
-
-    let client = client::new_for_remote_repo(remote_repo)?;
-    post_data_to_server_with_client(
-        &client,
-        remote_repo,
-        buffer,
-        is_compressed,
-        &filename,
-        quiet_bar,
-    )
-    .await
-}
-
 pub async fn post_commits_dir_hashes_to_server(
     local_repo: &LocalRepository,
     remote_repo: &RemoteRepository,
@@ -573,21 +526,10 @@ pub async fn post_commits_dir_hashes_to_server(
 
     let buffer: Vec<u8> = tar.into_inner()?.finish()?;
 
-    let is_compressed = true;
-    let filename = None;
-
     let quiet_bar = Arc::new(ProgressBar::hidden());
 
     let client = client::new_for_remote_repo(remote_repo)?;
-    post_data_to_server_with_client(
-        &client,
-        remote_repo,
-        buffer,
-        is_compressed,
-        &filename,
-        quiet_bar,
-    )
-    .await
+    post_data_to_server_with_client(&client, remote_repo, buffer, quiet_bar).await
 }
 
 pub async fn bulk_create_commit_obj_on_server(
@@ -615,26 +557,17 @@ pub async fn bulk_create_commit_obj_on_server(
     }
 }
 
-pub async fn post_data_to_server_with_client(
+async fn post_data_to_server_with_client(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
     buffer: Vec<u8>,
-    is_compressed: bool,
-    filename: &Option<String>,
     bar: Arc<ProgressBar>,
 ) -> Result<(), OxenError> {
     let chunk_size: usize = constants::stream_segment_size() as usize;
 
     if buffer.len() > chunk_size {
-        upload_data_to_server_in_chunks_with_client(
-            client,
-            remote_repo,
-            &buffer,
-            chunk_size,
-            is_compressed,
-            filename,
-        )
-        .await?;
+        upload_data_to_server_in_chunks_with_client(client, remote_repo, &buffer, chunk_size)
+            .await?;
     } else {
         upload_single_tarball_to_server_with_client_with_retry(client, remote_repo, &buffer, bar)
             .await?;
@@ -642,7 +575,7 @@ pub async fn post_data_to_server_with_client(
     Ok(())
 }
 
-pub async fn upload_single_tarball_to_server_with_client_with_retry(
+async fn upload_single_tarball_to_server_with_client_with_retry(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
     buffer: &[u8],
@@ -706,8 +639,6 @@ async fn upload_data_to_server_in_chunks_with_client(
     remote_repo: &RemoteRepository,
     buffer: &[u8],
     chunk_size: usize,
-    is_compressed: bool,
-    filename: &Option<String>,
 ) -> Result<(), OxenError> {
     let total_size = buffer.len();
     log::debug!("upload_data_to_server_in_chunks chunking data {total_size} ...");
@@ -731,16 +662,8 @@ async fn upload_data_to_server_in_chunks_with_client(
             total_chunks: chunks.len(),
             total_size,
         };
-        match upload_data_chunk_to_server_with_retry(
-            client,
-            remote_repo,
-            chunk,
-            &hash,
-            &params,
-            is_compressed,
-            filename,
-        )
-        .await
+        match upload_data_chunk_to_server_with_retry(client, remote_repo, chunk, &hash, &params)
+            .await
         {
             Ok(_) => {
                 log::debug!("Success uploading chunk!")
@@ -753,29 +676,17 @@ async fn upload_data_to_server_in_chunks_with_client(
     Ok(())
 }
 
-pub async fn upload_data_chunk_to_server_with_retry(
+async fn upload_data_chunk_to_server_with_retry(
     client: &reqwest::Client,
     remote_repo: &RemoteRepository,
     chunk: &[u8],
     hash: &str,
     params: &ChunkParams,
-    is_compressed: bool,
-    filename: &Option<String>,
 ) -> Result<(), OxenError> {
     let mut total_tries = 0;
     let mut last_error = String::from("");
     while total_tries < constants::NUM_HTTP_RETRIES {
-        match upload_data_chunk_to_server(
-            client,
-            remote_repo,
-            chunk,
-            hash,
-            params,
-            is_compressed,
-            filename,
-        )
-        .await
-        {
+        match upload_data_chunk_to_server(client, remote_repo, chunk, hash, params).await {
             Ok(_) => {
                 return Ok(());
             }
@@ -803,30 +714,10 @@ async fn upload_data_chunk_to_server(
     chunk: &[u8],
     hash: &str,
     params: &ChunkParams,
-    is_compressed: bool,
-    filename: &Option<String>,
 ) -> Result<StatusMessage, OxenError> {
-    let maybe_filename = if !is_compressed {
-        format!(
-            "&filename={}",
-            urlencoding::encode(
-                filename
-                    .as_ref()
-                    .expect("Must provide filename if !compressed")
-            )
-        )
-    } else {
-        String::from("")
-    };
-
     let uri = format!(
-        "/commits/upload_chunk?chunk_num={}&total_size={}&hash={}&total_chunks={}&is_compressed={}{}",
-        params.chunk_num,
-        params.total_size,
-        hash,
-        params.total_chunks,
-        is_compressed,
-        maybe_filename
+        "/commits/upload_chunk?chunk_num={}&total_size={}&hash={}&total_chunks={}",
+        params.chunk_num, params.total_size, hash, params.total_chunks,
     );
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
     let total_size = chunk.len() as u64;

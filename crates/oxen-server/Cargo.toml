@@ -58,7 +58,6 @@ log = { workspace = true }
 metrics = { workspace = true, optional = true }
 metrics-exporter-prometheus = { workspace = true, optional = true }
 mime = { workspace = true }
-os_path = { workspace = true }
 percent-encoding = { workspace = true }
 regex = { workspace = true }
 rocksdb = { workspace = true }
