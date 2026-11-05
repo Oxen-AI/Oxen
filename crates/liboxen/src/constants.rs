@@ -210,6 +210,9 @@ pub const MAX_CONCURRENT_VERSION_PROBES: usize = 32;
 // Limit zip file downloads to batches of size N
 /// Limit zip file downloads to batches of size N
 pub const MAX_ZIP_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
+/// The most pixels an image resize or a video thumbnail has on each side. It bounds the output
+/// buffer a request can have the server allocate.
+pub(crate) const MAX_RESIZE_DIMENSION: u32 = 2048;
 // Retry and back off of upload tasks N times
 /// Retry and back off of upload tasks N times
 #[cfg(test)]

@@ -17,6 +17,7 @@ use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::repositories;
+use liboxen::repositories::versions::previews;
 use liboxen::storage::VersionStore;
 use liboxen::util;
 use liboxen::view::workspaces::RenameRequest;
@@ -139,7 +140,7 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let (file_stream, content_length) = util::fs::handle_image_resize(
+        let (file_stream, content_length) = previews::handle_image_resize(
             Arc::clone(&version_store),
             hash_str.clone(),
             &PathBuf::from(&path),
@@ -163,7 +164,7 @@ pub async fn get(
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
-        let stream = util::fs::handle_video_thumbnail(
+        let stream = previews::handle_video_thumbnail(
             Arc::clone(&version_store),
             hash_str,
             video_thumbnail,

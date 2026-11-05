@@ -23,6 +23,7 @@ use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::repositories::commits;
+use liboxen::repositories::versions::previews;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::util::fs::AtomicFile;
@@ -206,7 +207,7 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let (file_stream, content_length) = util::fs::handle_image_resize(
+        let (file_stream, content_length) = previews::handle_image_resize(
             version_store.clone(),
             hash_str.clone(),
             &path,
@@ -231,7 +232,7 @@ pub async fn get(
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
         let tmp_dir = util::fs::oxen_hidden_dir(&repo.path).join("tmp");
-        let stream = util::fs::handle_video_thumbnail(
+        let stream = previews::handle_video_thumbnail(
             Arc::clone(&version_store),
             hash_str,
             video_thumbnail,

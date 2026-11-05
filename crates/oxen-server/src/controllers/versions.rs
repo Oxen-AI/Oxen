@@ -20,6 +20,7 @@ use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::repositories;
+use liboxen::repositories::versions::previews;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
@@ -182,7 +183,7 @@ pub async fn download(
         log::debug!("img_resize {img_resize:?}");
 
         let (file_stream, content_length) =
-            util::fs::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
+            previews::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
                 .await?;
 
         return Ok(

@@ -306,7 +306,7 @@ pub enum OxenError {
     /// server produces. Carries the parameter and the value the caller sent.
     #[error(
         "The {param} {value} is out of range: a resized image is 1 to {max} pixels on each side",
-        max = crate::util::fs::MAX_RESIZE_DIMENSION
+        max = crate::constants::MAX_RESIZE_DIMENSION
     )]
     InvalidResizeDimension { param: &'static str, value: u32 },
 
