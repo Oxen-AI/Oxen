@@ -5797,7 +5797,6 @@ dependencies = [
  "metrics-exporter-prometheus",
  "mime",
  "mockito",
- "os_path",
  "percent-encoding",
  "polars",
  "regex",

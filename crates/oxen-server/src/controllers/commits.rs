@@ -3,7 +3,6 @@ use liboxen::constants::COMMITS_DIR;
 use liboxen::constants::DIR_HASHES_DIR;
 use liboxen::constants::DIRS_DIR;
 use liboxen::constants::HISTORY_DIR;
-use liboxen::constants::VERSION_FILE_NAME;
 
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
@@ -12,7 +11,7 @@ use liboxen::opts::PaginateOpts;
 use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
-use liboxen::util::fs::AtomicFile;
+use liboxen::util::hasher;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::branch::BranchName;
 use liboxen::view::entries::ListCommitEntryResponse;
@@ -21,7 +20,6 @@ use liboxen::view::{
     CommitResponse, ListCommitResponse, PaginatedCommits, Pagination, PathHistoryPage,
     RootCommitResponse, StatusMessage,
 };
-use os_path::OsPath;
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
@@ -60,10 +58,6 @@ pub struct ChunkedDataUploadQuery {
     pub total_chunks: usize, // how many chunks to expect
     #[param(example = 100000000)]
     pub total_size: usize, // total size so we can know when we are finished
-    #[param(example = true)]
-    pub is_compressed: bool, // whether or not we need to decompress the archive
-    #[param(example = "images/cow.jpg")]
-    pub filename: Option<String>, // maybe a file name if !compressed
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -688,7 +682,7 @@ pub async fn create(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/commits/upload_chunk",
-    description = "Upload a chunk of file data for use in large file uploads.",
+    description = "Upload one chunk of a gzipped archive of commit history, unpacked once every chunk has arrived and the whole payload matches its hash.",
     tag = "Commits",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
@@ -706,8 +700,8 @@ pub async fn create(
 )]
 pub async fn upload_chunk(
     req: HttpRequest,
-    mut chunk: web::Payload,                   // the chunk of the file body,
-    query: web::Query<ChunkedDataUploadQuery>, // gives the file
+    mut chunk: web::Payload, // the chunk of the file body,
+    query: web::Query<ChunkedDataUploadQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     log::debug!("in upload_chunk controller");
     let app_data = app_data(&req)?;
@@ -773,14 +767,12 @@ pub async fn upload_chunk(
                         tmp_dir,
                         total_chunks,
                         size,
-                        query.is_compressed,
-                        query.filename.to_owned(),
                         expected_hash,
                     )
                     .await
                     {
                         log::error!("upload_chunk unpack failed: {err:?}");
-                        return Err(err.into());
+                        return Err(err);
                     }
 
                     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
@@ -808,10 +800,8 @@ async fn check_if_upload_complete_and_unpack(
     tmp_dir: PathBuf,
     total_chunks: usize,
     total_size: usize,
-    is_compressed: bool,
-    filename: Option<String>,
     expected_hash: MerkleHash,
-) -> Result<(), OxenError> {
+) -> Result<(), OxenHttpError> {
     let mut files = util::fs::list_files_in_dir(&tmp_dir).await?;
 
     log::debug!(
@@ -824,104 +814,84 @@ async fn check_if_upload_complete_and_unpack(
         return Ok(());
     }
     files.sort();
+    let num_chunks = files.len();
 
-    let mut uploaded_size: u64 = 0;
-    for file in files.iter() {
-        let metadata = util::fs::metadata(file)?;
-        uploaded_size += metadata.len();
-    }
+    let assembled = tasks::spawn_blocking(move || -> Result<_, OxenError> {
+        let mut uploaded_size: u64 = 0;
+        for file in files.iter() {
+            let metadata = util::fs::metadata(file)?;
+            uploaded_size += metadata.len();
+        }
 
-    log::debug!(
-        "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
-    );
+        log::debug!(
+            "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
+        );
 
-    // I think windows has a larger size than linux...so can't do a simple check here
-    // But if we have all the chunks we should be good
+        if (uploaded_size as usize) < total_size {
+            return Ok(None);
+        }
 
-    if (uploaded_size as usize) >= total_size {
         // Get tar.gz bytes for history/COMMIT_ID data
+        let mut buffer = Vec::with_capacity(uploaded_size as usize);
+        for file in files.iter() {
+            log::debug!("Reading file bytes {file:?}");
+            let mut f =
+                std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
+
+            f.read_to_end(&mut buffer)
+                .map_err(|e| OxenError::file_read_error(file, e))?;
+        }
+        // `files` is sorted, so the concatenation restores the original byte offsets, and a chunk
+        // that arrived corrupt, truncated, or out of order fails the hash before anything unpacks.
+        let hash = MerkleHash::new(hasher::hash_buffer_128bit(&buffer));
+        Ok(Some((buffer, hash)))
+    })
+    .await
+    .map_err(OxenError::from)??;
+
+    if let Some((buffer, hash)) = assembled {
         log::debug!(
             "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
             total_size,
             repo.path
         );
 
-        // TODO: Cleanup these if / else / match statements
-        // Combine into actual file data
-        if is_compressed {
-            unpack_compressed_data(&files, repo).await?;
-        } else {
-            let filename = filename.ok_or_else(|| {
-                OxenError::MissingFileName(
-                    "check_if_upload_complete_and_unpack must supply filename if !compressed"
-                        .into(),
-                )
-            })?;
-            unpack_to_file(&files, repo, &filename, expected_hash)?;
+        if hash != expected_hash {
+            // A retry sends its first chunk into this directory again, where these chunks would
+            // fail the hash the same way and refuse the upload every time. Other failures keep
+            // them, since a server error is retried by resending one chunk among the rest.
+            remove_chunks(tmp_dir).await;
+            return Err(OxenHttpError::BadRequest(
+                "the uploaded chunks do not match the upload's hash".into(),
+            ));
         }
 
-        log::debug!(
-            "check_if_upload_complete_and_unpack unpacked {} files successfully",
-            files.len()
+        // Unpack tarball to our hidden dir using async streaming
+        unpack_entry_tarball_async(repo, buffer).await?;
+
+        log::debug!("check_if_upload_complete_and_unpack unpacked {num_chunks} files successfully");
+
+        remove_chunks(tmp_dir).await;
+    }
+
+    Ok(())
+}
+
+/// Removes a chunked upload's directory of chunks, logging a failure rather than returning it,
+/// since the upload's outcome is already decided.
+async fn remove_chunks(tmp_dir: PathBuf) {
+    let dir = tmp_dir.clone();
+    if let Err(err) = tasks::spawn_blocking(move || util::fs::remove_dir_all(&dir))
+        .await
+        .map_err(OxenError::from)
+        .and_then(|removed| removed)
+    {
+        tracing::error!(
+            file.path = %tmp_dir.display(),
+            exception.message = ?err,
+            "Failed to remove a chunked upload's chunks"
         );
-
-        // Cleanup tmp files
-        util::fs::remove_dir_all(&tmp_dir)?;
-        log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
     }
-
-    Ok(())
-}
-
-fn unpack_to_file(
-    files: &[PathBuf],
-    repo: &LocalRepository,
-    filename: &str,
-    expected_hash: MerkleHash,
-) -> Result<(), OxenError> {
-    log::debug!("Got filename {filename}");
-
-    // return path with native slashes
-    let os_path = OsPath::from(filename).to_pathbuf();
-    log::debug!("Got native filename {os_path:?}");
-
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let mut full_path = hidden_dir.join(os_path);
-    full_path =
-        util::fs::replace_file_name_keep_extension(&full_path, VERSION_FILE_NAME.to_owned());
-    log::debug!("Unpack to {full_path:?}");
-    if let Some(parent) = full_path.parent() {
-        util::fs::create_dir_all(parent)?;
-    }
-
-    // Callers sort `files`, so concatenating in slice order restores the original byte offsets.
-    // `expected_hash` covers the whole payload, so a chunk that arrived corrupt, truncated, or out
-    // of order fails here rather than being published.
-    AtomicFile::new(&full_path)
-        .with_hash(expected_hash)
-        .stream_from_paths(files)?;
-
-    log::debug!("Unpack successful! {full_path:?}");
-    Ok(())
-}
-
-async fn unpack_compressed_data(
-    files: &[PathBuf],
-    repo: &LocalRepository,
-) -> Result<(), OxenError> {
-    let mut buffer: Vec<u8> = Vec::new();
-    for file in files.iter() {
-        log::debug!("Reading file bytes {file:?}");
-        let mut f = std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
-
-        f.read_to_end(&mut buffer)
-            .map_err(|e| OxenError::file_read_error(file, e))?;
-    }
-
-    // Unpack tarball to our hidden dir using async streaming
-    unpack_entry_tarball_async(repo, buffer).await?;
-
-    Ok(())
 }
 
 /// Upload commits DB
@@ -1127,65 +1097,121 @@ async fn unpack_entry_tarball_async(
 mod tests {
     use super::*;
     use crate::test;
-    use liboxen::util::hasher;
+    use actix_web::App;
+    use actix_web::http::StatusCode;
     use std::fs;
 
-    /// Writes `parts` as sorted chunk files under `sync_dir` and returns their paths in order.
-    fn write_chunks(sync_dir: &Path, parts: &[&str]) -> Result<Vec<PathBuf>, OxenError> {
-        let chunk_dir = sync_dir.join("chunks");
-        util::fs::create_dir_all(&chunk_dir)?;
-        let mut chunks: Vec<PathBuf> = Vec::new();
-        for (i, part) in parts.iter().enumerate() {
-            let chunk_path = chunk_dir.join(format!("chunk_{i}"));
-            std::fs::write(&chunk_path, part)?;
-            chunks.push(chunk_path);
-        }
-        Ok(chunks)
-    }
-
-    fn published_path(repo: &LocalRepository) -> PathBuf {
-        util::fs::oxen_hidden_dir(&repo.path)
-            .join("history")
-            .join("some_commit")
-            .join(VERSION_FILE_NAME)
-    }
-
-    /// Chunk files concatenate in slice order into the published version file, verified against the
-    /// payload hash the client sends. Guards two contracts `check_if_upload_complete_and_unpack`
-    /// relies on: callers sort the chunk paths, so slice order is byte-offset order; and the hex
-    /// `hash_buffer` produces round-trips into the `MerkleHash` the publish checks against.
-    ///
-    /// A pushed commit archive unpacks a commit's `dirs` and `dir_hashes`, packed the way the client
-    /// packs them, and refuses any other entry under `.oxen` without writing it.
-    #[actix_web::test]
-    async fn test_unpack_publishes_chunks_and_only_commit_history() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
-
-        let chunks = write_chunks(&sync_dir, &["alpha", "beta", "gamma"])?;
-        let expected = MerkleHash::from_str(&hasher::hash_buffer(b"alphabetagamma"))?;
-
-        unpack_to_file(&chunks, &repo, "history/some_commit/blob", expected)?;
-
-        assert_eq!(
-            util::fs::read_from_path(published_path(&repo))?,
-            "alphabetagamma"
-        );
-
-        let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-        let commit_dir = Path::new(HISTORY_DIR).join("0123456789abcdef0123456789abcdef");
-
+    /// Packs `dir` and `dir_hashes` under `commit_dir` as a gzipped tarball, the way the client
+    /// packs a commit's history.
+    fn commit_archive(sync_dir: &Path, commit_dir: &Path) -> Result<Vec<u8>, OxenError> {
         let local_commit_dir = sync_dir.join("local_commit");
         let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
         for dir in [DIRS_DIR, DIR_HASHES_DIR] {
             util::fs::write_to_path(local_commit_dir.join(dir).join("node"), dir)?;
             tar.append_dir_all(commit_dir.join(dir), local_commit_dir.join(dir))?;
         }
-        unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await?;
+        Ok(tar.into_inner()?.finish()?)
+    }
+
+    /// A chunked upload unpacks the commit archive its chunks add up to, once they match the hash
+    /// the client declared, and a pushed commit archive unpacks a commit's `dirs` and `dir_hashes`,
+    /// refusing any other entry under `.oxen` without writing it.
+    #[actix_web::test]
+    async fn test_chunked_upload_unpacks_only_commit_history() -> Result<(), OxenError> {
+        let sync_dir = test::get_sync_dir()?;
+        let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
+        let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/commits/upload_chunk",
+                    web::post().to(upload_chunk),
+                ),
+        )
+        .await;
+        // Uploads chunk `chunk_num` of `chunks`.
+        let upload = |chunks: &[&[u8]], chunk_num: usize, hash: &str, extra: &str| {
+            let total_size: usize = chunks.iter().map(|chunk| chunk.len()).sum();
+            actix_web::test::TestRequest::post()
+                .uri(&format!(
+                    "/oxen/Testing-Namespace/Testing-Repo/commits/upload_chunk?hash={hash}\
+                     &chunk_num={chunk_num}&total_chunks={}&total_size={total_size}{extra}",
+                    chunks.len(),
+                ))
+                .set_payload(chunks[chunk_num].to_vec())
+                .to_request()
+        };
+
+        // Two chunks that add up to the declared hash unpack the commit's history, with the query
+        // flag released clients still send, which the route ignores
+        let commit_dir = Path::new(HISTORY_DIR).join("0123456789abcdef0123456789abcdef");
+        let archive = commit_archive(&sync_dir, &commit_dir)?;
+        let hash = hasher::hash_buffer(&archive);
+        let (first, second) = archive.split_at(archive.len().div_ceil(2));
+        let chunks = [first, second];
+        for chunk_num in 0..chunks.len() {
+            let resp = actix_web::test::call_service(
+                &app,
+                upload(&chunks, chunk_num, &hash, "&is_compressed=true"),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::OK, "chunk {chunk_num}");
+        }
         for dir in [DIRS_DIR, DIR_HASHES_DIR] {
             let unpacked = hidden_dir.join(&commit_dir).join(dir).join("node");
             assert_eq!(util::fs::read_from_path(unpacked)?, dir);
         }
+
+        // A payload that does not match its declared hash, here a chunk corrupted at its original
+        // length, is refused before it unpacks, and its chunks go, so sending them again succeeds
+        let other_commit_dir = Path::new(HISTORY_DIR).join("fedcba9876543210fedcba9876543210");
+        let archive = commit_archive(&sync_dir, &other_commit_dir)?;
+        let hash = hasher::hash_buffer(&archive);
+        let (first, second) = archive.split_at(archive.len().div_ceil(2));
+        let corrupt: Vec<u8> = second.iter().map(|byte| !byte).collect();
+        let bad_chunks = [first, &corrupt[..]];
+        let resp = actix_web::test::call_service(&app, upload(&bad_chunks, 0, &hash, "")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = actix_web::test::call_service(&app, upload(&bad_chunks, 1, &hash, "")).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            !hidden_dir.join(&other_commit_dir).exists(),
+            "a payload that failed its hash must not unpack"
+        );
+        assert!(
+            !hidden_dir.join("tmp").join("chunked").join(&hash).exists(),
+            "a payload that failed its hash must not keep its chunks"
+        );
+        let chunks = [first, second];
+        for chunk_num in 0..chunks.len() {
+            let resp =
+                actix_web::test::call_service(&app, upload(&chunks, chunk_num, &hash, "")).await;
+            assert_eq!(resp.status(), StatusCode::OK, "resent chunk {chunk_num}");
+        }
+        assert!(
+            hidden_dir.join(&other_commit_dir).exists(),
+            "the resent payload unpacks"
+        );
+
+        // Every upload unpacks as a commit archive, whatever else its query carries
+        let planted = b"planted";
+        let resp = actix_web::test::call_service(
+            &app,
+            upload(
+                &[planted],
+                0,
+                &hasher::hash_buffer(planted),
+                "&is_compressed=false&filename=history/some_commit/blob",
+            ),
+        )
+        .await;
+        assert!(!resp.status().is_success(), "got {}", resp.status());
+        assert!(
+            !hidden_dir.join(HISTORY_DIR).join("some_commit").exists(),
+            "an upload that is not a commit archive must write nothing"
+        );
 
         let planted = b"planted";
         for entry in [
@@ -1231,33 +1257,6 @@ mod tests {
         assert!(
             fs::symlink_metadata(hidden_dir.join(&link)).is_err(),
             "a refused symlink must not be created"
-        );
-
-        test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
-        Ok(())
-    }
-
-    /// Chunks that do not add up to the hash the client declared are never published, so a
-    /// corrupt, truncated, or reordered upload leaves no file for a reader to mistake for intact
-    /// data.
-    #[test]
-    fn test_unpack_to_file_rejects_a_payload_that_fails_its_hash() -> Result<(), OxenError> {
-        let sync_dir = test::get_sync_dir()?;
-        let repo = test::create_local_repo(&sync_dir, "Testing-Namespace", "Testing-Repo")?;
-
-        // The hash of the bytes the client meant to send, against chunks that arrived reordered.
-        let chunks = write_chunks(&sync_dir, &["gamma", "beta", "alpha"])?;
-        let expected = MerkleHash::from_str(&hasher::hash_buffer(b"alphabetagamma"))?;
-
-        let result = unpack_to_file(&chunks, &repo, "history/some_commit/blob", expected);
-
-        assert!(
-            matches!(result, Err(OxenError::HashMismatch { .. })),
-            "expected a hash mismatch, got {result:?}"
-        );
-        assert!(
-            !published_path(&repo).exists(),
-            "a payload that failed its hash must leave no published file"
         );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
