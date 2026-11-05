@@ -7,6 +7,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::api;
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
@@ -405,15 +406,50 @@ mod tests {
     //       Resolve this at some point
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_remote_mode_rm_dir_with_asterisk() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
+    async fn test_remote_mode_rm_dir_with_wildcards() -> Result<(), OxenError> {
+        test::run_select_data_sync_remote("annotations", |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
+                let directory = ".".to_string();
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
                 assert!(cloned_repo.is_remote_mode());
+                let status_opts =
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
+
+                // The glob case works in a workspace of its own, so the asterisk case commits
+                // from a clean one
+                let glob_workspace_id = uuid::Uuid::new_v4().to_string();
+                api::client::workspaces::create(
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    &glob_workspace_id,
+                )
+                .await?;
+
+                // Remove the subdirectories' files with a glob
+                api::client::workspaces::files::rm_files(
+                    &cloned_repo,
+                    &remote_repo,
+                    &glob_workspace_id,
+                    vec![PathBuf::from("annotations").join("t*")],
+                )
+                .await?;
+
+                let status = repositories::remote_mode::status(
+                    &cloned_repo,
+                    &remote_repo,
+                    &glob_workspace_id,
+                    &directory,
+                    &status_opts,
+                )
+                .await?;
+                status.print();
+
+                // Does not remove the README file
+                assert_eq!(status.staged_files.len(), 5);
 
                 // Count files and dirs for comparison
                 let head_commit = repositories::commits::head_commit(&cloned_repo)?;
@@ -427,10 +463,9 @@ mod tests {
                 let prev_dirs = dirs_in_tree.len();
 
                 let workspace_id = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
                 let path_with_asterisk = PathBuf::from("annotations").join("*");
 
-                // Remove the directory using a path with a trailing slash
+                // Remove everything under the directory with an asterisk
                 let paths_to_remove = vec![path_with_asterisk.clone()];
                 api::client::workspaces::files::rm_files(
                     &cloned_repo,
@@ -441,8 +476,6 @@ mod tests {
                 .await?;
 
                 // Check status to verify files are staged for removal
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -475,57 +508,6 @@ mod tests {
 
                 // 2 dirs were removed
                 assert_eq!(dirs_in_tree.len(), prev_dirs - 2);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_remote_mode_rm_dir_with_glob_path() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-
-            test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                opts.is_remote = true;
-                let cloned_repo = repositories::clone(&opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                let workspace_id = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
-                let path_with_slash = PathBuf::from("annotations").join("t*");
-
-                // Remove the directory using a path with a trailing slash
-                let paths_to_remove = vec![path_with_slash.clone()];
-                api::client::workspaces::files::rm_files(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_id,
-                    paths_to_remove,
-                )
-                .await?;
-
-                // Check status to verify files are staged for removal
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
-                let status = repositories::remote_mode::status(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_id,
-                    &directory,
-                    &status_opts,
-                )
-                .await?;
-                status.print();
-
-                // Does not remove the README file
-                assert_eq!(status.staged_files.len(), 5);
 
                 Ok(())
             })

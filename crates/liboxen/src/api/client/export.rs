@@ -75,7 +75,7 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_dir_as_zip() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
             let remote_dir = "annotations";
             let output_dir = local_repo.path.clone().join("zip_download");
 

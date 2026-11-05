@@ -48,7 +48,9 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_get_file_and_dir_entries() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        // The root README.md shares its name with the file looked up under annotations/
+        let data = "README annotations";
+        test::run_select_data_sync_remote(data, |local_repo, remote_repo| async move {
             let revision = DEFAULT_BRANCH_NAME;
             let file_path = Path::new("annotations").join("README.md");
 
@@ -75,7 +77,7 @@ mod tests {
                 DEFAULT_BRANCH_NAME
             );
 
-            let dir_path = "train";
+            let dir_path = "annotations";
             let entry = api::client::metadata::get_file(&remote_repo, revision, dir_path)
                 .await?
                 .unwrap()

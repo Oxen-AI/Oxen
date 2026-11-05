@@ -695,6 +695,9 @@ where
     Ok(())
 }
 
+/// Runs `test` on a repository pushed to a new remote in one commit holding the training-data
+/// sections `data` lists, such as `"README labels annotations"` (see
+/// `populate_select_training_data`).
 pub async fn run_select_data_sync_remote<T, Fut>(data: &str, test: T) -> Result<(), OxenError>
 where
     T: FnOnce(LocalRepository, RemoteRepository) -> Fut,
@@ -708,8 +711,7 @@ where
     // Write all the training data files
     populate_select_training_data(&repo_dir, data)?;
 
-    // Make a few commits before we sync
-    repositories::add(&local_repo, local_repo.path.join(data)).await?;
+    repositories::add(&local_repo, &local_repo.path).await?;
     repositories::commit(&local_repo, &format!("Adding {data}"))?;
 
     // Create remote

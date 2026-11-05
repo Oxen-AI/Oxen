@@ -38,66 +38,27 @@ mod tests {
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_remote_mode_clone_only_downloads_tree() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
-            let local_root =
-                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
-
-            test::run_empty_dir_test_async(|repo_dir| async move {
-                // Clone repo in remote mode
-                let mut clone_opts =
-                    CloneOpts::new(&remote_repo.remote.url, repo_dir.join("new_repo"));
-                clone_opts.is_remote = true;
-
-                let remote_mode_repo = repositories::clone(&clone_opts).await?;
-                assert!(remote_mode_repo.is_remote_mode());
-
-                // Merkle tree matches original local repo
-                let cloned_head_commit = repositories::commits::head_commit(&remote_mode_repo)?;
-                let cloned_root = repositories::tree::get_root_with_children(
-                    &remote_mode_repo,
-                    &cloned_head_commit,
-                )?;
-                assert_eq!(local_root, cloned_root);
-
-                // Versions dir is empty
-                let versions_dir = util::fs::oxen_hidden_dir(&remote_mode_repo.path)
-                    .join(constants::VERSIONS_DIR)
-                    .join(constants::OBJECT_FILES_DIR);
-                let mut versions_iter = std::fs::read_dir(versions_dir)?;
-                assert!(versions_iter.next().is_none());
-
-                // Workspace was initialized
-                let workspace_name = remote_mode_repo.workspace_name;
-                assert!(workspace_name.is_some());
-
-                let workspace_name = workspace_name.unwrap();
-                let workspace =
-                    api::client::workspaces::get_by_name(&remote_repo, &workspace_name).await?;
-
-                // Workspaces initialized by remote-mode clone are named
-                assert!(workspace.is_some());
-
-                let workspace = workspace.unwrap();
-                assert!(workspace.name.is_some());
-                assert_eq!(workspace.name.unwrap(), workspace_name);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
     async fn test_remote_mode_list_tabular_files() -> Result<(), OxenError> {
         test::run_remote_repo_test_bounding_box_csv_pushed(|local_repo, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
+
+            // Replace the first commit's file, so its version file is only in history
+            let bounding_box_path = local_repo
+                .path
+                .join("annotations")
+                .join("train")
+                .join("bounding_box.csv");
+            test::modify_txt_file(
+                &bounding_box_path,
+                "file,label,min_x,min_y,width,height\ntrain/dog_1.jpg,dog,101.5,32.0,385,330\n",
+            )?;
+            repositories::add(&local_repo, &bounding_box_path).await?;
+            repositories::commit(&local_repo, "Keep one bounding box")?;
+            repositories::push(&local_repo).await?;
+
+            let local_head_commit = repositories::commits::head_commit(&local_repo)?;
+            let local_root =
+                repositories::tree::get_root_with_children(&local_repo, &local_head_commit)?;
 
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
@@ -105,7 +66,36 @@ mod tests {
                 let remote_mode_repo = repositories::clone(&opts).await?;
                 assert!(remote_mode_repo.is_remote_mode());
 
+                let cloned_head_commit = repositories::commits::head_commit(&remote_mode_repo)?;
+                let cloned_root = repositories::tree::get_root_with_children(
+                    &remote_mode_repo,
+                    &cloned_head_commit,
+                )?;
+                assert_eq!(
+                    local_root, cloned_root,
+                    "the clone has the pushed merkle tree"
+                );
+
+                let versions_dir = util::fs::oxen_hidden_dir(&remote_mode_repo.path)
+                    .join(constants::VERSIONS_DIR)
+                    .join(constants::OBJECT_FILES_DIR);
+                let mut versions_iter = std::fs::read_dir(versions_dir)?;
+                assert!(
+                    versions_iter.next().is_none(),
+                    "the clone downloads no version files, from HEAD or from history"
+                );
+
                 let workspace_identifier = remote_mode_repo.workspace_name.clone().unwrap();
+                let workspace =
+                    api::client::workspaces::get_by_name(&remote_repo, &workspace_identifier)
+                        .await?
+                        .expect("a remote-mode clone creates its workspace");
+                assert_eq!(
+                    workspace.name,
+                    Some(workspace_identifier.clone()),
+                    "a remote-mode clone names its workspace"
+                );
+
                 let directory = ".".to_string();
 
                 // Create a deeply nested directory
