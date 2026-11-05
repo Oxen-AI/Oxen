@@ -875,6 +875,23 @@ mod tests {
             .unwrap();
         let bytes = body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(content_length, bytes.len());
+        let resized = image::load_from_memory(&bytes).expect("the resized image decodes");
+        assert_eq!(
+            (resized.width(), resized.height()),
+            (1, 1),
+            "a size over the image's own gets the image at its own size"
+        );
+
+        // A size up to 2048 is accepted, and one of zero or over 2048 is refused.
+        for (query, status) in [
+            ("height=2048", actix_web::http::StatusCode::OK),
+            ("width=0", actix_web::http::StatusCode::BAD_REQUEST),
+            ("height=2049", actix_web::http::StatusCode::BAD_REQUEST),
+        ] {
+            let uri = format!("/oxen/{namespace}/{repo_name}/versions/main/{image_path}?{query}");
+            let resp = actix_web::test::call_service(&app, get(uri)).await;
+            assert_eq!(resp.status(), status, "{query}");
+        }
 
         let uri =
             format!("/oxen/{namespace}/{repo_name}/versions/nonexistent_commit_id/{relative_path}");

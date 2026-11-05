@@ -15,8 +15,10 @@ pub struct MetadataVideoImpl {
 
 #[derive(Deserialize, Debug, IntoParams, ToSchema)]
 pub struct VideoThumbnail {
+    /// Width of the thumbnail, from 1 to 2048 pixels. A frame is never scaled past its own size.
     #[schema(example = 320)]
     pub width: Option<u32>,
+    /// Height of the thumbnail, from 1 to 2048 pixels. A frame is never scaled past its own size.
     #[schema(example = 240)]
     pub height: Option<u32>,
     #[schema(example = 1.0)]

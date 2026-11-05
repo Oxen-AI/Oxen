@@ -40,9 +40,10 @@ use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, repositories, util};
 use filetime::FileTime;
+use image::imageops::FilterType;
+use image::{DynamicImage, ImageFormat};
 #[cfg(feature = "ffmpeg")]
-use image::{DynamicImage, ImageBuffer, Rgb};
-use image::{ImageFormat, ImageReader};
+use image::{ImageBuffer, Rgb};
 #[cfg(feature = "ffmpeg")]
 use video_rs::decode::Decoder;
 
@@ -116,7 +117,16 @@ pub async fn handle_image_resize(
     OxenError,
 > {
     log::debug!("img_resize {img_resize:?}");
-    let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
+    check_resize_dimensions(img_resize.width, img_resize.height)?;
+    let width = img_resize.width.map(|w| w.to_string()).unwrap_or_default();
+    let height = img_resize.height.map(|h| h.to_string()).unwrap_or_default();
+    // The extension picks the cached copy's format, so a path with none gets a name no format
+    // matches, which refuses the resize.
+    let extension = file_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+    let derived_filename = format!("{width}x{height}.{extension}");
 
     let stream =
         resize_cache_image_version_store(version_store, &file_hash, &derived_filename, img_resize)
@@ -126,16 +136,43 @@ pub async fn handle_image_resize(
     Ok(stream)
 }
 
-pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> String {
-    let extension = img_path.extension().unwrap().to_str().unwrap();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    )
+/// The most pixels an image resize or a video thumbnail has on each side. It bounds the output
+/// buffer a request can have the server allocate.
+pub(crate) const MAX_RESIZE_DIMENSION: u32 = 2048;
+
+/// Refuses a requested width or height of zero or over [`MAX_RESIZE_DIMENSION`].
+fn check_resize_dimensions(width: Option<u32>, height: Option<u32>) -> Result<(), OxenError> {
+    for (param, value) in [("width", width), ("height", height)] {
+        if let Some(value) = value
+            && !(1..=MAX_RESIZE_DIMENSION).contains(&value)
+        {
+            return Err(OxenError::InvalidResizeDimension { param, value });
+        }
+    }
+    Ok(())
+}
+
+/// `img` resized as a request asks, never past its own size. A width and a height give the exact
+/// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
+fn resize_within_source(
+    img: DynamicImage,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> DynamicImage {
+    let filter = FilterType::Lanczos3;
+    match (width, height) {
+        (Some(width), Some(height)) => {
+            img.resize_exact(width.min(img.width()), height.min(img.height()), filter)
+        }
+        (Some(side), None) | (None, Some(side)) => {
+            if side >= img.width().max(img.height()) {
+                img
+            } else {
+                img.resize(side, side, filter)
+            }
+        }
+        (None, None) => img,
+    }
 }
 
 pub fn video_thumbnail_filename(
@@ -1325,38 +1362,7 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
     }
 }
 
-async fn detect_image_format_from_version(
-    versioned_store: Arc<dyn VersionStore>,
-    hash: &str,
-) -> Result<ImageFormat, OxenError> {
-    let mut stream = versioned_store.get_version_stream(hash).await?;
-
-    let mut header = Vec::with_capacity(16);
-    while header.len() < 16 {
-        if let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
-            })?;
-            let to_take = 16 - header.len();
-            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
-        } else {
-            break; // EOF
-        }
-    }
-
-    if header.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Version file {hash} is empty"
-        )));
-    }
-
-    let format = image::guess_format(&header)
-        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
-
-    Ok(format)
-}
-
-pub async fn resize_cache_image_version_store(
+async fn resize_cache_image_version_store(
     version_store: Arc<dyn VersionStore>,
     img_hash: &str,
     derived_filename: &str,
@@ -1383,49 +1389,18 @@ pub async fn resize_cache_image_version_store(
     }
 
     log::debug!("create resized image {derived_filename} from hash {img_hash}");
-    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
+    // Refuse a copy the server cannot write before reading or decoding anything.
+    let output_format = ImageFormat::from_path(derived_filename)?;
     let image_data = version_store.get_version(img_hash).await?;
 
-    let img = match image_format {
-        Ok(format) => {
-            let reader = Cursor::new(&image_data);
-            image::load(reader, format)?
-        }
-        Err(_) => {
-            log::debug!("Could not detect image format, opening file without format");
-            let reader = Cursor::new(&image_data);
-
-            ImageReader::new(reader).with_guessed_format()?.decode()?
-        }
-    };
-
-    let resized_img = if let Some(resize_width) = resize.width
-        && let Some(resize_height) = resize.height
-    {
-        img.resize_exact(
-            resize_width,
-            resize_height,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else if let Some(resize_width) = resize.width {
-        img.resize(
-            resize_width,
-            resize_width,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else if let Some(resize_height) = resize.height {
-        img.resize(
-            resize_height,
-            resize_height,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else {
-        img
-    };
-
-    let image_format = ImageFormat::from_path(derived_filename)?;
-    let mut buf = Vec::new();
-    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
+    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+        let img = image::load_from_memory(&image_data)?;
+        let mut buf = Vec::new();
+        resize_within_source(img, resize.width, resize.height)
+            .write_to(&mut Cursor::new(&mut buf), output_format)?;
+        Ok(buf)
+    })
+    .await??;
     // Pre-`Bytes::from` once so we can share the same allocation between the version-store write
     // and the streamed response without copying. `Bytes::clone` is an atomic refcount bump.
     let bytes = Bytes::from(buf);
@@ -1504,7 +1479,14 @@ async fn generate_video_thumbnail_version_store(
                 OxenError::internal_error("Failed to build image buffer from video frame")
             })?;
 
-        let thumb = DynamicImage::ImageRgb8(img).thumbnail(output_width, output_height);
+        // A box at or over the frame's size returns the frame as it is, since `thumbnail` would
+        // scale it up to fill the box.
+        let frame = DynamicImage::ImageRgb8(img);
+        let thumb = if output_width >= width && output_height >= height {
+            frame
+        } else {
+            frame.thumbnail(output_width, output_height)
+        };
 
         let mut buf = Vec::new();
         thumb
@@ -1532,6 +1514,8 @@ pub async fn handle_video_thumbnail(
     video_thumbnail: VideoThumbnail,
     dir: &Path,
 ) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
+    check_resize_dimensions(video_thumbnail.width, video_thumbnail.height)?;
+
     #[cfg(not(feature = "ffmpeg"))]
     {
         let _ = (version_store, file_hash, video_thumbnail, dir);
@@ -1807,6 +1791,28 @@ mod tests {
                 "{refused} is refused"
             );
         }
+    }
+
+    #[test]
+    fn test_resize_within_source_never_scales_past_the_source() {
+        let resized = |width, height| {
+            let img =
+                super::resize_within_source(image::DynamicImage::new_rgb8(4, 2), width, height);
+            (img.width(), img.height())
+        };
+        assert_eq!(resized(Some(2), Some(1)), (2, 1));
+        assert_eq!(
+            resized(Some(8), Some(1)),
+            (4, 1),
+            "each side stops at the source's"
+        );
+        assert_eq!(resized(Some(8), Some(8)), (4, 2));
+        assert_eq!(
+            resized(None, Some(2)),
+            (2, 1),
+            "one side gives a square the image fits in, keeping its aspect ratio"
+        );
+        assert_eq!(resized(Some(512), None), (4, 2));
     }
 
     #[test]

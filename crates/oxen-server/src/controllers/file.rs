@@ -129,8 +129,8 @@ pub struct FileQueryParams {
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
         ("resource" = String, Path, description = "Path to the file (including branch/commit info)", example = "main/audio/moo.wav"),
-        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
-        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 240),
         ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from (default: 1.0)", example = 1.0),
         ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),

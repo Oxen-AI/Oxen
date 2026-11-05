@@ -36,7 +36,11 @@ pub struct MetadataImageImpl {
 
 #[derive(Deserialize, Debug, IntoParams, ToSchema)]
 pub struct ImgResize {
+    /// Width of the resized image, from 1 to 2048 pixels. An image is never scaled past its own
+    /// size.
     pub width: Option<u32>,
+    /// Height of the resized image, from 1 to 2048 pixels. An image is never scaled past its own
+    /// size.
     pub height: Option<u32>,
 }
 
