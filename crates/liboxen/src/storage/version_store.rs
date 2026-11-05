@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use futures_util::stream;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
@@ -342,6 +343,25 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError>;
+
+    /// The stored size of every blob in `hashes`, each paired with its hash, in no particular
+    /// order. A blob the store does not hold pairs with [`OxenError::VersionStoreBlobMissing`].
+    ///
+    /// The default implementation probes each hash with `get_version_size` in parallel, bounded by
+    /// `MAX_CONCURRENT_VERSION_PROBES`.
+    async fn get_version_sizes(
+        &self,
+        hashes: Vec<String>,
+    ) -> Result<Vec<(String, Result<u64, OxenError>)>, OxenError> {
+        Ok(stream::iter(hashes)
+            .map(|hash| async move {
+                let size = self.get_version_size(&hash).await;
+                (hash, size)
+            })
+            .buffer_unordered(MAX_CONCURRENT_VERSION_PROBES)
+            .collect()
+            .await)
+    }
 
     /// Retrieve a version file's contents as bytes (less efficient for large files)
     ///
