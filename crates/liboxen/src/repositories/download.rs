@@ -88,6 +88,9 @@ mod tests {
                 let path = dir.join(format!("file_{i}.txt"));
                 util::fs::write_to_path(&path, format!("lol hi {i}"))?;
             }
+            // Two more files copy two of those, so each pair of paths shares one version file
+            util::fs::copy(dir.join("file_0.txt"), dir.join("copy_0.txt"))?;
+            util::fs::copy(dir.join("file_1.txt"), dir.join("copy_1.txt"))?;
 
             // Create a file several streamed-transfer segments long so the download path
             // exercises the parallel-segment branch.
@@ -116,6 +119,11 @@ mod tests {
                 let path = output_dir.join("train").join(format!("file_{i}.txt"));
                 assert!(path.exists(), "{path:?} was downloaded");
             }
+            assert_eq!(
+                util::fs::rcount_files_in_dir(&output_dir.join("train")),
+                util::fs::rcount_files_in_dir(&dir),
+                "the download writes every path, including the two that share a version file"
+            );
 
             download(&remote_repo, &large_file_dir, &output_dir, &branch.name).await?;
 
@@ -163,38 +171,6 @@ mod tests {
 
                 assert!(local_path.exists());
                 assert_eq!(util::fs::read_from_path(&local_path)?, file_contents);
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(cloned_remote)
-        })
-        .await?;
-
-        Ok(())
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_download_dir() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("train", |local_repo, remote_repo| async move {
-            let cloned_remote = remote_repo.clone();
-            let src_path = "train";
-            // Count files in local repo
-            let og_count = util::fs::rcount_files_in_dir(&local_repo.path.join(src_path));
-
-            test::run_empty_dir_test_async(|repo_dir| async move {
-                let dst_path = repo_dir.join("images");
-                let revision = DEFAULT_BRANCH_NAME;
-
-                download(&remote_repo, src_path, &dst_path, revision).await?;
-
-                assert!(dst_path.exists());
-                let result_dir = &dst_path.join(src_path);
-                println!("RESULT DIR: {result_dir:?}");
-                let dl_count = util::fs::rcount_files_in_dir(result_dir);
-                assert_eq!(dl_count, og_count);
 
                 Ok(())
             })
