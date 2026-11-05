@@ -845,6 +845,11 @@ mod tests {
             let data_b = datadir.join("b.txt");
             util::fs::write_to_path(&data_a, "data a")?;
             util::fs::write_to_path(&data_b, "data b")?;
+            // A new directory whose only child is a directory
+            let outer_inner = repo.path.join("outer").join("inner");
+            std::fs::create_dir_all(&outer_inner)?;
+            let inner_file = outer_inner.join("value.txt");
+            util::fs::write_to_path(&inner_file, "feature value")?;
             repositories::add(&repo, &repo.path).await?;
             repositories::commit(&repo, "Add extra files")?;
 
@@ -895,6 +900,21 @@ mod tests {
             assert!(
                 !datadir.exists(),
                 "datadir/ should be removed again on main"
+            );
+
+            // A second branch from main adds the same new paths with different contents.
+            // Committing it must leave the feature branch's tree as it was.
+            repositories::branches::create_checkout(&repo, "feature/rival")?;
+            std::fs::create_dir_all(&outer_inner)?;
+            util::fs::write_to_path(&inner_file, "rival value")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add the same paths with other contents")?;
+
+            repositories::checkout(&repo, branch_name).await?;
+            assert_eq!(
+                util::fs::read_from_path(&inner_file)?,
+                "feature value",
+                "outer/inner/value.txt on feature should keep feature's contents after another branch committed the same new paths"
             );
 
             Ok(())
