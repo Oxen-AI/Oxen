@@ -814,29 +814,25 @@ async fn check_if_upload_complete_and_unpack(
         return Ok(());
     }
     files.sort();
+    let num_chunks = files.len();
 
-    let mut uploaded_size: u64 = 0;
-    for file in files.iter() {
-        let metadata = util::fs::metadata(file)?;
-        uploaded_size += metadata.len();
-    }
+    let assembled = tasks::spawn_blocking(move || -> Result<_, OxenError> {
+        let mut uploaded_size: u64 = 0;
+        for file in files.iter() {
+            let metadata = util::fs::metadata(file)?;
+            uploaded_size += metadata.len();
+        }
 
-    log::debug!(
-        "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
-    );
-
-    // I think windows has a larger size than linux...so can't do a simple check here
-    // But if we have all the chunks we should be good
-
-    if (uploaded_size as usize) >= total_size {
-        // Get tar.gz bytes for history/COMMIT_ID data
         log::debug!(
-            "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
-            total_size,
-            repo.path
+            "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
         );
 
-        let mut buffer: Vec<u8> = Vec::new();
+        if (uploaded_size as usize) < total_size {
+            return Ok(None);
+        }
+
+        // Get tar.gz bytes for history/COMMIT_ID data
+        let mut buffer = Vec::with_capacity(uploaded_size as usize);
         for file in files.iter() {
             log::debug!("Reading file bytes {file:?}");
             let mut f =
@@ -845,10 +841,22 @@ async fn check_if_upload_complete_and_unpack(
             f.read_to_end(&mut buffer)
                 .map_err(|e| OxenError::file_read_error(file, e))?;
         }
-
         // `files` is sorted, so the concatenation restores the original byte offsets, and a chunk
         // that arrived corrupt, truncated, or out of order fails the hash before anything unpacks.
-        if MerkleHash::new(hasher::hash_buffer_128bit(&buffer)) != expected_hash {
+        let hash = MerkleHash::new(hasher::hash_buffer_128bit(&buffer));
+        Ok(Some((buffer, hash)))
+    })
+    .await
+    .map_err(OxenError::from)??;
+
+    if let Some((buffer, hash)) = assembled {
+        log::debug!(
+            "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
+            total_size,
+            repo.path
+        );
+
+        if hash != expected_hash {
             // A retry sends its first chunk into this directory again, where these chunks would
             // fail the hash the same way and refuse the upload every time. Other failures keep
             // them, since a server error is retried by resending one chunk among the rest.
@@ -861,10 +869,7 @@ async fn check_if_upload_complete_and_unpack(
         // Unpack tarball to our hidden dir using async streaming
         unpack_entry_tarball_async(repo, buffer).await?;
 
-        log::debug!(
-            "check_if_upload_complete_and_unpack unpacked {} files successfully",
-            files.len()
-        );
+        log::debug!("check_if_upload_complete_and_unpack unpacked {num_chunks} files successfully");
 
         remove_chunks(tmp_dir).await;
     }
