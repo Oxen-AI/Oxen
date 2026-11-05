@@ -681,6 +681,9 @@ async fn upload_data_chunk_to_server_with_retry(
             Ok(_) => {
                 return Ok(());
             }
+            // The server drops an upload whose chunks fail its hash, so a retried chunk would
+            // report a success that never unpacks.
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 total_tries += 1;
                 // Exponentially back off
@@ -746,6 +749,7 @@ mod tests {
 
     use crate::repositories;
     use crate::test;
+    use crate::util::hasher::hash_buffer;
 
     /* Commented out because it's expensive to find the initial commit id
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
@@ -939,6 +943,35 @@ mod tests {
                     .await?;
             assert_eq!(missing.len(), 1);
             assert!(missing.contains(&new_commit));
+
+            // A chunk the server refuses ends the upload with the server's refusal
+            let url = api::endpoint::url_from_repo(&remote_repo, "/commits/upload_chunk")?;
+            let client = api::client::new_for_url(&url)?;
+            let chunk = b"a payload its declared hash does not match";
+            let params = super::ChunkParams {
+                chunk_num: 0,
+                total_chunks: 1,
+                total_size: chunk.len(),
+            };
+            let wrong_hash = hash_buffer(b"some other payload");
+            let result = super::upload_data_chunk_to_server_with_retry(
+                &client,
+                &remote_repo,
+                chunk,
+                &wrong_hash,
+                &params,
+            )
+            .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenError::HttpStatusError {
+                        status: http::StatusCode::BAD_REQUEST,
+                        ..
+                    })
+                ),
+                "got {result:?}"
+            );
 
             Ok(remote_repo)
         })

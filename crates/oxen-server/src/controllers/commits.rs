@@ -836,49 +836,57 @@ async fn check_if_upload_complete_and_unpack(
             repo.path
         );
 
-        unpack_compressed_data(&files, repo, expected_hash).await?;
+        let mut buffer: Vec<u8> = Vec::new();
+        for file in files.iter() {
+            log::debug!("Reading file bytes {file:?}");
+            let mut f =
+                std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
+
+            f.read_to_end(&mut buffer)
+                .map_err(|e| OxenError::file_read_error(file, e))?;
+        }
+
+        // `files` is sorted, so the concatenation restores the original byte offsets, and a chunk
+        // that arrived corrupt, truncated, or out of order fails the hash before anything unpacks.
+        if MerkleHash::new(hasher::hash_buffer_128bit(&buffer)) != expected_hash {
+            // A retry sends its first chunk into this directory again, where these chunks would
+            // fail the hash the same way and refuse the upload every time. Other failures keep
+            // them, since a server error is retried by resending one chunk among the rest.
+            remove_chunks(tmp_dir).await;
+            return Err(OxenHttpError::BadRequest(
+                "the uploaded chunks do not match the upload's hash".into(),
+            ));
+        }
+
+        // Unpack tarball to our hidden dir using async streaming
+        unpack_entry_tarball_async(repo, buffer).await?;
 
         log::debug!(
             "check_if_upload_complete_and_unpack unpacked {} files successfully",
             files.len()
         );
 
-        // Cleanup tmp files
-        util::fs::remove_dir_all(&tmp_dir)?;
-        log::debug!("check_if_upload_complete_and_unpack removed tmp dir {tmp_dir:?}");
+        remove_chunks(tmp_dir).await;
     }
 
     Ok(())
 }
 
-/// Unpacks the commit archive the sorted chunk `files` add up to, once its bytes match the
-/// `expected_hash` the client declared for the whole payload.
-async fn unpack_compressed_data(
-    files: &[PathBuf],
-    repo: &LocalRepository,
-    expected_hash: MerkleHash,
-) -> Result<(), OxenHttpError> {
-    let mut buffer: Vec<u8> = Vec::new();
-    for file in files.iter() {
-        log::debug!("Reading file bytes {file:?}");
-        let mut f = std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
-
-        f.read_to_end(&mut buffer)
-            .map_err(|e| OxenError::file_read_error(file, e))?;
+/// Removes a chunked upload's directory of chunks, logging a failure rather than returning it,
+/// since the upload's outcome is already decided.
+async fn remove_chunks(tmp_dir: PathBuf) {
+    let dir = tmp_dir.clone();
+    if let Err(err) = tasks::spawn_blocking(move || util::fs::remove_dir_all(&dir))
+        .await
+        .map_err(OxenError::from)
+        .and_then(|removed| removed)
+    {
+        tracing::error!(
+            file.path = %tmp_dir.display(),
+            exception.message = ?err,
+            "Failed to remove a chunked upload's chunks"
+        );
     }
-
-    // Callers sort `files`, so the concatenation restores the original byte offsets, and a chunk
-    // that arrived corrupt, truncated, or out of order fails the hash before anything unpacks.
-    if MerkleHash::new(hasher::hash_buffer_128bit(&buffer)) != expected_hash {
-        return Err(OxenHttpError::BadRequest(
-            "the uploaded chunks do not match the upload's hash".into(),
-        ));
-    }
-
-    // Unpack tarball to our hidden dir using async streaming
-    unpack_entry_tarball_async(repo, buffer).await?;
-
-    Ok(())
 }
 
 /// Upload commits DB
@@ -1151,16 +1159,35 @@ mod tests {
             assert_eq!(util::fs::read_from_path(unpacked)?, dir);
         }
 
-        // A payload that does not match its declared hash is refused before it unpacks
+        // A payload that does not match its declared hash, here a chunk corrupted at its original
+        // length, is refused before it unpacks, and its chunks go, so sending them again succeeds
         let other_commit_dir = Path::new(HISTORY_DIR).join("fedcba9876543210fedcba9876543210");
         let archive = commit_archive(&sync_dir, &other_commit_dir)?;
-        let wrong_hash = hasher::hash_buffer(b"some other payload");
-        let resp =
-            actix_web::test::call_service(&app, upload(&[&archive], 0, &wrong_hash, "")).await;
+        let hash = hasher::hash_buffer(&archive);
+        let (first, second) = archive.split_at(archive.len().div_ceil(2));
+        let corrupt: Vec<u8> = second.iter().map(|byte| !byte).collect();
+        let bad_chunks = [first, &corrupt[..]];
+        let resp = actix_web::test::call_service(&app, upload(&bad_chunks, 0, &hash, "")).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = actix_web::test::call_service(&app, upload(&bad_chunks, 1, &hash, "")).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         assert!(
             !hidden_dir.join(&other_commit_dir).exists(),
             "a payload that failed its hash must not unpack"
+        );
+        assert!(
+            !hidden_dir.join("tmp").join("chunked").join(&hash).exists(),
+            "a payload that failed its hash must not keep its chunks"
+        );
+        let chunks = [first, second];
+        for chunk_num in 0..chunks.len() {
+            let resp =
+                actix_web::test::call_service(&app, upload(&chunks, chunk_num, &hash, "")).await;
+            assert_eq!(resp.status(), StatusCode::OK, "resent chunk {chunk_num}");
+        }
+        assert!(
+            hidden_dir.join(&other_commit_dir).exists(),
+            "the resent payload unpacks"
         );
 
         // Every upload unpacks as a commit archive, whatever else its query carries
