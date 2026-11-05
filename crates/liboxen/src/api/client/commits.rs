@@ -662,16 +662,7 @@ async fn upload_data_to_server_in_chunks_with_client(
             total_chunks: chunks.len(),
             total_size,
         };
-        match upload_data_chunk_to_server_with_retry(client, remote_repo, chunk, &hash, &params)
-            .await
-        {
-            Ok(_) => {
-                log::debug!("Success uploading chunk!")
-            }
-            Err(err) => {
-                log::error!("Err uploading chunk: {err}")
-            }
-        }
+        upload_data_chunk_to_server_with_retry(client, remote_repo, chunk, &hash, &params).await?;
     }
     Ok(())
 }
