@@ -529,35 +529,18 @@ pub async fn copy_mkdir(src: &Path, dst: &Path) -> Result<(), OxenError> {
     }
 }
 
-/// Wrapper around the util::fs::create_dir_all command to tell us which file it failed on
-/// creates a directory if they don't exist
+/// Creates the directory `src` and any missing parents. Succeeds when `src` is already a
+/// directory, and fails when a file or anything else that is not a directory is in its place.
 pub fn create_dir_all(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
+    let src = src.as_ref();
+    // One stat for the common case, where `std::fs::create_dir_all` would try `mkdir` first.
+    if src.is_dir() {
         return Ok(());
     }
-
-    let src = src.as_ref();
     match std::fs::create_dir_all(src) {
         Ok(_) => Ok(()),
         Err(err) => {
             log::error!("create_dir_all {src:?} {err}");
-            Err(OxenError::file_error(src, err))
-        }
-    }
-}
-
-/// Wrapper around the util::fs::create_dir command to tell us which file it failed on
-/// creates a directory if they don't exist
-pub fn create_dir(src: impl AsRef<Path>) -> Result<(), OxenError> {
-    if src.as_ref().exists() {
-        return Ok(());
-    }
-
-    let src = src.as_ref();
-    match std::fs::create_dir(src) {
-        Ok(_) => Ok(()),
-        Err(err) => {
-            log::error!("create_dir {src:?} {err}");
             Err(OxenError::file_error(src, err))
         }
     }
