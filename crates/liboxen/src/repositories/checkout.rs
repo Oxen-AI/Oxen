@@ -204,7 +204,9 @@ mod tests {
 
     use crate::api;
     use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::core::v_latest::branches::OnConflict;
     use crate::error::OxenError;
+    use crate::model::LocalRepository;
     use crate::opts::FetchOpts;
     use crate::repositories;
     use crate::test;
@@ -1028,22 +1030,34 @@ mod tests {
         .await
     }
 
-    // Both branches share the same "data/" directory (identical content, so
-    // the hash is in common_nodes). On disk, the user manually deletes the
-    // directory and creates a regular file at "data" (uncommitted).
-    // Checking out the other branch should detect that "data" on disk is NOT
-    // a directory and restore the directory contents instead of taking the
-    // fast-path exit that assumes the directory is already present.
-    //
-    // This exposes a bug where full_dir_path.exists() is used instead of
-    // full_dir_path.is_dir(): the file satisfies .exists(), the hash is in
-    // common_nodes, and the code returns Ok(()) — silently skipping the
-    // entire subtree restoration.
+    /// Asserts that checking out `branch` fails with the conflict error and leaves `path` as it was.
+    async fn assert_checkout_refused(
+        repo: &LocalRepository,
+        branch: &str,
+        path: &Path,
+        case: &str,
+    ) -> Result<(), OxenError> {
+        let before = util::fs::read_from_path(path)?;
+        let err = repositories::checkout(repo, branch).await.expect_err(case);
+        assert!(
+            err.to_string().contains("would be overwritten"),
+            "{case}: {err}"
+        );
+        assert_eq!(util::fs::read_from_path(path)?, before, "{case}");
+        Ok(())
+    }
+
+    // Every case of a non-directory on disk where the target tree has a directory. Checkout
+    // replaces it only when it is the from tree's file at that path, unmodified, and otherwise
+    // refuses and leaves the working tree as it was. `OnConflict::Overwrite` (`oxen merge
+    // --abort`) replaces it regardless, and when the directory is shared between the trees (its
+    // hash in common_nodes), restores the whole subtree rather than taking the fast-path exit
+    // for a directory already on disk.
     #[tokio::test]
     async fn test_checkout_restores_directory_when_file_exists_at_same_path()
     -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // -- main branch: "data/" is a directory with two files --
+            // -- main: "data/" is a directory with two files --
             let dir = repo.path.join("data");
             std::fs::create_dir_all(&dir)?;
             let file1 = dir.join("file1.txt");
@@ -1051,47 +1065,61 @@ mod tests {
             util::fs::write_to_path(&file1, "data file 1")?;
             util::fs::write_to_path(&file2, "data file 2")?;
             repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Add data directory with files")?;
+            let main_commit = repositories::commit(&repo, "Add data directory with files")?;
+            let main_branch = repositories::branches::current_branch(&repo)?
+                .expect("a new repository is on its default branch");
 
-            let main_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            // -- feature branch: same "data/" directory (identical content) --
-            // Plus an extra file so the branches diverge and checkout does work.
-            repositories::branches::create_checkout(&repo, "feature/shared-data")?;
-            let extra = repo.path.join("extra.txt");
-            util::fs::write_to_path(&extra, "extra")?;
+            // -- dir-x: adds directory "x/", and leaves "data/" unchanged --
+            repositories::branches::create_checkout(&repo, "dir-x")?;
+            let x = repo.path.join("x");
+            util::fs::write_to_path(x.join("y.txt"), "y")?;
             repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Add extra.txt, data/ is unchanged")?;
+            let dir_x_commit = repositories::commit(&repo, "Add x/y.txt")?;
 
-            // Sanity: data/ directory exists identically on both branches
-            assert!(dir.is_dir());
-            assert!(file1.exists());
-            assert!(file2.exists());
+            // -- file-x: replaces directory "x/" with a file "x" --
+            repositories::branches::create_checkout(&repo, "file-x")?;
+            std::fs::remove_dir_all(&x)?;
+            util::fs::write_to_path(&x, "tracked")?;
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Replace x/ with file x")?;
 
-            // -- Simulate user manually replacing "data/" dir with a file --
+            util::fs::write_to_path(&x, "edited")?;
+            assert_checkout_refused(&repo, "dir-x", &x, "a tracked file with local edits blocks")
+                .await?;
+
+            // Rewriting the committed bytes changes the mtime, so this exercises the hash check.
+            util::fs::write_to_path(&x, "tracked")?;
+            repositories::checkout(&repo, "dir-x").await?;
+            assert_eq!(util::fs::read_from_path(x.join("y.txt"))?, "y");
+
+            // -- A file with no from-tree file at its path, put in place of the tracked "data/"
+            // directory. Checkout handles it exactly as it handles an untracked file --
             std::fs::remove_dir_all(&dir)?;
-            util::fs::write_to_path(repo.path.join("data"), "I am a plain file, not a dir")?;
+            util::fs::write_to_path(&dir, "I am a plain file, not a dir")?;
+            assert_checkout_refused(
+                &repo,
+                &main_branch.name,
+                &dir,
+                "a file in place of a tracked directory blocks it",
+            )
+            .await?;
+            let current = repositories::branches::current_branch(&repo)?
+                .expect("a refused checkout leaves HEAD on its branch");
+            assert_eq!(current.name, "dir-x");
 
-            // Sanity: "data" is now a regular file on disk
-            let data_path = repo.path.join("data");
-            assert!(data_path.is_file(), "data should be a regular file");
-            assert!(!data_path.is_dir(), "data should NOT be a directory");
-
-            // -- checkout main: data/ directory should be fully restored --
-            repositories::checkout(&repo, &main_branch.name).await?;
-
+            repositories::branches::checkout_commit_from_commit(
+                &repo,
+                &main_commit,
+                &Some(dir_x_commit),
+                OnConflict::Overwrite,
+            )
+            .await?;
             assert!(
                 dir.is_dir(),
-                "data/ should be restored as a directory when checking out main"
+                "data/ should be restored as a directory under Overwrite"
             );
-            assert!(
-                file1.exists(),
-                "data/file1.txt should be restored when checking out main"
-            );
-            assert!(
-                file2.exists(),
-                "data/file2.txt should be restored when checking out main"
-            );
+            assert_eq!(util::fs::read_from_path(&file1)?, "data file 1");
+            assert_eq!(util::fs::read_from_path(&file2)?, "data file 2");
 
             Ok(())
         })
