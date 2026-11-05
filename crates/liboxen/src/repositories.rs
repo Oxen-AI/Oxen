@@ -455,6 +455,7 @@ pub fn transfer_namespace(
     }
 
     let legacy_dir = repo_dir(sync_dir, from_namespace, repo_name)?;
+    let to_namespace_dir = namespace_dir(sync_dir, to_namespace)?;
     let to_dir = repo_dir(sync_dir, to_namespace, repo_name)?;
     let Some(from_dir) = resolve_repo_dir(sync_dir, from_namespace, repo_name)? else {
         log::debug!("Error while transferring repo: repo does not exist: {legacy_dir:?}");
@@ -518,7 +519,9 @@ pub fn transfer_namespace(
     workspace_name_index::remove_from_cache_with_children(&from_dir);
     remove_commit_count_db_from_cache_with_children(&from_dir);
 
-    if let Err(err) = util::fs::create_dir_all(&to_dir) {
+    // The rename creates `to_dir`, so a transfer that fails leaves nothing at the destination for
+    // the server to take for a repository.
+    if let Err(err) = util::fs::create_dir_all(&to_namespace_dir) {
         give_back_the_name();
         return Err(err);
     }
@@ -1411,7 +1414,7 @@ mod tests {
 
     /// The hint is written only once nothing else can fail, so a transfer that cannot even start
     /// leaves the repo describing the namespace it is still in, and its name-table entry where it
-    /// was.
+    /// was. A transfer whose move fails leaves no destination directory behind to refuse a retry.
     #[tokio::test]
     async fn test_transfer_namespace_leaves_the_hint_alone_when_the_move_cannot_start()
     -> Result<(), OxenError> {
@@ -1492,6 +1495,42 @@ mod tests {
                 Some(placed.path),
                 "eel/cats still leads to the repository placed by UUID"
             );
+
+            // A read-only `ox` lets the transfer rewrite the config below it and fails the move.
+            #[cfg(unix)]
+            {
+                use std::fs::{Permissions, set_permissions};
+                use std::os::unix::fs::PermissionsExt;
+
+                let from_namespace = sync_dir.join("ox");
+                let set_mode =
+                    |mode| set_permissions(&from_namespace, Permissions::from_mode(mode));
+                let to_owl = || {
+                    repositories::transfer_namespace(
+                        &sync_dir,
+                        "cats",
+                        "ox",
+                        "owl",
+                        Some("owl"),
+                        None,
+                    )
+                };
+                set_mode(0o555)?;
+                let result = to_owl();
+                set_mode(0o755)?;
+                assert!(result.is_err(), "the move must fail, got: {result:?}");
+                assert!(
+                    !sync_dir.join("owl").join("cats").exists(),
+                    "a failed transfer leaves no directory at the destination"
+                );
+
+                let moved = to_owl()?;
+                assert_eq!(moved.path, sync_dir.join("owl").join("cats"));
+                assert!(
+                    !repo_path.exists(),
+                    "the retried transfer moved the repository"
+                );
+            }
 
             Ok(())
         })
