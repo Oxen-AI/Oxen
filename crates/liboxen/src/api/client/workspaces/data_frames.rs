@@ -547,6 +547,20 @@ mod tests {
                     og_height,
                     "{df_path:?} was unstaged without its added row"
                 );
+                if one_path {
+                    let result = workspaces::changes::rm(&remote_repo, "unstage", df_path).await;
+                    assert!(
+                        matches!(
+                            result,
+                            Err(OxenError::HttpStatusError {
+                                status: StatusCode::NOT_FOUND,
+                                ..
+                            })
+                        ),
+                        "{df_path:?} is indexed with nothing staged, so unstaging it is not found, \
+                         got {result:?}"
+                    );
+                }
             }
 
             // A clone fast-forwards on each pull of a data frame committed from a workspace, nested
