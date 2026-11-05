@@ -595,6 +595,7 @@ async fn upload_single_tarball_to_server_with_client_with_retry(
             Ok(_) => {
                 return Ok(());
             }
+            Err(err) if err.is_fatal_for_retry() => return Err(err),
             Err(err) => {
                 total_tries += 1;
                 // Exponentially back off
@@ -750,6 +751,10 @@ mod tests {
     use crate::repositories;
     use crate::test;
     use crate::util::hasher::hash_buffer;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use indicatif::ProgressBar;
+    use std::sync::Arc;
 
     /* Commented out because it's expensive to find the initial commit id
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
@@ -960,6 +965,32 @@ mod tests {
                 chunk,
                 &wrong_hash,
                 &params,
+            )
+            .await;
+            assert!(
+                matches!(
+                    result,
+                    Err(OxenError::HttpStatusError {
+                        status: http::StatusCode::BAD_REQUEST,
+                        ..
+                    })
+                ),
+                "got {result:?}"
+            );
+
+            // So does an archive the server refuses in a single upload
+            let mut tar = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+            let planted = b"planted";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(planted.len() as u64);
+            header.set_mode(0o644);
+            tar.append_data(&mut header, "config.toml", &planted[..])?;
+            let archive = tar.into_inner()?.finish()?;
+            let result = super::upload_single_tarball_to_server_with_client_with_retry(
+                &client,
+                &remote_repo,
+                &archive,
+                Arc::new(ProgressBar::hidden()),
             )
             .await;
             assert!(
