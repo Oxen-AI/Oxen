@@ -1,15 +1,17 @@
 use std::path::PathBuf;
 
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{PageNumQuery, app_data, path_param};
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
-use liboxen::model::LocalRepository;
-use liboxen::util::{self, paginate};
+use liboxen::model::metadata::generic_metadata::GenericMetadata;
+use liboxen::model::{EntryDataType, LocalRepository};
+use liboxen::util::paginate;
 use liboxen::view::entries::ResourceVersion;
 use liboxen::view::{
     BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge, BranchResponse,
@@ -426,61 +428,70 @@ pub async fn list_entry_versions(
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let branch_name = path_param(&req, "branch_name")?.to_string();
 
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
-    let branch = repositories::branches::get_by_name(&repo, &branch_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
-    let commits_with_versions =
-        repositories::branches::list_entry_versions_on_branch(&repo, &branch.name, &path)?;
-    log::debug!(
-        "list_entry_versions_on_branch found {:?} versions",
-        commits_with_versions.len()
-    );
+    // The branch lookup, the history walk, and each version's node are sync tree reads.
+    let response = tasks::spawn_blocking(
+        move || -> Result<PaginatedEntryVersionsResponse, OxenError> {
+            let branch = repositories::branches::get_by_name(&repo, &branch_name)?;
+            let commits_with_versions =
+                repositories::branches::list_entry_versions_on_branch(&repo, &branch.name, &path)?;
+            log::debug!(
+                "list_entry_versions_on_branch found {:?} versions",
+                commits_with_versions.len()
+            );
 
-    let mut commit_versions: Vec<CommitEntryVersion> = Vec::new();
+            let (page_versions, pagination) = paginate(commits_with_versions, page, page_size);
+            let mut paginated_commit_versions = Vec::with_capacity(page_versions.len());
+            for (commit, _entry) in page_versions {
+                // The schema hash of a data frame's version, from the type its commit recorded.
+                // Use the original path, not the entry path, to get the full path
+                let node = repositories::tree::get_file_by_path(&repo, &commit, &path)?;
+                let maybe_schema_hash = match node
+                    .as_ref()
+                    .map(|node| (node.data_type(), node.metadata()))
+                {
+                    Some((_, Some(GenericMetadata::MetadataTabular(metadata)))) => {
+                        Some(metadata.tabular.schema.hash)
+                    }
+                    Some((EntryDataType::Tabular, _)) => {
+                        tracing::error!(
+                            oxen.file_path = %path.display(),
+                            oxen.commit_id = %commit.id,
+                            "A committed data frame version has no tabular metadata"
+                        );
+                        None
+                    }
+                    _ => None,
+                };
 
-    for (commit, _entry) in commits_with_versions {
-        // For each version, get the schema hash if one exists.
-        // Use the original path, not the entry path, to get the full path
-        let maybe_schema_hash = if util::fs::is_tabular(&path) {
-            let maybe_schema =
-                repositories::data_frames::schemas::get_by_path(&repo, &commit, &path)?;
-            match maybe_schema {
-                Some(schema) => Some(schema.hash),
-                None => {
-                    log::error!("Could not get schema for tabular file {:?}", path);
-                    None
-                }
+                paginated_commit_versions.push(CommitEntryVersion {
+                    resource: ResourceVersion {
+                        version: commit.id.clone(),
+                        path: path.to_string_lossy().into(),
+                    },
+                    commit,
+                    schema_hash: maybe_schema_hash,
+                });
             }
-        } else {
-            None
-        };
-
-        commit_versions.push(CommitEntryVersion {
-            commit: commit.clone(),
-            resource: ResourceVersion {
-                version: commit.id.clone(),
-                path: path.to_string_lossy().into(),
-            },
-            schema_hash: maybe_schema_hash,
-        });
-    }
-
-    let (paginated_commit_versions, pagination) = paginate(commit_versions, page, page_size);
-
-    let response = PaginatedEntryVersionsResponse {
-        status: StatusMessage::resource_found(),
-        versions: PaginatedEntryVersions {
-            versions: paginated_commit_versions,
-            pagination,
+            Ok(PaginatedEntryVersionsResponse {
+                status: StatusMessage::resource_found(),
+                versions: PaginatedEntryVersions {
+                    versions: paginated_commit_versions,
+                    pagination,
+                },
+                branch,
+                path,
+            })
         },
-        branch,
-        path,
-    };
+    )
+    .await
+    .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().json(response))
 }
