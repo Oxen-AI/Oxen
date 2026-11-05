@@ -770,6 +770,7 @@ fn split_into_vnodes(
             vnode_hasher.update(directory.to_str().unwrap().as_bytes());
 
             let mut has_new_entries = false;
+            let mut has_new_dir_entries = false;
             for entry in vnode.entries.iter() {
                 if let EMerkleTreeNode::File(file_node) = &entry.node.node {
                     vnode_hasher.update(&file_node.combined_hash().to_le_bytes());
@@ -778,11 +779,18 @@ fn split_into_vnodes(
                 }
                 if entry.status != StagedEntryStatus::Unmodified {
                     has_new_entries = true;
+                    if let EMerkleTreeNode::Directory(_) = &entry.node.node {
+                        has_new_dir_entries = true;
+                    }
                 }
             }
 
-            // If the vnode has new entries, we need to update the uuid to make a new vnode
-            if existing_nodes.contains_key(directory) && has_new_entries {
+            // If the vnode has new entries, we need to update the uuid to make a new vnode.
+            // A staged directory's hash is a placeholder rather than its contents, so a
+            // vnode holding one gets the uuid even in a directory new to this commit:
+            // without it, two commits that add the same paths with different contents
+            // share a vnode id, and writing one replaces the other's children.
+            if has_new_dir_entries || (existing_nodes.contains_key(directory) && has_new_entries) {
                 let uuid = uuid::Uuid::new_v4();
                 vnode_hasher.update(uuid.as_bytes());
             }
