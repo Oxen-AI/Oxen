@@ -178,7 +178,7 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_download_dir() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
+        test::run_select_data_sync_remote("train", |local_repo, remote_repo| async move {
             let cloned_remote = remote_repo.clone();
             let src_path = "train";
             // Count files in local repo

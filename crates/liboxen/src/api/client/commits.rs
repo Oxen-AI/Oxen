@@ -995,10 +995,10 @@ mod tests {
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_list_remote_commits_base_head() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|local_repo, remote_repo| async move {
-            // There should be >= 6 commits here
+        test::run_many_local_commits_empty_sync_remote_test(|local_repo, remote_repo| async move {
+            repositories::push(&local_repo).await?;
             let commit_history = repositories::commits::list(&local_repo)?;
-            assert!(commit_history.len() >= 6);
+            assert_eq!(commit_history.len(), 5, "the helper makes five commits");
 
             let remote_commits =
                 api::client::commits::list_commit_history(&remote_repo, DEFAULT_BRANCH_NAME)

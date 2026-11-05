@@ -88,22 +88,13 @@ mod tests {
 
     use crate::{api, repositories, test, util};
 
-    // For reference, the fully synced repo structure is as follows:
+    // For reference, the repo the "README labels annotations nlp" fixture pushes is as follows:
     // nlp/
     //   classification/
     //     annotations/
     //       train.tsv
     //       test.tsv
     //
-    // train/
-    //   dog_1.jpg
-    //   dog_2.jpg
-    //   dog_3.jpg
-    //   cat_1.jpg
-    //   cat_2.jpg
-    // test/
-    //   1.jpg
-    //   2.jpg
     // annotations/
     //   README.md
     //   train/
@@ -113,25 +104,24 @@ mod tests {
     //     annotations.txt
     //   test/
     //     annotations.csv
-    // prompts.jsonl
     // labels.txt
-    // LICENSE
     // README.md
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_repo_clean_with_all_files_unsynced_after_remote_mode_clone()
-    -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|mut _local_repo, remote_repo| async move {
+    async fn test_remote_mode_subdirectory_status() -> Result<(), OxenError> {
+        let data = "README labels annotations nlp";
+        test::run_select_data_sync_remote(data, |_, remote_repo| async move {
             let remote_repo_copy = remote_repo.clone();
 
             test::run_empty_dir_test_async(|dir| async move {
                 let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
                 opts.is_remote = true;
                 let cloned_repo = repositories::clone(&opts).await?;
+                assert!(cloned_repo.is_remote_mode());
 
-                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let directory = ".".to_string();
+                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
                 let status_opts =
                     StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
                 let status = repositories::remote_mode::status(
@@ -142,41 +132,14 @@ mod tests {
                     &status_opts,
                 )
                 .await?;
-                status.print();
                 // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
-                assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 4);
+                assert_eq!(status.unsynced_dirs.len(), 2, "annotations and nlp");
+                assert_eq!(status.unsynced_files.len(), 2, "README.md and labels.txt");
+                assert!(status.is_clean(), "a fresh remote-mode clone is clean");
 
-                // The repo is clean
-                assert!(status.is_clean());
-
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_remote_mode_subdirectory_status() -> Result<(), OxenError> {
-        test::run_training_data_fully_sync_remote(|_local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-
-            test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                opts.is_remote = true;
-                let cloned_repo = repositories::clone(&opts).await?;
-                assert!(cloned_repo.is_remote_mode());
-
-                let repo_path = cloned_repo.path.clone();
-
-                let directory = ".".to_string();
+                // The same status, with the repository given by its absolute path
                 let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
-                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
+                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&cloned_repo.path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -186,10 +149,8 @@ mod tests {
                 )
                 .await?;
                 status.print();
-
-                // Files/dirs in subdirs don't appear as separate items in unsynced_files/dirs
-                assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 4);
+                assert_eq!(status.unsynced_dirs.len(), 2);
+                assert_eq!(status.unsynced_files.len(), 2);
 
                 // Download specific files from the remote
                 let subdir_path = PathBuf::from("annotations").join("train");
@@ -243,9 +204,6 @@ mod tests {
                 .await?;
 
                 // Check status for corresponding changes
-                let directory = ".".to_string();
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -256,9 +214,13 @@ mod tests {
                 .await?;
                 status.print();
 
-                // 6 unsynced files, as creating the parent dirs for the restored files causes more subfiles to be registed as unsynced
-                assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 6);
+                // 4 unsynced files, as creating the parent dirs for the restored files causes more subfiles to be registed as unsynced
+                assert_eq!(status.unsynced_dirs.len(), 2, "annotations/test and nlp");
+                assert_eq!(
+                    status.unsynced_files.len(),
+                    4,
+                    "README.md, labels.txt, annotations/README.md, annotations/train/annotations.txt"
+                );
 
                 assert_eq!(status.modified_files.len(), 1);
                 assert!(status.modified_files.contains(&one_shot_path));
@@ -278,9 +240,6 @@ mod tests {
                 .await?;
 
                 // Re-check status
-                let directory = ".".to_string();
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo_path));
                 let status = repositories::remote_mode::status(
                     &cloned_repo,
                     &remote_repo,
@@ -291,8 +250,8 @@ mod tests {
                 .await?;
                 status.print();
 
-                assert_eq!(status.unsynced_dirs.len(), 4);
-                assert_eq!(status.unsynced_files.len(), 6);
+                assert_eq!(status.unsynced_dirs.len(), 2);
+                assert_eq!(status.unsynced_files.len(), 4);
                 assert_eq!(status.staged_files.len(), 3);
                 assert_eq!(status.modified_files.len(), 0);
 
