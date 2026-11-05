@@ -1505,9 +1505,9 @@ mod tests {
                 use std::os::unix::fs::symlink;
 
                 let owl = sync_dir.join("owl");
-                let inside = repo_path.join("inside");
-                util::fs::create_dir_all(&inside)?;
-                symlink(&inside, &owl)?;
+                util::fs::create_dir_all(repo_path.join("inside"))?;
+                // Relative to the link's own directory, so it resolves wherever the test runs.
+                symlink("ox/cats/inside", &owl)?;
                 let to_owl = || {
                     repositories::transfer_namespace(
                         &sync_dir,
@@ -1520,6 +1520,14 @@ mod tests {
                 };
                 let result = to_owl();
                 assert!(result.is_err(), "the move must fail, got: {result:?}");
+                let identity = RepositoryConfig::from_file(util::fs::config_filepath(&repo_path))?
+                    .identity
+                    .expect("identity is intact");
+                assert_eq!(
+                    identity.namespace.as_deref(),
+                    Some("owl"),
+                    "the transfer failed at the move, after rewriting the config"
+                );
                 assert!(
                     !owl.join("cats").exists(),
                     "a failed transfer leaves no directory at the destination"
