@@ -1496,15 +1496,18 @@ mod tests {
                 "eel/cats still leads to the repository placed by UUID"
             );
 
-            // A read-only `ox` lets the transfer rewrite the config below it and fails the move.
+            // With `owl` a link to a directory inside the repository, the move would put the
+            // repository inside itself, which fails whatever the process's privileges, after the
+            // transfer has created the namespace directory and rewritten the config.
             #[cfg(unix)]
             {
-                use std::fs::{Permissions, set_permissions};
-                use std::os::unix::fs::PermissionsExt;
+                use std::fs::remove_file;
+                use std::os::unix::fs::symlink;
 
-                let from_namespace = sync_dir.join("ox");
-                let set_mode =
-                    |mode| set_permissions(&from_namespace, Permissions::from_mode(mode));
+                let owl = sync_dir.join("owl");
+                let inside = repo_path.join("inside");
+                util::fs::create_dir_all(&inside)?;
+                symlink(&inside, &owl)?;
                 let to_owl = || {
                     repositories::transfer_namespace(
                         &sync_dir,
@@ -1515,15 +1518,14 @@ mod tests {
                         None,
                     )
                 };
-                set_mode(0o555)?;
                 let result = to_owl();
-                set_mode(0o755)?;
                 assert!(result.is_err(), "the move must fail, got: {result:?}");
                 assert!(
-                    !sync_dir.join("owl").join("cats").exists(),
+                    !owl.join("cats").exists(),
                     "a failed transfer leaves no directory at the destination"
                 );
 
+                remove_file(&owl)?;
                 let moved = to_owl()?;
                 assert_eq!(moved.path, sync_dir.join("owl").join("cats"));
                 assert!(
