@@ -156,6 +156,7 @@ rustix = { workspace = true }
 # envs can share a lock and one closing breaks the other's transactions with EINVAL (ENG-2066).
 [target.'cfg(target_os = "macos")'.dependencies]
 heed = { workspace = true, features = ["posix-sem"] }
+libc = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

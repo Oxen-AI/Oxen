@@ -106,9 +106,9 @@ impl StagedChanges {
 
     /// Store the version files of the files staged, then stage each file whose version file is
     /// stored, along with its parent directories, and unstage the paths recorded and then the
-    /// deleted `removed` paths. On macOS and Linux a crash leaves either none of the staged files or
-    /// every one with its version file, and every change is durable when this returns. Returns what
-    /// was staged.
+    /// deleted `removed` paths. On macOS and Linux a crash leaves either none of the staged files
+    /// or every one with its version file, and every change is durable when this returns. Returns
+    /// what was staged.
     async fn write(
         &self,
         repo: &LocalRepository,

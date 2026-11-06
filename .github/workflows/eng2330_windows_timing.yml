@@ -55,13 +55,16 @@ jobs:
       - name: Time oxen add
         run: |
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\eng2330" | Out-Null
+          $branch = "$env:GITHUB_WORKSPACE\branch\target\release\oxen.exe"
           python -I branch\.github\eng2330\bench.py "$env:RUNNER_TEMP\eng2330" 5 - `
             "main=$env:GITHUB_WORKSPACE\main\target\release\oxen.exe" `
-            "branch=$env:GITHUB_WORKSPACE\branch\target\release\oxen.exe" |
+            "serial=$branch" `
+            "parallel=$branch|OXEN_ENG2330_PUBLISH=parallel" `
+            "eager=$branch|OXEN_ENG2330_PUBLISH=eager" |
             Tee-Object -FilePath windows.jsonl
 
       - name: Upload the results
         uses: actions/upload-artifact@v7
         with:
-          name: eng2330-windows-timing
+          name: eng2330-windows-timing-publish-modes
           path: windows.jsonl

@@ -600,11 +600,62 @@ impl AtomicPartsFile {
 
 /// Atomic publishes of many files at once, made durable together by
 /// [`publish`][Self::publish] with a few filesystem-wide syncs rather than one or two per file.
-/// Every target must be on one filesystem. Dropping the batch unpublished removes every temp file it
-/// wrote.
+/// Every target must be on one filesystem. Dropping the batch unpublished removes every temp file
+/// it wrote.
 #[derive(Default)]
 pub(crate) struct AtomicFileBatch {
     pending: Mutex<Vec<PendingRename>>,
+    /// Scratch for ENG-2330's timing: the directory an eager publish renamed into.
+    eager_dir: Mutex<Option<PathBuf>>,
+}
+
+/// Scratch for ENG-2330's timing, never merged: how a batch publishes, from
+/// `OXEN_ENG2330_PUBLISH`. `serial` (the default) renames one by one in `publish`, `parallel`
+/// renames in parallel there, and `eager` renames each file in `copy_from` and leaves `publish`
+/// only the final sync. Linux always takes `serial` for `eager`.
+#[derive(Clone, Copy, PartialEq)]
+enum PublishMode {
+    Serial,
+    Parallel,
+    Eager,
+}
+
+fn publish_mode() -> PublishMode {
+    static MODE: std::sync::LazyLock<PublishMode> =
+        std::sync::LazyLock::new(|| match std::env::var("OXEN_ENG2330_PUBLISH").as_deref() {
+            Ok("parallel") => PublishMode::Parallel,
+            Ok("eager") if !cfg!(target_os = "linux") => PublishMode::Eager,
+            _ => PublishMode::Serial,
+        });
+    *MODE
+}
+
+/// `F_BARRIERFSYNC`: an `fsync(2)` that also keeps every later write on the device behind this
+/// file's, so a rename issued after it cannot reach the disk before the data it publishes.
+#[cfg(target_os = "macos")]
+fn barrier_fsync(file: &File) -> Result<(), OxenError> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: `fcntl` with `F_BARRIERFSYNC` takes no argument and only reads the descriptor,
+    // which `file` keeps open for the call's duration. rustix offers no safe wrapper for it.
+    if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_BARRIERFSYNC) } == -1 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
+/// Rename a batched temp file over `target`, removing the temp file when the rename fails.
+fn rename_pending(temp: tempfile::TempPath, target: &Path) -> Result<(), OxenError> {
+    // `keep` then `std::fs::rename`, for the Windows reason `rename_into_place` gives
+    let temp_path = temp
+        .keep()
+        .map_err(|err| OxenError::file_rename_error(&err.path, target, err.error))?;
+    if let Err(err) = std::fs::rename(&temp_path, target) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(OxenError::file_rename_error(&temp_path, target, err));
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    sync_parent_best_effort(target);
+    Ok(())
 }
 
 /// A temp file written for an [`AtomicFileBatch`], closed and waiting to be renamed over `target`.
@@ -620,6 +671,19 @@ impl AtomicFileBatch {
     pub(crate) fn copy_from(&self, file: AtomicFile, src: &Path) -> Result<(), OxenError> {
         let mut src_file = File::open(src).map_err(|err| OxenError::file_error(src, err))?;
         let tmp = file.fill(&mut src_file)?;
+        if publish_mode() == PublishMode::Eager {
+            #[cfg(target_os = "macos")]
+            barrier_fsync(tmp.tmp.as_file())?;
+            #[cfg(not(target_os = "macos"))]
+            tmp.tmp.as_file().sync_all()?;
+            let AtomicTempFile { tmp, target } = tmp;
+            rename_pending(tmp.into_temp_path(), &target)?;
+            let mut dir = self.eager_dir.lock();
+            if dir.is_none() {
+                *dir = Some(target.parent().unwrap_or(Path::new(".")).to_path_buf());
+            }
+            return Ok(());
+        }
         sync_for_batch(tmp.tmp.as_file())?;
         let AtomicTempFile { tmp, target } = tmp;
         self.pending.lock().push(PendingRename {
@@ -632,6 +696,9 @@ impl AtomicFileBatch {
     /// Rename every file written into place, durably on macOS and Linux. A failed rename stops the
     /// publish, leaving the files renamed before it published and removing the rest.
     pub(crate) fn publish(self) -> Result<(), OxenError> {
+        if let Some(dir) = self.eager_dir.into_inner() {
+            return sync_filesystem(&dir);
+        }
         let pending = self.pending.into_inner();
         let Some(first) = pending.first() else {
             return Ok(());
@@ -641,19 +708,17 @@ impl AtomicFileBatch {
             .parent()
             .unwrap_or(Path::new("."))
             .to_path_buf();
-        // The temp files' bytes reach the device before any rename can
+        // So the temp files' bytes reach the device before any rename does
         sync_filesystem(&dir)?;
-        for PendingRename { temp, target } in pending {
-            // `keep` then `std::fs::rename`, for the Windows reason `rename_into_place` gives
-            let temp_path = temp
-                .keep()
-                .map_err(|err| OxenError::file_rename_error(&err.path, &target, err.error))?;
-            if let Err(err) = std::fs::rename(&temp_path, &target) {
-                let _ = std::fs::remove_file(&temp_path);
-                return Err(OxenError::file_rename_error(&temp_path, &target, err));
+        if publish_mode() == PublishMode::Parallel {
+            use rayon::prelude::*;
+            pending
+                .into_par_iter()
+                .try_for_each(|PendingRename { temp, target }| rename_pending(temp, &target))?;
+        } else {
+            for PendingRename { temp, target } in pending {
+                rename_pending(temp, &target)?;
             }
-            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-            sync_parent_best_effort(&target);
         }
         sync_filesystem(&dir)
     }

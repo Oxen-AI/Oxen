@@ -1,6 +1,6 @@
 """Time `oxen add` for each arm on each workload, alternating arms within every round.
 
-Usage: bench.py <work dir> <rounds> <syncount dylib or "-"> <arm>=<oxen binary>...
+Usage: bench.py <work dir> <rounds> <syncount dylib or "-"> <arm>=<oxen binary>[|<VAR>=<value>]...
 
 Each trial copies a workload's files into a fresh repository, runs `oxen init` and a `sync` outside
 the timed window, then times `oxen add files` alone, and checks every version file was stored. One
@@ -14,7 +14,12 @@ import sys
 import time
 
 work, rounds, dylib = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-arms = dict(arg.split("=", 1) for arg in sys.argv[4:])
+# An arm is a binary plus the environment variables it runs with
+arms = {}
+for arg in sys.argv[4:]:
+    arm, spec = arg.split("=", 1)
+    binary, *assignments = spec.split("|")
+    arms[arm] = (binary, dict(a.split("=", 1) for a in assignments))
 
 WORKLOADS = {
     # Oxen issue 1124: 500 files of 1 KiB in one directory
@@ -48,7 +53,8 @@ def make_fixture(name, layout):
     return root
 
 
-def trial(arm, binary, name, fixture, expected, count_syncs):
+def trial(arm, spec, name, fixture, expected, count_syncs):
+    binary, arm_env = spec
     repo = os.path.join(work, "trial")
     shutil.rmtree(repo, ignore_errors=True)
     os.makedirs(repo)
@@ -56,7 +62,7 @@ def trial(arm, binary, name, fixture, expected, count_syncs):
     subprocess.run([binary, "init"], cwd=repo, check=True, capture_output=True)
     if hasattr(os, "sync"):
         os.sync()
-    env = dict(os.environ)
+    env = dict(os.environ, **arm_env)
     syncs_file = os.path.join(work, "syncs")
     command = [binary, "add", "files"]
     if count_syncs and dylib == "strace":
@@ -105,12 +111,12 @@ def trial(arm, binary, name, fixture, expected, count_syncs):
 fixtures = {name: make_fixture(name, layout) for name, layout in WORKLOADS.items()}
 expected = {name: sum(c for _, c, _ in layout) for name, layout in WORKLOADS.items()}
 if dylib != "-":
-    for arm, binary in arms.items():
+    for arm, spec in arms.items():
         for name in WORKLOADS:
-            trial(arm, binary, name, fixtures[name], expected[name], True)
+            trial(arm, spec, name, fixtures[name], expected[name], True)
 order = list(arms.items())
 for r in range(rounds):
-    for arm, binary in order if r % 2 == 0 else order[::-1]:
+    for arm, spec in order if r % 2 == 0 else order[::-1]:
         for name in WORKLOADS:
-            trial(arm, binary, name, fixtures[name], expected[name], False)
+            trial(arm, spec, name, fixtures[name], expected[name], False)
 shutil.rmtree(os.path.join(work, "trial"), ignore_errors=True)
