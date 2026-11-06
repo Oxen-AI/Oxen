@@ -9,11 +9,21 @@ use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::util;
 
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use serde::Serialize;
 use std::borrow::Cow;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use liboxen::test::init_test_env;
+
+/// `content` gzipped at `level`.
+pub fn gzip(content: &[u8], level: Compression) -> std::io::Result<Vec<u8>> {
+    let mut encoder = GzEncoder::new(Vec::new(), level);
+    encoder.write_all(content)?;
+    encoder.finish()
+}
 
 pub fn get_sync_dir() -> Result<PathBuf, OxenError> {
     init_test_env();

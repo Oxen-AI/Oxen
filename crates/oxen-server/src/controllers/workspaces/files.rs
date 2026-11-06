@@ -1,15 +1,14 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{file_stream_response, get_repo, get_repo_async};
+use crate::helpers::{file_stream_response, get_repo, get_repo_async, receive_part_bytes};
 use crate::params::{app_data, path_param, request_relative_path};
 use crate::tasks;
 
-use liboxen::constants::stream_segment_size;
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::core::v_latest::workspaces::files::{
     CommittedFiles, InspectedVersionFile, VersionFileToStage, add_version_files,
 };
-use liboxen::error::{OxenError, StringError};
+use liboxen::error::OxenError;
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
@@ -18,15 +17,13 @@ use liboxen::repositories;
 use liboxen::repositories::versions::previews;
 use liboxen::storage::VersionStore;
 use liboxen::util;
-use liboxen::util::compression::decompress_gzip_capped;
 use liboxen::util::hasher::hash_buffer_128bit;
 use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{FilePathsResponse, StatusMessage, StatusMessageDescription};
 
-use actix_multipart::{Field, Multipart};
-use actix_web::web::{Bytes, BytesMut};
+use actix_multipart::Multipart;
+use actix_web::web::Bytes;
 use actix_web::{HttpRequest, HttpResponse, web};
-use bytesize::ByteSize;
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -414,7 +411,7 @@ struct ReceivedFile {
     part_index: usize,
 }
 
-/// Receive each file part of `payload` into memory, as [`receive_part`] does, and store the files
+/// Receive each file part of `payload` into memory, as [`receive_part_bytes`] does, and store the files
 /// in the repository's version store, several at once. A part's filename is its path in `workspace`
 /// relative to `directory`, and a part whose content `workspace`'s commit has at that path is
 /// neither stored nor inspected, unless the store has lost the commit's copy.
@@ -461,7 +458,19 @@ async fn save_parts(
             })?;
         let part_index = part_count;
         part_count += 1;
-        let part = match receive_part(field, &dst_path).await? {
+        let part = receive_part_bytes(field, dst_path.display().to_string()).await?;
+        // Gunzipping and hashing are CPU-bound, so they run off the async runtime.
+        let decoded = tasks::spawn_blocking_per_item(move || {
+            part.into_file().map(|file| {
+                file.map(|data| {
+                    let hash = MerkleHash::new(hash_buffer_128bit(&data));
+                    ReceivedPart { data, hash }
+                })
+            })
+        })
+        .await
+        .map_err(|e| OxenError::internal_error(format!("decode task panicked: {e}")))??;
+        let part = match decoded {
             Ok(part) => part,
             Err(e) => {
                 tracing::error!(
@@ -509,63 +518,10 @@ async fn save_parts(
     Ok(received.into_iter().map(|received| received.file).collect())
 }
 
-/// How many bytes gzip may add to a file part whose content does not compress, 64 KiB. zlib's own
-/// bound adds about 3.2 KiB to 10 MiB.
-const GZIP_GROWTH_ALLOWANCE: u64 = 64 * 1024;
-
 /// A file part's bytes, after any gunzipping, and their hash.
 struct ReceivedPart {
     data: Bytes,
     hash: MerkleHash,
-}
-
-/// Receive `field`, the part for `dst_path`, into memory, gunzipping it when it is labeled
-/// `application/gzip`, and hash it. The outer error is a failure to read the part, or a 413 for a
-/// file of more than `stream_segment_size()` bytes, which a gzipped part may arrive
-/// [`GZIP_GROWTH_ALLOWANCE`] longer than. The inner one is a gzipped part that is not gzip data.
-async fn receive_part(
-    mut field: Field,
-    dst_path: &Path,
-) -> Result<Result<ReceivedPart, OxenError>, OxenHttpError> {
-    let too_large = || {
-        let limit = ByteSize::b(stream_segment_size()).display().iec();
-        OxenHttpError::PayloadTooLarge(StringError::new(format!(
-            "{} is larger than the {limit} a file part may hold. Send a larger file through an \
-             upload session (POST /versions/uploads).",
-            dst_path.display()
-        )))
-    };
-    let gzipped = field
-        .content_type()
-        .is_some_and(|mime| mime.type_() == mime::APPLICATION && mime.subtype() == "gzip");
-    let max_len = if gzipped {
-        stream_segment_size() + GZIP_GROWTH_ALLOWANCE
-    } else {
-        stream_segment_size()
-    };
-    let mut received = BytesMut::new();
-    while let Some(chunk) = field.try_next().await.map_err(actix_web::Error::from)? {
-        if (received.len() + chunk.len()) as u64 > max_len {
-            return Err(too_large());
-        }
-        received.extend_from_slice(&chunk);
-    }
-    let received = received.freeze();
-    let decoded = tasks::spawn_blocking_per_item(move || -> Result<ReceivedPart, OxenError> {
-        let data = if gzipped {
-            Bytes::from(decompress_gzip_capped(&received, stream_segment_size())?)
-        } else {
-            received
-        };
-        let hash = MerkleHash::new(hash_buffer_128bit(&data));
-        Ok(ReceivedPart { data, hash })
-    })
-    .await
-    .map_err(|e| OxenError::internal_error(format!("decode task panicked: {e}")))?;
-    match decoded {
-        Err(OxenError::GzipTooLarge { .. }) => Err(too_large()),
-        decoded => Ok(decoded),
-    }
 }
 
 /// Store `part` in `version_store`, and inspect it to stage at `dst_path`.
@@ -623,19 +579,11 @@ mod tests {
     use liboxen::view::{FilePathsResponse, StatusMessageDescription};
     use std::path::{Path, PathBuf};
 
+    use crate::test::gzip;
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::web::Bytes;
     use flate2::Compression;
-    use flate2::write::GzEncoder;
     use mime;
-    use std::io::Write;
-
-    /// `content` gzipped at `level`.
-    fn gzip(content: &[u8], level: Compression) -> std::io::Result<Vec<u8>> {
-        let mut encoder = GzEncoder::new(Vec::new(), level);
-        encoder.write_all(content)?;
-        encoder.finish()
-    }
 
     #[actix_web::test]
     async fn test_controllers_workspace_files() -> Result<(), OxenError> {
@@ -815,7 +763,7 @@ mod tests {
         repo.version_store().delete_version(&rows_hash).await?;
         let gzip_type: mime::Mime = "application/gzip".parse().expect("a valid MIME type");
         let packed = gzip(
-            &vec![7; (stream_segment_size() + super::GZIP_GROWTH_ALLOWANCE) as usize],
+            &vec![7; (stream_segment_size() + crate::helpers::GZIP_GROWTH_ALLOWANCE) as usize],
             Compression::none(),
         )?;
         let too_big = vec![b'x'; stream_segment_size() as usize + 1];

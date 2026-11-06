@@ -2,19 +2,18 @@ pub mod chunks;
 pub mod uploads;
 
 use crate::errors::OxenHttpError;
-use crate::helpers::{file_stream_response, get_repo};
+use crate::helpers::{PartTooLarge, file_stream_response, get_repo, receive_part_bytes};
 use crate::params::{app_data, parse_resource, path_param};
 use crate::tasks;
 
 use actix_multipart::Multipart;
-use actix_web::{Error, HttpRequest, HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use async_compression::tokio::write::GzipEncoder;
 use async_zip::Compression;
 use async_zip::base::write::ZipFileWriter;
 use bytes::Bytes;
 use flate2::read::GzDecoder;
 use futures_util::{Stream, StreamExt, TryStreamExt as _, stream};
-use liboxen::constants::stream_segment_size;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
@@ -24,7 +23,6 @@ use liboxen::repositories::versions::previews;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
-use mime;
 use std::io;
 use std::io::ErrorKind;
 use std::io::Read as StdRead;
@@ -553,7 +551,7 @@ pub struct UploadVersionFile {
     post,
     path = "/api/repos/{namespace}/{repo_name}/versions",
     tag = "Version Files",
-    description = "Upload multiple files via multipart form, identified by their content hashes.",
+    description = "Upload multiple files via multipart form, identified by their content hashes. Each part holds a file of at most 10 MiB. Send a larger file through an upload session (`POST /api/repos/{namespace}/{repo_name}/versions/uploads`).",
     summary = "Batch upload files (Multipart)",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -568,6 +566,7 @@ pub struct UploadVersionFile {
         (status = 200, description = "Files successfully uploaded (check err_files for failures)", body = ErrorFilesResponse),
         (status = 400, description = "Invalid multipart request"),
         (status = 404, description = "Repository not found"),
+        (status = 413, description = "A file part is larger than 10 MiB"),
     )
 )]
 pub async fn batch_upload(
@@ -589,22 +588,24 @@ pub async fn batch_upload(
     }))
 }
 
-// Read the payload files into memory and save to version store
+/// Receive each file part of `payload` into memory and store it in `repo`'s version store, several at
+/// once. A part's filename is its file's hash. A part holding a file of more than
+/// `stream_segment_size()` bytes fails the whole upload with 413. A part that is not gzip data
+/// though labeled so, or that fails to store, comes back as an [`ErrorFileInfo`] for the client to
+/// retry.
 pub async fn save_multiparts(
     mut payload: Multipart,
     repo: &LocalRepository,
-) -> Result<Vec<ErrorFileInfo>, Error> {
-    // Receive a multipart request and save the files to the version store. Store files
-    // concurrently, capped in flight so buffered field bytes stay bounded. Reading the multipart
-    // stream itself stays serial (fields arrive in order).
+) -> Result<Vec<ErrorFileInfo>, OxenHttpError> {
+    // Reading the multipart stream stays serial (fields arrive in order), and the stores in flight
+    // are capped so the parts held in memory stay bounded.
     let version_store = repo.version_store();
-    let gzip_mime: mime::Mime = "application/gzip".parse().unwrap();
 
     let max_in_flight = util::concurrency::default_num_threads() * 4; // 32 (or less on small boxes)
-    let mut in_flight: JoinSet<Option<ErrorFileInfo>> = JoinSet::new();
+    let mut in_flight: JoinSet<Result<Option<ErrorFileInfo>, PartTooLarge>> = JoinSet::new();
     let mut err_files: Vec<ErrorFileInfo> = vec![];
 
-    while let Some(mut field) = payload.try_next().await? {
+    while let Some(field) = payload.try_next().await.map_err(actix_web::Error::from)? {
         let Some(content_disposition) = field.content_disposition().cloned() else {
             continue;
         };
@@ -614,26 +615,15 @@ pub async fn save_multiparts(
         }
 
         // The file hash is passed in as the filename. In version store, the file hash is the identifier.
-        let upload_filehash = content_disposition.get_filename().map_or_else(
-            || {
-                Err(actix_web::error::ErrorBadRequest(
-                    "Missing hash in multipart request",
-                ))
-            },
-            |fhash_os_str| Ok(fhash_os_str.to_string()),
-        )?;
+        let Some(upload_filehash) = content_disposition.get_filename().map(str::to_string) else {
+            return Err(OxenHttpError::BadRequest(
+                "Missing hash in multipart request".into(),
+            ));
+        };
         log::debug!("upload file_hash: {upload_filehash:?}");
 
-        let is_gzipped = field
-            .content_type()
-            .map(|mime| mime.type_() == gzip_mime.type_() && mime.subtype() == gzip_mime.subtype())
-            .unwrap_or(false);
-
-        // Read the bytes from the stream
-        let mut field_bytes = Vec::new();
-        while let Some(chunk) = field.try_next().await? {
-            field_bytes.extend_from_slice(&chunk);
-        }
+        let part =
+            receive_part_bytes(field, format!("The file with hash {upload_filehash}")).await?;
 
         // Bound the in-flight stores (and thus buffered bytes) before dispatching the next one.
         while in_flight.len() >= max_in_flight {
@@ -646,45 +636,45 @@ pub async fn save_multiparts(
 
         let version_store = Arc::clone(&version_store);
         in_flight.spawn(tasks::inherit_hub(async move {
-            // gzip inflate is CPU-bound; run it off the async runtime.
-            let data = if is_gzipped {
-                let max_decompressed_size = stream_segment_size();
-                let inflated = tasks::spawn_blocking_per_item(move || {
-                    util::compression::decompress_gzip_capped(&field_bytes, max_decompressed_size)
-                })
-                .await
-                .map_err(|e| OxenError::internal_error(format!("decompression task failed: {e}")))
-                .and_then(|r| r);
-                match inflated {
-                    Ok(decompressed) => decompressed,
-                    Err(e) => {
-                        log::error!("Failed to decompress version for hash {upload_filehash}: {e}");
-                        return Some(ErrorFileInfo {
-                            hash: upload_filehash,
-                            path: None,
-                            error: format!("Failed to decompress version: {e}"),
-                        });
-                    }
+            // Gunzipping is CPU-bound, so only a gzipped part goes to the blocking pool.
+            let file = if part.is_gzipped() {
+                match tasks::spawn_blocking_per_item(move || part.into_file()).await {
+                    Ok(file) => file?,
+                    Err(e) => Err(OxenError::internal_error(format!(
+                        "decompression task failed: {e}"
+                    ))),
                 }
             } else {
-                field_bytes
+                part.into_file()?
+            };
+            let data = match file {
+                Ok(data) => data,
+                Err(e) => {
+                    tracing::warn!(
+                        oxen.file_hash = %upload_filehash,
+                        exception.message = %e,
+                        "Failed to gunzip an uploaded version file"
+                    );
+                    return Ok(Some(ErrorFileInfo {
+                        hash: upload_filehash,
+                        path: None,
+                        error: format!("Failed to decompress version: {e}"),
+                    }));
+                }
             };
 
-            match version_store
-                .store_version(&upload_filehash, data.into())
-                .await
-            {
+            match version_store.store_version(&upload_filehash, data).await {
                 Ok(_) => {
                     log::debug!("Successfully stored version for hash: {upload_filehash}");
-                    None
+                    Ok(None)
                 }
                 Err(e) => {
                     log::error!("Failed to store version for hash {upload_filehash}: {e}");
-                    Some(ErrorFileInfo {
+                    Ok(Some(ErrorFileInfo {
                         hash: upload_filehash,
                         path: None,
                         error: format!("Failed to store version: {e}"),
-                    })
+                    }))
                 }
             }
         }));
@@ -700,19 +690,18 @@ pub async fn save_multiparts(
 }
 
 // A finished store task's per-file error, if any: `Ok(Some)` is a retryable per-file store
-// failure; a `JoinError` (the store task panicked) surfaces as `Err` so the batch fails with a
-// 500 rather than reporting a hashless, un-retryable entry.
+// failure. A part too large to hold, or a `JoinError` (the store task panicked), surfaces as `Err`
+// so the batch fails rather than reporting an entry the client would retry in vain.
 fn store_task_result(
-    result: Result<Option<ErrorFileInfo>, JoinError>,
-) -> Result<Option<ErrorFileInfo>, Error> {
+    result: Result<Result<Option<ErrorFileInfo>, PartTooLarge>, JoinError>,
+) -> Result<Option<ErrorFileInfo>, OxenHttpError> {
     match result {
-        Ok(maybe_error) => Ok(maybe_error),
-        Err(join_err) => {
-            log::error!("version store task panicked: {join_err}");
-            Err(actix_web::error::ErrorInternalServerError(format!(
-                "version store task panicked: {join_err}"
-            )))
-        }
+        Ok(Ok(stored)) => Ok(stored),
+        Ok(Err(too_large)) => Err(too_large.into()),
+        Err(join_err) => Err(OxenError::internal_error(format!(
+            "version store task panicked: {join_err}"
+        ))
+        .into()),
     }
 }
 
@@ -723,15 +712,17 @@ mod tests {
     use crate::controllers;
     use crate::test;
     use actix_multipart::test::create_form_data_payload_and_headers;
+    use actix_web::http::StatusCode;
     use actix_web::http::header;
     use actix_web::{App, body, web, web::Bytes};
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use liboxen::constants::stream_segment_size;
     use liboxen::error::OxenError;
     use liboxen::repositories;
     use liboxen::util;
     use liboxen::util::fs::AtomicFile;
-    use liboxen::view::ErrorFilesResponse;
+    use liboxen::view::{ErrorFilesResponse, StatusMessageDescription};
     use mime;
     use std::io::Write;
 
@@ -983,6 +974,100 @@ mod tests {
         for (content, hash) in contents.iter().zip(&hashes) {
             let stored = version_store.get_version(hash).await?;
             assert_eq!(stored, content.as_bytes());
+        }
+
+        // A file of up to `stream_segment_size()` bytes is stored, plain or gzipped, and even
+        // gzipped without compression, which makes its part longer than the file. A part holding a
+        // larger file, plain or gzipped, fails the request with a 413 that points to upload
+        // sessions, and a part that is not gzip data though labeled so comes back for the client to
+        // retry.
+        let largest = vec![7; stream_segment_size() as usize];
+        let too_big = vec![b'x'; stream_segment_size() as usize + 1];
+        let gzip_type: mime::Mime = "application/gzip".parse().expect("a valid MIME type");
+        let plain = b"plain bytes".to_vec();
+        let not_gzip = b"not gzip data".to_vec();
+        // Each case's file, how its part is labeled and sent, the status, and whether it is stored.
+        for (name, file, content_type, part, status, stored) in [
+            (
+                "largest",
+                &largest,
+                gzip_type.clone(),
+                test::gzip(&largest, Compression::none())?,
+                StatusCode::OK,
+                true,
+            ),
+            (
+                "plain",
+                &plain,
+                mime::APPLICATION_OCTET_STREAM,
+                plain.clone(),
+                StatusCode::OK,
+                true,
+            ),
+            (
+                "too big",
+                &too_big,
+                mime::APPLICATION_OCTET_STREAM,
+                too_big.clone(),
+                StatusCode::PAYLOAD_TOO_LARGE,
+                false,
+            ),
+            (
+                "unzips too big",
+                &too_big,
+                gzip_type.clone(),
+                test::gzip(&too_big, Compression::default())?,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                false,
+            ),
+            (
+                "not gzip",
+                &not_gzip,
+                gzip_type.clone(),
+                not_gzip.clone(),
+                StatusCode::OK,
+                false,
+            ),
+        ] {
+            // The store checks a file's content against the hash its part is named by.
+            let hash = util::hasher::hash_buffer(file);
+            let (body, headers) = create_form_data_payload_and_headers(
+                "file[]",
+                Some(hash.clone()),
+                Some(content_type),
+                Bytes::from(part),
+            );
+            let req = actix_web::test::TestRequest::post()
+                .uri(&uri)
+                .app_data(OxenAppData::new(sync_dir.to_path_buf()));
+            let req = headers
+                .into_iter()
+                .fold(req, |req, hdr| req.insert_header(hdr))
+                .set_payload(body)
+                .to_request();
+            let resp = actix_web::test::call_service(&app, req).await;
+            assert_eq!(resp.status(), status, "{name}");
+            let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+            if status == StatusCode::PAYLOAD_TOO_LARGE {
+                let refusal: StatusMessageDescription = serde_json::from_slice(&bytes)?;
+                assert!(
+                    refusal.status_description.contains(&hash)
+                        && refusal.status_description.contains("upload session"),
+                    "{name}: {}",
+                    refusal.status_description
+                );
+            } else {
+                // A file that is not stored comes back for the client to retry.
+                let response: ErrorFilesResponse = serde_json::from_slice(&bytes)?;
+                let retried: Vec<&str> =
+                    response.err_files.iter().map(|f| f.hash.as_str()).collect();
+                let expected: Vec<&str> = if stored { vec![] } else { vec![hash.as_str()] };
+                assert_eq!(retried, expected, "{name}");
+            }
+            assert_eq!(version_store.version_exists(&hash).await?, stored, "{name}");
+            if stored {
+                assert_eq!(&version_store.get_version(&hash).await?, file, "{name}");
+            }
         }
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
