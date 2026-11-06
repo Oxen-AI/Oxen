@@ -445,7 +445,10 @@ impl error::ResponseError for OxenHttpError {
                             .json(StatusMessageDescription::bad_request(error.to_string()))
                     }
                     OxenError::GzipTooLarge { .. } => {
-                        tracing::warn!(%error, "Refused gzipped data that inflates past its limit");
+                        tracing::warn!(
+                            exception.message = %error,
+                            "Refused gzipped data that inflates past its limit"
+                        );
                         HttpResponse::PayloadTooLarge()
                             .json(StatusMessageDescription::bad_request(error.to_string()))
                     }
