@@ -91,12 +91,10 @@ fn resize_within_source(
     }
 }
 
+/// The name a video thumbnail of the requested size is cached under. A requested timestamp has no
+/// part in it, since every thumbnail is taken from the video's first frame.
 #[cfg(feature = "ffmpeg")]
-fn video_thumbnail_filename(
-    width: Option<u32>,
-    height: Option<u32>,
-    timestamp: Option<f64>,
-) -> String {
+fn video_thumbnail_filename(width: Option<u32>, height: Option<u32>) -> String {
     let extension = "jpg";
     let (width_str, height_str) = match (width, height) {
         (Some(w), Some(h)) => (w.to_string(), h.to_string()),
@@ -104,10 +102,7 @@ fn video_thumbnail_filename(
         (None, Some(h)) => ("auto".to_string(), h.to_string()),
         (None, None) => ("320".to_string(), "240".to_string()),
     };
-    let timestamp_str = timestamp
-        .map(|t| format!("t{t:.1}"))
-        .unwrap_or_else(|| "t1.0".to_string());
-    format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
+    format!("thumbnail_{width_str}x{height_str}.{extension}")
 }
 
 async fn resize_cache_image_version_store(
@@ -273,11 +268,8 @@ pub async fn handle_video_thumbnail(
     #[cfg(feature = "ffmpeg")]
     {
         log::debug!("video_thumbnail {video_thumbnail:?}");
-        let derived_filename = video_thumbnail_filename(
-            video_thumbnail.width,
-            video_thumbnail.height,
-            video_thumbnail.timestamp,
-        );
+        let derived_filename =
+            video_thumbnail_filename(video_thumbnail.width, video_thumbnail.height);
 
         generate_video_thumbnail_version_store(
             version_store.clone(),
