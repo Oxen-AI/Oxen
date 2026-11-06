@@ -1,0 +1,46 @@
+name: Rust cache
+description: >
+  Restore the cargo registry and target directory with Swatinem/rust-cache, and save them when the
+  job ends, under a key that changes every ISO week (UTC). Run it after
+  remove-other-rust-toolchains, since rust-cache hashes every installed toolchain into the key.
+inputs:
+  prefix-key:
+    description: The start of the cache key, distinct for each job whose build differs.
+    required: true
+  save-if:
+    description: "'true' to save the cache when the job ends and the key missed."
+    default: "true"
+  cache-all-crates:
+    description: "'true' to keep every crate in the registry cache, not only the workspace's."
+    default: "false"
+  cache-on-failure:
+    description: "'true' to save the cache even when the job fails."
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # On a restore whose key differs from the computed one, rust-cache deletes every artifact more
+    # than a week old, and cargo never rewrites the artifact of an unchanged dependency, so a cache
+    # main saved over a week ago restores almost nothing a pull request can use. The ISO week in
+    # the key is part of the restore prefix too, so each week starts with no cache until main
+    # builds and saves one, which ci.yml's scheduled run does as the week begins.
+    - id: week
+      shell: bash
+      run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+    - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
+      with:
+        prefix-key: ${{ inputs.prefix-key }}
+        key: ${{ steps.week.outputs.week }}
+        save-if: ${{ inputs.save-if }}
+        cache-all-crates: ${{ inputs.cache-all-crates }}
+        cache-on-failure: ${{ inputs.cache-on-failure }}
+        # Don't cache ~/.cargo/bin. rustup ≥1.28 installs the proxy binaries (cargo, rustc, …) as
+        # symlinks to the `rustup` regular file. The action's cleanBin step skips symlinks via
+        # dirent.isFile() but can delete the `rustup` target (it isn't tracked in .crates2.json),
+        # which leaves the proxies pointing at nothing. With save-if restricted to main, a poisoned
+        # cache from one main run persists across PR runs until something changes the cache key.
+        # That's the proximal cause of the intermittent rustup-init failure described on the macOS
+        # shell setting in ci_test.yml. Nothing else in ~/.cargo/bin is worth caching, so the cost
+        # is nil.
+        cache-bin: false

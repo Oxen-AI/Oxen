@@ -3,9 +3,9 @@ description: >
   Report which of a CI job's steps must run. A pull request, or a push of one commit to main, runs
   the steps its changed files can affect. Such a push to main also skips them all when a pull
   request run from this repository already recorded a pass for the same job on the same tree, and
-  the commit changes nothing in the Rust cache key. Every other case, and any failure to decide,
-  runs everything. Requires the commit checked out with `fetch-depth: 2` and a token with
-  `actions: read`.
+  the commit changes none of the files the Rust cache key covers. Every other case, and any failure
+  to decide, runs everything. Requires the commit checked out with `fetch-depth: 2` and a token
+  with `actions: read`.
 inputs:
   job:
     description: The job's name in its pass record, distinct for each matrix entry.
