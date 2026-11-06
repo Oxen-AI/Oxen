@@ -38,6 +38,9 @@ impl std::error::Error for WorkspaceBranch {}
 pub enum OxenHttpError {
     InternalServerError,
     BadRequest(StringError),
+    /// An upload larger than the server takes, with a reason that tells the client what to send
+    /// instead. Answered with HTTP 413.
+    PayloadTooLarge(StringError),
     MultipartError(MultipartError),
     NotFound,
     AppDataDoesNotExist,
@@ -134,6 +137,14 @@ impl error::ResponseError for OxenHttpError {
                 let client_closed_request =
                     StatusCode::from_u16(499).unwrap_or(StatusCode::BAD_REQUEST);
                 HttpResponse::build(client_closed_request).finish()
+            }
+            OxenHttpError::PayloadTooLarge(desc) => {
+                tracing::warn!(
+                    exception.message = %desc,
+                    "Refused an upload larger than the server takes"
+                );
+                HttpResponse::PayloadTooLarge()
+                    .json(StatusMessageDescription::bad_request(desc.to_string()))
             }
             OxenHttpError::BadRequest(desc) => {
                 let error_json = json!({
@@ -431,6 +442,11 @@ impl error::ResponseError for OxenHttpError {
                     OxenError::VersionUploadRefused(_) => {
                         tracing::warn!(%error, "Refused a version upload request");
                         HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
+                    OxenError::GzipTooLarge { .. } => {
+                        tracing::warn!(%error, "Refused gzipped data that inflates past its limit");
+                        HttpResponse::PayloadTooLarge()
                             .json(StatusMessageDescription::bad_request(error.to_string()))
                     }
                     OxenError::NoMergeBase { base, head } => {

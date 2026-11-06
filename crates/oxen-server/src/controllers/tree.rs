@@ -24,7 +24,7 @@ use liboxen::view::tree::nodes::{
 };
 
 use crate::errors::OxenHttpError;
-use crate::helpers::{BodyEncoding, get_repo_async, spool_to_temp_file, stream_with_heartbeat};
+use crate::helpers::{get_repo_async, spool_to_temp_file, stream_with_heartbeat};
 use crate::params::TreeDepthQuery;
 use crate::params::parse_resource_async;
 use crate::params::{app_data, maybe_parse_two_dot, path_param};
@@ -207,7 +207,7 @@ pub async fn create_nodes(
     // fully before the response is returned keeps the connection busy (the client is uploading),
     // leaving the heartbeats below to cover the unpack.
     let tmp_dir = util::fs::oxen_hidden_dir(&repository.path).join("tmp");
-    let spooled = spool_to_temp_file(body, tmp_dir, u64::MAX, BodyEncoding::Plain).await??;
+    let spooled = spool_to_temp_file(body, tmp_dir).await?;
     let temp = spooled.file;
     let temp_path = temp.path().to_path_buf();
 

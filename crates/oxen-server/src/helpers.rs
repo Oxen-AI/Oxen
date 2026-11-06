@@ -5,17 +5,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use actix_web::http::header;
-use actix_web::web::{Bytes, BytesMut};
+use actix_web::web::{Bytes, Payload};
 use actix_web::{HttpResponse, HttpResponseBuilder};
-use futures_util::stream::{self, Stream, StreamExt as _};
+use futures_util::stream::{self, StreamExt as _};
 use liboxen::api::requests::RepoNew;
-use liboxen::constants::{STREAMING_BUF_SIZE, stream_segment_size};
+use liboxen::constants::STREAMING_BUF_SIZE;
 use liboxen::error::OxenError;
-use liboxen::model::{LocalRepository, MerkleHash, User};
+use liboxen::model::{LocalRepository, User};
 use liboxen::repositories;
 use liboxen::util;
-use liboxen::util::compression::decompress_gzip_capped;
-use liboxen::util::hasher::{HashingWriter, hash_buffer_128bit};
 use liboxen::view::StatusMessage;
 use serde::Serialize;
 use tempfile::NamedTempFile;
@@ -216,34 +214,19 @@ fn error_status_bytes(message: &str) -> Bytes {
 /// A request body written to a temporary file, which is deleted when this drops.
 pub(crate) struct SpooledBody {
     pub(crate) file: NamedTempFile,
-    /// The size of the file, after any gunzipping.
+    /// The size of the file.
     pub(crate) len: u64,
-    /// The hash of the file's bytes, after any gunzipping.
-    pub(crate) hash: MerkleHash,
-}
-
-/// How a request body's bytes are encoded.
-pub(crate) enum BodyEncoding {
-    Plain,
-    /// Gzipped, and refused once it inflates past `max_decompressed` bytes.
-    Gzip {
-        max_decompressed: u64,
-    },
 }
 
 /// How many chunks of a request body can wait for the disk while it is written to a file. The bound
 /// slows a fast client to the speed of the disk rather than keeping the body in memory.
 const SPOOL_CHANNEL_CAPACITY: usize = 8;
 
-/// Write `body` to a new temporary file in `dir`, gunzipping it on the way when it is gzipped, and
-/// hash what is written. The outer error is a failure to read the body, or a body of more than
-/// `max_len` bytes. The inner one is a failure to gunzip the body or to write the file.
-pub(crate) async fn spool_to_temp_file<E: Into<actix_web::Error>>(
-    mut body: impl Stream<Item = Result<Bytes, E>> + Unpin,
+/// Write `body` to a new temporary file in `dir`.
+pub(crate) async fn spool_to_temp_file(
+    mut body: Payload,
     dir: PathBuf,
-    max_len: u64,
-    encoding: BodyEncoding,
-) -> Result<Result<SpooledBody, OxenError>, OxenHttpError> {
+) -> Result<SpooledBody, OxenHttpError> {
     let (tx, rx) = mpsc::channel::<Bytes>(SPOOL_CHANNEL_CAPACITY);
     let chunks = stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|chunk| (Ok::<_, io::Error>(chunk), rx))
@@ -253,98 +236,24 @@ pub(crate) async fn spool_to_temp_file<E: Into<actix_web::Error>>(
         util::fs::create_dir_all(&dir)?;
         let file = NamedTempFile::new_in(&dir)?;
         let mut buffered = BufWriter::with_capacity(STREAMING_BUF_SIZE, file.as_file());
-        let mut hashing = HashingWriter::new(&mut buffered);
-        let len = match encoding {
-            BodyEncoding::Plain => io::copy(&mut reader, &mut hashing)?,
-            BodyEncoding::Gzip { max_decompressed } => {
-                util::compression::decompress_gzip_capped_into(
-                    &mut reader,
-                    &mut hashing,
-                    max_decompressed,
-                )?
-            }
-        };
-        let hash = MerkleHash::new(hashing.digest128());
+        let len = io::copy(&mut reader, &mut buffered)?;
         buffered.flush()?;
         drop(buffered); // release the borrow of `file` before handing it back
-        Ok(SpooledBody { file, len, hash })
+        Ok(SpooledBody { file, len })
     });
-    let mut received: u64 = 0;
     while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(Into::<actix_web::Error>::into)?;
-        received += chunk.len() as u64;
-        if received > max_len {
-            return Err(OxenHttpError::BadRequest(
-                format!("The upload is larger than the {max_len} bytes allowed").into(),
-            ));
-        }
-        // A send error means the writer ended early (a write or gunzip failed). Stop reading and
+        let chunk = chunk.map_err(actix_web::Error::from)?;
+        // A send error means the writer ended early (a write failed). Stop reading and
         // let the join below surface the underlying error.
         if tx.send(chunk).await.is_err() {
             break;
         }
     }
     drop(tx); // close the channel so the writer reads to the end
-    writer
+    let spooled = writer
         .await
-        .map_err(|e| OxenError::internal_error(format!("spool task panicked: {e}")).into())
-}
-
-/// A request body received in memory or written to a temporary file.
-pub(crate) enum ReceivedBody {
-    /// The body's bytes, after any gunzipping, and their hash.
-    Memory {
-        data: Bytes,
-        hash: MerkleHash,
-    },
-    Spooled(SpooledBody),
-}
-
-impl ReceivedBody {
-    /// The hash of the body's bytes, after any gunzipping.
-    pub(crate) fn hash(&self) -> MerkleHash {
-        match self {
-            ReceivedBody::Memory { hash, .. } => *hash,
-            ReceivedBody::Spooled(spooled) => spooled.hash,
-        }
-    }
-}
-
-/// Receive `body`, keeping it in memory when it arrives in at most `stream_segment_size()` bytes,
-/// gunzipping it when it is gzipped, and hashing it. A longer body is written to a temporary file
-/// in `dir`, as [`spool_to_temp_file`] writes it. The outer error is a failure to read the body, or
-/// a body of more than `max_len` bytes. The inner one is a failure to gunzip the body or to write
-/// the file.
-pub(crate) async fn receive_body<E: Into<actix_web::Error>>(
-    mut body: impl Stream<Item = Result<Bytes, E>> + Unpin,
-    dir: PathBuf,
-    max_len: u64,
-    encoding: BodyEncoding,
-) -> Result<Result<ReceivedBody, OxenError>, OxenHttpError> {
-    let mut received = BytesMut::new();
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(Into::<actix_web::Error>::into)?;
-        if (received.len() + chunk.len()) as u64 > stream_segment_size() {
-            let head = stream::iter([Ok(received.freeze()), Ok(chunk)]);
-            let spooled = spool_to_temp_file(head.chain(body), dir, max_len, encoding).await?;
-            return Ok(spooled.map(ReceivedBody::Spooled));
-        }
-        received.extend_from_slice(&chunk);
-    }
-    let received = received.freeze();
-    let decoded = tasks::spawn_blocking_per_item(move || -> Result<ReceivedBody, OxenError> {
-        let data = match encoding {
-            BodyEncoding::Plain => received,
-            BodyEncoding::Gzip { max_decompressed } => {
-                Bytes::from(decompress_gzip_capped(&received, max_decompressed)?)
-            }
-        };
-        let hash = MerkleHash::new(hash_buffer_128bit(&data));
-        Ok(ReceivedBody::Memory { data, hash })
-    });
-    decoded
-        .await
-        .map_err(|e| OxenError::internal_error(format!("decode task panicked: {e}")).into())
+        .map_err(|e| OxenError::internal_error(format!("spool task panicked: {e}")))??;
+    Ok(spooled)
 }
 
 #[cfg(test)]
