@@ -237,23 +237,7 @@ pub async fn diff_revs(
     if repositories::entries::get_file(repo, &commit_1, path_1)?.is_some()
         || repositories::entries::get_file(repo, &commit_2, path_2)?.is_some()
     {
-        let cpath_1 = CommitPath {
-            commit: Some(commit_1),
-            path: path_1.to_path_buf(),
-        };
-        let cpath_2 = CommitPath {
-            commit: Some(commit_2),
-            path: path_2.to_path_buf(),
-        };
-        let result = diff_commits(
-            repo,
-            cpath_1,
-            cpath_2,
-            opts.keys.clone(),
-            opts.targets.clone(),
-            vec![],
-        )
-        .await?;
+        let result = diff_commit_paths(repo, &commit_1, path_1, &commit_2, path_2, opts).await?;
         return Ok(vec![result]);
     }
 
@@ -268,104 +252,27 @@ pub async fn diff_revs(
     for entry in dir_diff.entries {
         log::debug!("entry: {entry:#?}");
 
-        match (entry.head_resource, entry.base_resource) {
-            (Some(head_res), Some(base_res)) => {
-                log::debug!("Computing content diff for file: {:?}", head_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: head_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: base_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        log::debug!("Content diff successful for file: {:?}", head_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!(
-                            "Failed to compute diff for file {:?}: {}",
-                            head_res.path,
-                            err
-                        );
-                    }
-                }
-            }
-            (None, Some(base_res)) => {
-                log::debug!("Computing content diff for file: {:?}", base_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: base_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: base_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        // log::debug!("Content diff successful for file: {:?}", base_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!("Failed to compute diff for file {err}");
-                    }
-                }
-            }
-
-            (Some(head_res), None) => {
-                log::debug!("Computing content diff for file: {:?}", head_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: head_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: head_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        // log::debug!("Content diff successful for file: {:?}", head_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!("Failed to compute diff for file {err}");
-                    }
-                }
-            }
-
-            _ => {}
+        let (entry_path_1, entry_path_2) = match (entry.head_resource, entry.base_resource) {
+            (Some(head_res), Some(base_res)) => (head_res.path, base_res.path),
+            (Some(res), None) | (None, Some(res)) => (res.path.clone(), res.path),
+            (None, None) => continue,
+        };
+        match diff_commit_paths(
+            repo,
+            &commit_1,
+            &entry_path_1,
+            &commit_2,
+            &entry_path_2,
+            opts,
+        )
+        .await
+        {
+            Ok(result) => content_diffs.push(result),
+            Err(err) => tracing::debug!(
+                oxen.file_path = %entry_path_1.display(),
+                exception.message = %err,
+                "Could not compute a file's diff between revisions"
+            ),
         }
     }
     log::debug!(
@@ -373,6 +280,35 @@ pub async fn diff_revs(
         content_diffs.len()
     );
     Ok(content_diffs)
+}
+
+/// Calls [`diff_commits`] for `path_1` in `commit_1` and `path_2` in `commit_2`, with the keys and
+/// targets in `opts`.
+async fn diff_commit_paths(
+    repo: &LocalRepository,
+    commit_1: &Commit,
+    path_1: &Path,
+    commit_2: &Commit,
+    path_2: &Path,
+    opts: &DiffOpts,
+) -> Result<DiffResult, OxenError> {
+    let cpath_1 = CommitPath {
+        commit: Some(commit_1.clone()),
+        path: path_1.to_path_buf(),
+    };
+    let cpath_2 = CommitPath {
+        commit: Some(commit_2.clone()),
+        path: path_2.to_path_buf(),
+    };
+    diff_commits(
+        repo,
+        cpath_1,
+        cpath_2,
+        opts.keys.clone(),
+        opts.targets.clone(),
+        vec![],
+    )
+    .await
 }
 
 pub async fn diff_commits(
