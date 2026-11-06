@@ -146,7 +146,9 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
                 ("oxen-revision-id" = String, description = "The commit ID of the file version")
             )
         ),
+        (status = 400, description = "Width or height out of range"),
         (status = 404, description = "Repository, commit, or file not found"),
+        (status = 415, description = "The file's image format is not supported for resizing"),
     )
 )]
 pub async fn download(

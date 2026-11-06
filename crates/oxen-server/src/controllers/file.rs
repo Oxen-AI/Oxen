@@ -137,7 +137,9 @@ pub struct FileQueryParams {
     ),
     responses(
         (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>),
-        (status = 404, description = "File not found")
+        (status = 400, description = "Width or height out of range"),
+        (status = 404, description = "File not found"),
+        (status = 415, description = "The file's image format is not supported for resizing")
     )
 )]
 pub async fn get(

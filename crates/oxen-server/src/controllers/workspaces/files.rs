@@ -73,7 +73,8 @@ pub struct WorkspaceFileQueryParams {
             )
         ),
         (status = 404, description = "Workspace or File not found"),
-        (status = 400, description = "Invalid parameters")
+        (status = 400, description = "Invalid parameters"),
+        (status = 415, description = "The file's image format is not supported for resizing")
     )
 )]
 pub async fn get(
