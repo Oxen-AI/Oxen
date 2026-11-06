@@ -33,7 +33,7 @@ jobs:
         if: steps.changes.outputs.code == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
         with:
-          cache: false # We use Swatinem/rust-cache directly below for save-if control.
+          cache: false # .github/actions/rust-cache caches below, with save-if control.
 
       - name: Remove other Rust toolchains
         if: steps.changes.outputs.code == 'true'
@@ -44,13 +44,12 @@ jobs:
       # the whole build cache every time one of them is bumped.
       - name: Cache Rust dependencies
         if: steps.changes.outputs.code == 'true'
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2.9.2 + PR 377
+        uses: ./.github/actions/rust-cache
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           prefix-key: rust-production
           cache-all-crates: true
           cache-on-failure: true
-          cache-bin: false # See the rust-test job in ci_test.yml for rationale.
 
       - name: Load tool versions
         if: steps.changes.outputs.code == 'true'

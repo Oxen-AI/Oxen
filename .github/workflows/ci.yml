@@ -7,6 +7,12 @@ on:
     # synchronize: New commits are pushed to the PR's head branch, or the base branch is changed (i.e. a 'push' event on the PR branch).
     # reopened: The PR is reopened.
     # ready_for_review: The PR is marked as ready for review.
+  # Sunday 17:17 MST (18:17 MDT), just after the week in the Rust cache keys changes, so main builds
+  # and saves the week's caches before pull requests need them (see .github/actions/rust-cache).
+  # workflow_dispatch on main saves them by hand when the scheduled run did not.
+  schedule:
+    - cron: "17 0 * * 1"
+  workflow_dispatch:
 
 name: 🐂 Continuous integration
 

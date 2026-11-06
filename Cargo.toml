@@ -181,7 +181,8 @@ xxhash-rust = { version = "0.8.19", features = ["xxh3"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 # CI's rust-cache key does not cover this file, so after a change to a dev profile CI rebuilds every
-# dependency on every run until the key changes: change each rust-cache `prefix-key` with it.
+# dependency on every run until the key next changes (each week at the latest): change each
+# rust-cache `prefix-key` with it.
 [profile.dev]
 debug = "limited"
 
