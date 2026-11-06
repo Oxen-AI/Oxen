@@ -210,6 +210,10 @@ pub async fn diff_uncommitted(
     Ok(diff_result)
 }
 
+/// Diffs a path between two revisions. A path that is a file in either commit gets that file's
+/// diff or the error it fails with, such as [`OxenError::TextDiffTooLarge`] for a version over the
+/// line diff's limits. A directory gets a diff for each changed file under it, leaving out any file
+/// whose diff fails.
 pub async fn diff_revs(
     repo: &LocalRepository,
     rev_1: &str,
@@ -229,6 +233,29 @@ pub async fn diff_revs(
         .ok_or_else(|| OxenError::RevisionNotFound(rev_1.into()))?;
     let commit_2 = repositories::revisions::get(repo, rev_2)?
         .ok_or_else(|| OxenError::RevisionNotFound(rev_2.into()))?;
+
+    if repositories::entries::get_file(repo, &commit_1, path_1)?.is_some()
+        || repositories::entries::get_file(repo, &commit_2, path_2)?.is_some()
+    {
+        let cpath_1 = CommitPath {
+            commit: Some(commit_1),
+            path: path_1.to_path_buf(),
+        };
+        let cpath_2 = CommitPath {
+            commit: Some(commit_2),
+            path: path_2.to_path_buf(),
+        };
+        let result = diff_commits(
+            repo,
+            cpath_1,
+            cpath_2,
+            opts.keys.clone(),
+            opts.targets.clone(),
+            vec![],
+        )
+        .await?;
+        return Ok(vec![result]);
+    }
 
     let dir_diff = diff_path(repo, &commit_1, &commit_2, path_1, path_2, opts).await?;
     log::debug!(
@@ -2195,31 +2222,50 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 ]
             );
 
+            // The CLI and the Python package diff two revisions through `diff`.
+            let oxen_diff = |path: &Path, base: &Commit, head: &Commit| {
+                repositories::diffs::diff(DiffOpts {
+                    repo_dir: Some(repo.path.clone()),
+                    path_1: path.to_path_buf(),
+                    revision_1: Some(base.id.clone()),
+                    revision_2: Some(head.id.clone()),
+                    ..DiffOpts::default()
+                })
+            };
+            let result = oxen_diff(path, &first, &edited).await?;
+            assert!(
+                matches!(result.as_slice(), [DiffResult::Text(_)]),
+                "oxen diff of a file under the limits gets its line diff, got {result:?}"
+            );
+
             for (head, limit) in [(&many_lines, "lines"), (&many_bytes, "bytes")] {
                 assert!(
                     compare(&repo, path, &edited, head).await?.is_none(),
                     "a version over the {limit} limit gets no line diff"
                 );
-                let result = repositories::diffs::diff_commits(
-                    &repo,
-                    CommitPath {
-                        commit: Some(edited.clone()),
-                        path: path.to_path_buf(),
-                    },
-                    CommitPath {
-                        commit: Some(head.clone()),
-                        path: path.to_path_buf(),
-                    },
-                    vec![],
-                    vec![],
-                    vec![],
-                )
-                .await;
+                let result = oxen_diff(path, &edited, head).await;
                 assert!(
                     matches!(result, Err(OxenError::TextDiffTooLarge(_))),
-                    "oxen diff refuses a version over the {limit} limit, got {result:?}"
+                    "oxen diff of the file refuses a version over the {limit} limit, got {result:?}"
+                );
+                let result = oxen_diff(Path::new(""), &edited, head).await?;
+                assert!(
+                    result.is_empty(),
+                    "oxen diff of the repository leaves out a version over the {limit} limit, got \
+                     {result:?}"
                 );
             }
+
+            // Every other error a file's diff fails with reaches the caller too.
+            let image = Path::new("photo.jpeg");
+            util::fs::copy(test::test_img_file(), repo.path.join(image))?;
+            repositories::add(&repo, &repo.path.join(image)).await?;
+            let with_image = repositories::commit(&repo, "add an image")?;
+            let result = oxen_diff(image, &many_bytes, &with_image).await;
+            assert!(
+                matches!(result, Err(OxenError::InvalidFileType(_))),
+                "oxen diff of a file it cannot compare refuses it, got {result:?}"
+            );
 
             Ok(())
         })
