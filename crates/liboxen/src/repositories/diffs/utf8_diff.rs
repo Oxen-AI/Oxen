@@ -3,33 +3,66 @@ use crate::model::diff::change_type::ChangeType;
 use crate::model::diff::text_diff::LineDiff;
 use crate::model::diff::text_diff::TextDiff;
 
-use difference::{Changeset, Difference};
+use similar::{Algorithm, DiffTag, capture_diff_slices_deadline};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
-/// Adds a slice of lines from a text block to the result vector with a given modification type.
-fn add_lines_to_diff(
-    result: &mut TextDiff,
-    text_block: &str,
-    modification: ChangeType,
-    lines_to_take: Option<(usize, usize)>,
-) {
-    let lines: Vec<&str> = text_block.split('\n').collect();
-    let (start, end) = lines_to_take.unwrap_or((0, lines.len()));
+/// How long a line diff searches for the fewest changed lines before it settles for a diff that
+/// marks more lines as changed than it has to.
+const DIFF_TIMEOUT: Duration = Duration::from_secs(1);
 
-    // Ensure start and end are within bounds
-    let start = start.min(lines.len());
-    let end = end.min(lines.len());
+/// A run of lines the two versions share, or that the newer one removes or adds.
+enum Block<'a> {
+    Same(&'a [&'a str]),
+    Add(&'a [&'a str]),
+    Rem(&'a [&'a str]),
+}
 
-    if start >= end {
-        return;
+/// The lines of a version, split on `\n` so a trailing newline ends in an empty line. Empty text
+/// has no lines.
+fn split_lines(text: &str) -> Vec<&str> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n').collect()
     }
+}
 
-    for line in &lines[start..end] {
-        result.lines.push(LineDiff {
-            modification,
-            text: line.to_string(),
-        });
+/// The two versions' lines as runs of shared, removed, and added lines, with each change's removed
+/// lines ahead of its added ones.
+fn blocks<'a>(old: &'a [&'a str], new: &'a [&'a str]) -> Vec<Block<'a>> {
+    let deadline = Some(Instant::now() + DIFF_TIMEOUT);
+    let ops = capture_diff_slices_deadline(Algorithm::Myers, old, new, deadline);
+    // The equal runs, then an empty one at the end of both versions, so the lines between one
+    // run and the next are the change between them.
+    let equal_runs = ops
+        .iter()
+        .filter(|op| op.tag() == DiffTag::Equal)
+        .map(|op| (op.old_range(), op.new_range()))
+        .chain([(old.len()..old.len(), new.len()..new.len())]);
+    let mut blocks = Vec::new();
+    let (mut old_pos, mut new_pos) = (0, 0);
+    for (old_run, new_run) in equal_runs {
+        if old_pos < old_run.start {
+            blocks.push(Block::Rem(&old[old_pos..old_run.start]));
+        }
+        if new_pos < new_run.start {
+            blocks.push(Block::Add(&new[new_pos..new_run.start]));
+        }
+        (old_pos, new_pos) = (old_run.end, new_run.end);
+        if !old_run.is_empty() {
+            blocks.push(Block::Same(&old[old_run]));
+        }
     }
+    blocks
+}
+
+/// Adds lines to the result with a given modification type.
+fn add_lines_to_diff(result: &mut TextDiff, lines: &[&str], modification: ChangeType) {
+    result.lines.extend(lines.iter().map(|line| LineDiff {
+        modification,
+        text: line.to_string(),
+    }));
 }
 
 pub fn diff(
@@ -50,15 +83,17 @@ pub fn diff(
 
     let original_data = original_data.unwrap_or_default();
     let compare_data = compare_data.unwrap_or_default();
+    let original_lines = split_lines(&original_data);
+    let compare_lines = split_lines(&compare_data);
 
-    let Changeset { diffs, .. } = Changeset::new(&original_data, &compare_data, "\n");
-    log::debug!("Changeset created with {} diffs", diffs.len());
+    let diffs = blocks(&original_lines, &compare_lines);
+    log::debug!("Line diff found {} blocks", diffs.len());
 
     // Find the indices of all Add or Rem changes
     let change_indices: Vec<usize> = diffs
         .iter()
         .enumerate()
-        .filter(|(_, d)| !matches!(d, Difference::Same(_)))
+        .filter(|(_, d)| !matches!(d, Block::Same(_)))
         .map(|(i, _)| i)
         .collect();
 
@@ -94,9 +129,8 @@ pub fn diff(
         }
 
         if change_idx > 0
-            && let Some(Difference::Same(text)) = diffs.get(context_diff_idx)
+            && let Some(Block::Same(lines)) = diffs.get(context_diff_idx)
         {
-            let lines: Vec<_> = text.split('\n').collect();
             let desired_start = lines.len().saturating_sub(3);
             let actual_start = desired_start.max(pre_context_lines_to_skip);
             log::debug!(
@@ -104,9 +138,8 @@ pub fn diff(
             );
             add_lines_to_diff(
                 &mut result,
-                text,
+                lines.get(actual_start..).unwrap_or_default(),
                 ChangeType::Unchanged,
-                Some((actual_start, lines.len())),
             );
         }
         post_context_lines_from_prev_chunk = 0;
@@ -114,15 +147,15 @@ pub fn diff(
         let mut current_idx = change_idx;
         while let Some(diff) = diffs.get(current_idx) {
             match diff {
-                Difference::Add(text) => {
+                Block::Add(lines) => {
                     log::debug!("Adding Added block at index {current_idx}");
-                    add_lines_to_diff(&mut result, text, ChangeType::Added, None);
+                    add_lines_to_diff(&mut result, lines, ChangeType::Added);
                 }
-                Difference::Rem(text) => {
+                Block::Rem(lines) => {
                     log::debug!("Adding Removed block at index {current_idx}");
-                    add_lines_to_diff(&mut result, text, ChangeType::Removed, None);
+                    add_lines_to_diff(&mut result, lines, ChangeType::Removed);
                 }
-                Difference::Same(_) => {
+                Block::Same(_) => {
                     break;
                 }
             }
@@ -130,11 +163,10 @@ pub fn diff(
             current_idx += 1;
         }
 
-        if let Some(Difference::Same(text)) = diffs.get(current_idx) {
-            let lines: Vec<_> = text.split('\n').collect();
+        if let Some(Block::Same(lines)) = diffs.get(current_idx) {
             let count = 2.min(lines.len());
             log::debug!("Adding post-context from diff [{current_idx}], lines [..{count}]");
-            add_lines_to_diff(&mut result, text, ChangeType::Unchanged, Some((0, count)));
+            add_lines_to_diff(&mut result, &lines[..count], ChangeType::Unchanged);
 
             last_processed_diff_idx = current_idx as i32;
             post_context_lines_from_prev_chunk = count;
@@ -146,4 +178,105 @@ pub fn diff(
         result.lines.len()
     );
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The diff's lines, each marked `+` when added, `-` when removed, and ` ` otherwise.
+    fn render(old: Option<&str>, new: Option<&str>) -> Vec<String> {
+        diff(old.map(String::from), None, new.map(String::from), None)
+            .expect("a line diff never fails")
+            .lines
+            .iter()
+            .map(|line| {
+                let mark = match line.modification {
+                    ChangeType::Added => '+',
+                    ChangeType::Removed => '-',
+                    _ => ' ',
+                };
+                format!("{mark}{}", line.text)
+            })
+            .collect()
+    }
+
+    /// Pins the chunks clients render: three lines of context before a change, two after, and `...`
+    /// between chunks.
+    #[test]
+    fn test_diff_keeps_chunks_and_context() {
+        let twelve = (1..=12)
+            .map(|i| format!("l{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let cases = vec![
+            (
+                "two chunks",
+                Some(twelve.clone()),
+                Some(twelve.replace("l5", "L5").replace("l11", "L11")),
+                vec![
+                    " l2", " l3", " l4", "-l5", "+L5", " l6", " l7", " ...", " l8", " l9", " l10",
+                    "-l11", "+L11", " l12",
+                ],
+            ),
+            (
+                "one line between changes",
+                Some(twelve.clone()),
+                Some(twelve.replace("l5", "L5").replace("l7", "L7")),
+                vec![
+                    " l2", " l3", " l4", "-l5", "+L5", " l6", " ...", "-l7", "+L7", " l8", " l9",
+                ],
+            ),
+            (
+                "three lines between changes",
+                Some(twelve.clone()),
+                Some(twelve.replace("l3", "L3").replace("l7", "L7")),
+                vec![
+                    " l1", " l2", "-l3", "+L3", " l4", " l5", " ...", " l6", "-l7", "+L7", " l8",
+                    " l9",
+                ],
+            ),
+            (
+                "first line",
+                Some("a\nb\nc\nd".into()),
+                Some("A\nb\nc\nd".into()),
+                vec!["-a", "+A", " b", " c"],
+            ),
+            (
+                "last line",
+                Some("a\nb\nc\nd".into()),
+                Some("a\nb\nc\nD".into()),
+                vec![" a", " b", " c", "-d", "+D"],
+            ),
+            (
+                "trailing newline added",
+                Some("a\nb".into()),
+                Some("a\nb\n".into()),
+                vec![" a", " b", "+"],
+            ),
+            ("added file", None, Some("x\ny".into()), vec!["+x", "+y"]),
+            ("removed file", Some("x\ny".into()), None, vec!["-x", "-y"]),
+            (
+                "identical",
+                Some("a\nb\n".into()),
+                Some("a\nb\n".into()),
+                vec![],
+            ),
+            (
+                "three lines replaced by one",
+                Some("a\nb\nc\nd\ne\nf".into()),
+                Some("a\nX\ne\nf".into()),
+                vec![" a", "-b", "-c", "-d", "+X", " e", " f"],
+            ),
+            (
+                "one line inserted",
+                Some("a\nb\nc\nd\ne\nf\ng\nh".into()),
+                Some("a\nb\nc\nd\nNEW\ne\nf\ng\nh".into()),
+                vec![" b", " c", " d", "+NEW", " e", " f"],
+            ),
+        ];
+        for (name, old, new, expected) in cases {
+            assert_eq!(render(old.as_deref(), new.as_deref()), expected, "{name}");
+        }
+    }
 }

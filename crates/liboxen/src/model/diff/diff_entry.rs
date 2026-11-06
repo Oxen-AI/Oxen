@@ -244,6 +244,7 @@ impl DiffEntry {
             .await
             {
                 Ok(text_diff) => Some(GenericDiff::TextDiff(text_diff)),
+                // Any error leaves the entry without a line diff, a version too large for one included.
                 Err(_) => None,
             }
         } else {
