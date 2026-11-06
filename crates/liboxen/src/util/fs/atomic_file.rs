@@ -6,6 +6,7 @@
 //! to be honored inside this module.
 
 use bytes::{Bytes, BytesMut};
+use parking_lot::Mutex;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -138,26 +139,59 @@ impl AtomicTempFile {
             .keep()
             .map_err(|err| (err.file.path().to_path_buf(), err.error))?;
         std::fs::rename(&temp_path, &target).map_err(|err| (temp_path, err))?;
-
-        // Best-effort fsync the parent directory. It's okay if it fails. This operation isn't
-        // critical, and we know it isn't supported on Windows at all.
-        if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
-            match std::fs::File::open(parent) {
-                Ok(dir) => {
-                    if let Err(err) = dir.sync_all() {
-                        log::debug!(
-                            "AtomicTempFile::commit: parent fsync failed for {parent:?}: {err}"
-                        );
-                    }
-                }
-                Err(err) => log::debug!(
-                    "AtomicTempFile::commit: could not open parent {parent:?} for fsync: {err}"
-                ),
-            }
-        }
-
+        sync_parent_best_effort(&target);
         Ok(())
     }
+}
+
+/// Best-effort fsync of `target`'s parent directory, so a rename into it survives a crash. A
+/// failure is only logged, since Windows cannot fsync a directory at all.
+fn sync_parent_best_effort(target: &Path) {
+    if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
+        match std::fs::File::open(parent) {
+            Ok(dir) => {
+                if let Err(err) = dir.sync_all() {
+                    log::debug!("Atomic publish: parent fsync failed for {parent:?}: {err}");
+                }
+            }
+            Err(err) => {
+                log::debug!("Atomic publish: could not open parent {parent:?} for fsync: {err}")
+            }
+        }
+    }
+}
+
+/// Make durable every write on `dir`'s filesystem that a file sync handed to the device before this
+/// call, every rename on it, and on Linux every other write too. Elsewhere than macOS and Linux it
+/// does nothing.
+pub(crate) fn sync_filesystem(dir: &Path) -> Result<(), OxenError> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let dir_file = File::open(dir).map_err(|err| OxenError::file_error(dir, err))?;
+        // `sync_all` is `F_FULLFSYNC` on macOS, and on APFS one, even on a directory, commits
+        // every earlier rename on the volume and drains the drive's cache of every earlier
+        // `fsync(2)`.
+        #[cfg(target_os = "macos")]
+        dir_file.sync_all()?;
+        #[cfg(target_os = "linux")]
+        rustix::fs::syncfs(&dir_file).map_err(std::io::Error::from)?;
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = dir;
+    Ok(())
+}
+
+/// Hand a batched temp file's bytes toward the device: a plain `fsync(2)` on macOS, which the
+/// batch's [`sync_filesystem`] then makes durable, nothing on Linux, where that `syncfs` writes the
+/// bytes itself, and a full sync elsewhere.
+fn sync_for_batch(file: &File) -> Result<(), OxenError> {
+    #[cfg(target_os = "macos")]
+    rustix::fs::fsync(file).map_err(std::io::Error::from)?;
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    file.sync_all()?;
+    #[cfg(target_os = "linux")]
+    let _ = file;
+    Ok(())
 }
 
 /// Create `target`'s parent directory if it has one, and return it.
@@ -321,6 +355,15 @@ impl AtomicFile {
     where
         R: std::io::Read + ?Sized,
     {
+        self.fill(reader)?.commit()
+    }
+
+    /// Write everything `reader` yields to a new temp file beside the target, hash-checked and
+    /// stamped as this publish's options ask, ready to rename into place.
+    fn fill<R>(&self, reader: &mut R) -> Result<AtomicTempFile, OxenError>
+    where
+        R: std::io::Read + ?Sized,
+    {
         let mut tmp = AtomicTempFile::create(&self.target)?;
         let actual_hash = {
             let mut buf_writer =
@@ -338,7 +381,8 @@ impl AtomicFile {
             buf_writer.flush()?;
             actual
         };
-        self.publish(tmp, actual_hash)
+        self.verify_and_stamp(&mut tmp, actual_hash)?;
+        Ok(tmp)
     }
 
     /// Publish the in-order concatenation of `paths` to the target path, opening one source file
@@ -551,6 +595,67 @@ impl AtomicPartsFile {
     /// target's [`with_hash`][AtomicFile::with_hash] when one was set.
     pub(crate) fn commit(self, actual_hash: Option<MerkleHash>) -> Result<(), OxenError> {
         self.file.publish(self.tmp, actual_hash)
+    }
+}
+
+/// Atomic publishes of many files at once, made durable together by
+/// [`publish`][Self::publish] with a few filesystem-wide syncs rather than one or two per file.
+/// Every target must be on one filesystem. Dropping the batch unpublished removes every temp file it
+/// wrote.
+#[derive(Default)]
+pub(crate) struct AtomicFileBatch {
+    pending: Mutex<Vec<PendingRename>>,
+}
+
+/// A temp file written for an [`AtomicFileBatch`], closed and waiting to be renamed over `target`.
+struct PendingRename {
+    temp: tempfile::TempPath,
+    target: PathBuf,
+}
+
+impl AtomicFileBatch {
+    /// Write the contents of file `src` to a temp file beside `file`'s target, honoring its
+    /// [`with_hash`][AtomicFile::with_hash] and [`with_mtime`][AtomicFile::with_mtime], to publish
+    /// with the rest of the batch. Safe to call from many threads at once.
+    pub(crate) fn copy_from(&self, file: AtomicFile, src: &Path) -> Result<(), OxenError> {
+        let mut src_file = File::open(src).map_err(|err| OxenError::file_error(src, err))?;
+        let tmp = file.fill(&mut src_file)?;
+        sync_for_batch(tmp.tmp.as_file())?;
+        let AtomicTempFile { tmp, target } = tmp;
+        self.pending.lock().push(PendingRename {
+            temp: tmp.into_temp_path(),
+            target,
+        });
+        Ok(())
+    }
+
+    /// Rename every file written into place, durably on macOS and Linux. A failed rename stops the
+    /// publish, leaving the files renamed before it published and removing the rest.
+    pub(crate) fn publish(self) -> Result<(), OxenError> {
+        let pending = self.pending.into_inner();
+        let Some(first) = pending.first() else {
+            return Ok(());
+        };
+        let dir = first
+            .target
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        // The temp files' bytes reach the device before any rename can
+        sync_filesystem(&dir)?;
+        for PendingRename { temp, target } in pending {
+            // `keep` then `std::fs::rename`, for the Windows reason `rename_into_place` gives
+            let temp_path = temp
+                .keep()
+                .map_err(|err| OxenError::file_rename_error(&err.path, &target, err.error))?;
+            if let Err(err) = std::fs::rename(&temp_path, &target) {
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(OxenError::file_rename_error(&temp_path, &target, err));
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            sync_parent_best_effort(&target);
+        }
+        sync_filesystem(&dir)
     }
 }
 

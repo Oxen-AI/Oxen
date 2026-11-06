@@ -1,4 +1,5 @@
 use std;
+use std::collections::HashMap;
 use std::fs::metadata as sync_metadata;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use crate::model::MerkleHash;
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore, VersionUpload,
 };
-use crate::util::fs::{AtomicFile, AtomicPartsFile};
+use crate::util::fs::{AtomicFile, AtomicFileBatch, AtomicPartsFile};
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
 
@@ -123,6 +124,30 @@ impl VersionStore for LocalVersionStore {
         }
 
         Ok(())
+    }
+
+    async fn store_versions_from_paths(
+        &self,
+        files: HashMap<MerkleHash, PathBuf>,
+    ) -> Result<Vec<(MerkleHash, OxenError)>, OxenError> {
+        let store = LocalVersionStore::new(&self.root_path);
+        spawn_blocking(move || {
+            let batch = AtomicFileBatch::default();
+            let failed = files
+                .into_par_iter()
+                .filter_map(|(hash, path)| {
+                    let target = store.version_path(&hash.to_string());
+                    if target.exists() {
+                        return None;
+                    }
+                    let file = AtomicFile::new(&target).with_hash(hash);
+                    batch.copy_from(file, &path).err().map(|err| (hash, err))
+                })
+                .collect();
+            batch.publish()?;
+            Ok(failed)
+        })
+        .await?
     }
 
     async fn store_version_from_temp_file(

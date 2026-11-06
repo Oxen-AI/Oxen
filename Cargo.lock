@@ -4657,6 +4657,7 @@ dependencies = [
  "reqwest 0.13.5",
  "rmp-serde",
  "rocksdb",
+ "rustix 1.1.5",
  "s3s",
  "s3s-fs",
  "serde",

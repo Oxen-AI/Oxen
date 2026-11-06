@@ -1,0 +1,67 @@
+# Scratch workflow for ENG-2330, never merged: times `oxen add` on Windows for the commit this
+# branch was cut from against this branch's batched version-file publishes.
+name: ENG-2330 Windows add timing
+
+on:
+  push:
+    branches: [cleancut/batch-add-flush-windows-timing]
+
+permissions:
+  contents: read
+
+jobs:
+  time-add:
+    runs-on: windows-x64-8cpu-32ram-300ssd
+    timeout-minutes: 150
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_PROFILE_RELEASE_LTO: thin
+    steps:
+      - name: Checkout this branch
+        uses: actions/checkout@v7
+        with:
+          path: branch
+          persist-credentials: false
+
+      - name: Checkout the baseline
+        uses: actions/checkout@v7
+        with:
+          ref: 0d3045335f93d77171f95f599a3cee3a080622ae
+          path: main
+          persist-credentials: false
+
+      - name: Setup Rust Toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1.17.0
+        with:
+          toolchain: 1.99.1
+          rustflags: "-C link-arg=/DEBUG:NONE"
+          cache: false
+
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build the baseline
+        working-directory: main
+        run: cargo build --release --bin oxen
+
+      - name: Build this branch
+        working-directory: branch
+        run: cargo build --release --bin oxen
+
+      - name: Time oxen add
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\eng2330" | Out-Null
+          python -I branch\.github\eng2330\bench.py "$env:RUNNER_TEMP\eng2330" 5 - `
+            "main=$env:GITHUB_WORKSPACE\main\target\release\oxen.exe" `
+            "branch=$env:GITHUB_WORKSPACE\branch\target\release\oxen.exe" |
+            Tee-Object -FilePath windows.jsonl
+
+      - name: Upload the results
+        uses: actions/upload-artifact@v7
+        with:
+          name: eng2330-windows-timing
+          path: windows.jsonl

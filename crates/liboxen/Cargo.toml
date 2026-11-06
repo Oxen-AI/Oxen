@@ -147,6 +147,11 @@ walkdir = { workspace = true }
 xxhash-rust = { workspace = true }
 zip = { workspace = true }
 
+# The plain `fsync(2)` on macOS and `syncfs` on Linux, which std lacks, that let a batch of atomic
+# writes share a few filesystem-wide syncs.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+rustix = { workspace = true }
+
 # LMDB's default System V semaphores on macOS are keyed by 16 bits of the lock file's inode, so two
 # envs can share a lock and one closing breaks the other's transactions with EINVAL (ENG-2066).
 [target.'cfg(target_os = "macos")'.dependencies]

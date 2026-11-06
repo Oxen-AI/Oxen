@@ -61,9 +61,7 @@ impl RunCmd for AddCmd {
         let repo = LocalRepository::from_current_dir()?;
         check_repo_migration_needed(&repo)?;
 
-        for path in &opts.paths {
-            repositories::add(&repo, path).await?;
-        }
+        repositories::add_all(&repo, &opts.paths).await?;
 
         Ok(())
     }

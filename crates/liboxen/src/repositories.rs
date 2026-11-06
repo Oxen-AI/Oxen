@@ -65,7 +65,7 @@ pub mod verify;
 pub mod versions;
 pub mod workspaces;
 
-pub use add::add;
+pub use add::{add, add_all};
 pub use checkout::checkout;
 pub use clone::{clone, clone_url, deep_clone_url};
 pub use commits::commit;

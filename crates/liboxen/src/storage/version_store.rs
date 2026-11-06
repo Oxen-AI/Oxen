@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -20,6 +22,7 @@ use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::storage::{LocalVersionStore, S3Opts, S3VersionStore};
 use crate::util;
+use crate::util::concurrency;
 use crate::view::versions::CleanCorruptedVersionsResult;
 
 /// A boxed, `Send + Unpin` stream of byte chunks, each an `io::Result`.
@@ -252,6 +255,34 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         self.store_version_from_reader(&hash.to_string(), Box::new(reader), size)
             .await?;
         Ok(LocalFilePath::Temp(file.into_temp_path()))
+    }
+
+    /// Store the file at each path in `files` as the version file for the hash it is keyed by,
+    /// which its bytes must hash to. Returns each hash whose file could not be read or did not
+    /// match, with its error, and an `Err` only when the version files read cannot be published. On
+    /// macOS and Linux the local store makes every version file durable before returning.
+    ///
+    /// The default implementation stores each file with `store_version_from_reader` in parallel.
+    async fn store_versions_from_paths(
+        &self,
+        files: HashMap<MerkleHash, PathBuf>,
+    ) -> Result<Vec<(MerkleHash, OxenError)>, OxenError> {
+        let concurrency = concurrency::num_threads_for_items(files.len());
+        Ok(stream::iter(files)
+            .map(|(hash, path)| async move {
+                let stored = async {
+                    let file = tokio::fs::File::open(&path).await?;
+                    let size = file.metadata().await?.len();
+                    let reader = tokio::io::BufReader::new(file);
+                    self.store_version_from_reader(&hash.to_string(), Box::new(reader), size)
+                        .await
+                };
+                stored.await.err().map(|err| (hash, err))
+            })
+            .buffer_unordered(concurrency)
+            .filter_map(future::ready)
+            .collect()
+            .await)
     }
 
     /// Store a version file from bytes.
@@ -872,6 +903,31 @@ pub(crate) mod verify_suite {
         assert!(
             !store.version_exists(WRONG_HASH).await.unwrap(),
             "store_version_from_reader committed a version object on mismatch"
+        );
+
+        let source = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(source.path(), DATA).unwrap();
+        let right_hash = hasher::hash_buffer(DATA);
+        let files = HashMap::from([
+            (WRONG_HASH.parse().unwrap(), source.path().to_path_buf()),
+            (right_hash.parse().unwrap(), source.path().to_path_buf()),
+        ]);
+        let failed = store.store_versions_from_paths(files).await.unwrap();
+        assert_eq!(
+            failed.len(),
+            1,
+            "only the mismatched file fails: {failed:?}"
+        );
+        let (failed_hash, err) = failed.into_iter().next().unwrap();
+        assert_eq!(failed_hash.to_string(), WRONG_HASH);
+        assert_mismatch(Err(err), "store_versions_from_paths");
+        assert!(
+            !store.version_exists(WRONG_HASH).await.unwrap(),
+            "store_versions_from_paths committed a version object on mismatch"
+        );
+        assert!(
+            store.version_exists(&right_hash).await.unwrap(),
+            "store_versions_from_paths stores a file whose bytes match beside one that does not"
         );
 
         // Stage one chunk (exempt from verification), then combine under a key the reassembled
