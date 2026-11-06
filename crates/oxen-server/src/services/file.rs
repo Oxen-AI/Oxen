@@ -1,9 +1,9 @@
 use actix_multipart::MultipartError;
 use actix_multipart::form::MultipartFormConfig;
 use actix_web::Scope;
-use actix_web::error::{InternalError, PayloadError};
-use actix_web::{HttpResponse, guard, web};
-use liboxen::view::StatusMessageDescription;
+use actix_web::error::PayloadError;
+use actix_web::{guard, web};
+use liboxen::error::StringError;
 
 use crate::controllers;
 use crate::errors::OxenHttpError;
@@ -50,9 +50,7 @@ pub(crate) fn upload_limits(max_bytes: usize) -> MultipartFormConfig {
                      workspace and commit it.",
                     max_bytes / (1024 * 1024)
                 );
-                let response = HttpResponse::PayloadTooLarge()
-                    .json(StatusMessageDescription::bad_request(&description));
-                InternalError::from_response(description, response).into()
+                OxenHttpError::PayloadTooLarge(StringError::new(description)).into()
             }
             err => OxenHttpError::MultipartError(err).into(),
         })

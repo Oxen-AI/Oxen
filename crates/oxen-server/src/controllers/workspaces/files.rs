@@ -1,29 +1,31 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::{
-    BodyEncoding, ReceivedBody, file_stream_response, get_repo, get_repo_async, receive_body,
-};
+use crate::helpers::{file_stream_response, get_repo, get_repo_async};
 use crate::params::{app_data, path_param, request_relative_path};
 use crate::tasks;
 
-use liboxen::constants::{MAX_FILE_SIZE, stream_segment_size};
+use liboxen::constants::stream_segment_size;
 use liboxen::core::repo_locks;
 use liboxen::core::staged::get_staged_db_manager;
 use liboxen::core::v_latest::workspaces::files::{
     CommittedFiles, InspectedVersionFile, VersionFileToStage, add_version_files,
 };
-use liboxen::error::OxenError;
-use liboxen::model::Workspace;
+use liboxen::error::{OxenError, StringError};
 use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
+use liboxen::model::{MerkleHash, Workspace};
 use liboxen::repositories;
 use liboxen::storage::VersionStore;
 use liboxen::util;
+use liboxen::util::compression::decompress_gzip_capped;
+use liboxen::util::hasher::hash_buffer_128bit;
 use liboxen::view::workspaces::RenameRequest;
 use liboxen::view::{FilePathsResponse, StatusMessage, StatusMessageDescription};
 
-use actix_multipart::Multipart;
+use actix_multipart::{Field, Multipart};
+use actix_web::web::{Bytes, BytesMut};
 use actix_web::{HttpRequest, HttpResponse, web};
+use bytesize::ByteSize;
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -186,7 +188,7 @@ pub async fn get(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
-    description = "Upload and stage files to a workspace. Accept a multipart with either gzipped or uncompressed file parts. Use the filename from the file part and compute the file hash from the content.",
+    description = "Upload and stage files to a workspace. Accept a multipart with either gzipped or uncompressed file parts, each holding a file of at most 10 MiB. Use the filename from the file part and compute the file hash from the content. Send a larger file through an upload session (`POST /api/repos/{namespace}/{repo_name}/versions/uploads`).",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -202,7 +204,8 @@ pub async fn get(
     responses(
         (status = 200, description = "File successfully uploaded to workspace", body = FilePathsResponse),
         (status = 404, description = "Workspace not found"),
-        (status = 400, description = "Invalid upload request")
+        (status = 400, description = "Invalid upload request"),
+        (status = 413, description = "A file part is larger than 10 MiB")
     )
 )]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
@@ -409,15 +412,14 @@ struct ReceivedFile {
     part_index: usize,
 }
 
-/// Receive each file part of `payload`, gunzipping a gzipped part, and store the files in the
-/// repository's version store, several at once. A part that arrives in at most
-/// `stream_segment_size()` bytes stays in memory until it is stored and inspected, and a longer one
-/// is written to a temporary file in `workspace`'s directory. A part's filename is its path in
-/// `workspace` relative to `directory`, and a part whose content `workspace`'s commit has at that
-/// path is neither stored nor inspected, unless the store has lost the commit's copy.
+/// Receive each file part of `payload` into memory, as [`receive_part`] does, and store the files
+/// in the repository's version store, several at once. A part's filename is its path in `workspace`
+/// relative to `directory`, and a part whose content `workspace`'s commit has at that path is
+/// neither stored nor inspected, unless the store has lost the commit's copy.
 ///
-/// Returns the files to stage, in the order their parts arrived. A part that fails to arrive, to
-/// store, or to be inspected is logged and left out.
+/// Returns the files to stage, in the order their parts arrived. A part holding a file of more than
+/// `stream_segment_size()` bytes fails the whole upload with 413. A part that is not gzip data
+/// though labeled so, or that fails to store or to be inspected, is logged and left out.
 async fn save_parts(
     mut payload: Multipart,
     workspace: &Workspace,
@@ -425,7 +427,6 @@ async fn save_parts(
 ) -> Result<Vec<VersionFileToStage>, OxenHttpError> {
     let version_store = workspace.base_repo.version_store();
     let committed = CommittedFiles::load(workspace).await?;
-    let dir = workspace.dir();
     let max_in_flight = util::concurrency::default_num_threads() * 4;
     let mut in_flight: JoinSet<Option<ReceivedFile>> = JoinSet::new();
     let mut received = vec![];
@@ -458,20 +459,8 @@ async fn save_parts(
             })?;
         let part_index = part_count;
         part_count += 1;
-        let is_gzipped = field
-            .content_type()
-            .map(|mime| mime.type_() == mime::APPLICATION && mime.subtype() == "gzip")
-            .unwrap_or(false);
-        let encoding = if is_gzipped {
-            BodyEncoding::Gzip {
-                max_decompressed: stream_segment_size(),
-            }
-        } else {
-            BodyEncoding::Plain
-        };
-
-        let body = match receive_body(field, dir.clone(), MAX_FILE_SIZE, encoding).await? {
-            Ok(body) => body,
+        let part = match receive_part(field, &dst_path).await? {
+            Ok(part) => part,
             Err(e) => {
                 tracing::error!(
                     oxen.file_path = %dst_path.display(),
@@ -491,8 +480,8 @@ async fn save_parts(
 
         let (version_store, committed) = (Arc::clone(&version_store), Arc::clone(&committed));
         in_flight.spawn(tasks::inherit_hub(async move {
-            let hash = body.hash();
-            let stored = |dst_path| store_and_inspect(version_store, body, dst_path);
+            let hash = part.hash;
+            let stored = |dst_path| store_and_inspect(version_store, part, dst_path);
             match VersionFileToStage::prepare(&committed, dst_path.clone(), hash, stored).await {
                 Ok(file) => Some(ReceivedFile { file, part_index }),
                 Err(e) => {
@@ -518,37 +507,83 @@ async fn save_parts(
     Ok(received.into_iter().map(|received| received.file).collect())
 }
 
-/// Store `body` in `version_store`, and inspect it to stage at `dst_path`.
+/// How many bytes gzip may add to a file part whose content does not compress, 64 KiB. zlib's own
+/// bound adds about 3.2 KiB to 10 MiB.
+const GZIP_GROWTH_ALLOWANCE: u64 = 64 * 1024;
+
+/// A file part's bytes, after any gunzipping, and their hash.
+struct ReceivedPart {
+    data: Bytes,
+    hash: MerkleHash,
+}
+
+/// Receive `field`, the part for `dst_path`, into memory, gunzipping it when it is labeled
+/// `application/gzip`, and hash it. The outer error is a failure to read the part, or a 413 for a
+/// file of more than `stream_segment_size()` bytes, which a gzipped part may arrive
+/// [`GZIP_GROWTH_ALLOWANCE`] longer than. The inner one is a gzipped part that is not gzip data.
+async fn receive_part(
+    mut field: Field,
+    dst_path: &Path,
+) -> Result<Result<ReceivedPart, OxenError>, OxenHttpError> {
+    let too_large = || {
+        let limit = ByteSize::b(stream_segment_size()).display().iec();
+        OxenHttpError::PayloadTooLarge(StringError::new(format!(
+            "{} is larger than the {limit} a file part may hold. Send a larger file through an \
+             upload session (POST /versions/uploads).",
+            dst_path.display()
+        )))
+    };
+    let gzipped = field
+        .content_type()
+        .is_some_and(|mime| mime.type_() == mime::APPLICATION && mime.subtype() == "gzip");
+    let max_len = if gzipped {
+        stream_segment_size() + GZIP_GROWTH_ALLOWANCE
+    } else {
+        stream_segment_size()
+    };
+    let mut received = BytesMut::new();
+    while let Some(chunk) = field.try_next().await.map_err(actix_web::Error::from)? {
+        if (received.len() + chunk.len()) as u64 > max_len {
+            return Err(too_large());
+        }
+        received.extend_from_slice(&chunk);
+    }
+    let received = received.freeze();
+    let decoded = tasks::spawn_blocking_per_item(move || -> Result<ReceivedPart, OxenError> {
+        let data = if gzipped {
+            Bytes::from(decompress_gzip_capped(&received, stream_segment_size())?)
+        } else {
+            received
+        };
+        let hash = MerkleHash::new(hash_buffer_128bit(&data));
+        Ok(ReceivedPart { data, hash })
+    })
+    .await
+    .map_err(|e| OxenError::internal_error(format!("decode task panicked: {e}")))?;
+    match decoded {
+        Err(OxenError::GzipTooLarge { .. }) => Err(too_large()),
+        decoded => Ok(decoded),
+    }
+}
+
+/// Store `part` in `version_store`, and inspect it to stage at `dst_path`.
 async fn store_and_inspect(
     version_store: Arc<dyn VersionStore>,
-    body: ReceivedBody,
+    part: ReceivedPart,
     dst_path: PathBuf,
 ) -> Result<InspectedVersionFile, OxenError> {
-    match body {
-        ReceivedBody::Memory { data, hash } => {
-            let inspected = tasks::spawn_blocking_per_item({
-                let data = data.clone();
-                move || InspectedVersionFile::from_bytes(dst_path, hash, data)
-            });
-            let hash_str = hash.to_string();
-            let stored = version_store.store_version(&hash_str, data);
-            // Waits for the inspection even when the store fails, since it keeps the part in
-            // memory until it ends.
-            let (stored, file) = tokio::join!(stored, inspected);
-            stored?;
-            file?
-        }
-        ReceivedBody::Spooled(spooled) => {
-            let hash = spooled.hash;
-            let copy = version_store
-                .store_version_from_temp_file(hash, spooled.file, spooled.len)
-                .await?;
-            tasks::spawn_blocking_per_item(move || {
-                InspectedVersionFile::from_file(dst_path, hash, &copy)
-            })
-            .await?
-        }
-    }
+    let ReceivedPart { data, hash } = part;
+    let inspected = tasks::spawn_blocking_per_item({
+        let data = data.clone();
+        move || InspectedVersionFile::from_bytes(dst_path, hash, data)
+    });
+    let hash_str = hash.to_string();
+    let stored = version_store.store_version(&hash_str, data);
+    // Waits for the inspection even when the store fails, since it keeps the part in memory until
+    // it ends.
+    let (stored, file) = tokio::join!(stored, inspected);
+    stored?;
+    file?
 }
 
 /// A finished store task's file, or `None` for a file it failed to store. A task that panicked
@@ -578,24 +613,30 @@ mod tests {
     use liboxen::repositories::workspaces;
     use liboxen::util;
     use liboxen::util::fs::write_to_path;
-    use liboxen::view::FilePathsResponse;
     use liboxen::view::versions::{
         BeginVersionUploadRequest, CompleteVersionUploadRequest, CompletedFileUpload,
         VersionUploadPartResponse, VersionUploadResponse, VersionUploadStart, WorkspaceDestination,
     };
     use liboxen::view::workspaces::RenameRequest;
+    use liboxen::view::{FilePathsResponse, StatusMessageDescription};
     use std::path::{Path, PathBuf};
 
     use actix_multipart::test::create_form_data_payload_and_headers;
     use actix_web::web::Bytes;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
     use mime;
+    use std::io::Write;
+
+    /// `content` gzipped at `level`.
+    fn gzip(content: &[u8], level: Compression) -> std::io::Result<Vec<u8>> {
+        let mut encoder = GzEncoder::new(Vec::new(), level);
+        encoder.write_all(content)?;
+        encoder.finish()
+    }
 
     #[actix_web::test]
     async fn test_controllers_workspace_files() -> Result<(), OxenError> {
-        use flate2::Compression;
-        use flate2::write::GzEncoder;
-        use std::io::Write;
-
         liboxen::test::init_test_env();
         let sync_dir = test::get_sync_dir()?;
         let namespace = "Testing-Namespace";
@@ -762,32 +803,73 @@ mod tests {
             }
         }
 
-        // A CSV over `stream_segment_size()` is spooled to disk, a smaller one stays in memory, and
-        // both are staged with the rows they hold. A file uploaded again with the content its
-        // commit has is not staged, even after a change to it was, and leaves no directory staged.
-        // When the store has lost the committed copy, the upload stores it again.
+        // A CSV within `stream_segment_size()` is staged with the rows it holds, while a part over
+        // it is refused with 413 and stages nothing, and so is a gzipped part longer than gzip can
+        // make a file of that size, or a small one that unzips past it, as a gzip bomb does. A file
+        // uploaded again with the content its commit has is not staged, even after a change to it
+        // was, and leaves no directory staged. When the store has lost the committed copy, the
+        // upload stores it again.
         let rows_hash = util::hasher::hash_buffer(rows.as_bytes());
         repo.version_store().delete_version(&rows_hash).await?;
-        let mut big = String::from("id,label\n");
-        let mut big_rows = 0;
-        while big.len() as u64 <= stream_segment_size() {
-            big.push_str(&format!("{big_rows},label {big_rows}\n"));
-            big_rows += 1;
-        }
-        let small = "id,label\n3,c\n4,d\n".to_string();
+        let gzip_type: mime::Mime = "application/gzip".parse().expect("a valid MIME type");
+        let packed = gzip(
+            &vec![7; (stream_segment_size() + super::GZIP_GROWTH_ALLOWANCE) as usize],
+            Compression::none(),
+        )?;
+        let too_big = vec![b'x'; stream_segment_size() as usize + 1];
+        let unzipped_bomb = vec![0; stream_segment_size() as usize + 1];
+        let bomb = gzip(&unzipped_bomb, Compression::default())?;
         let tables_uri =
             format!("/oxen/{namespace}/{repo_name}/workspaces/{workspace_id}/files/tables");
-        for (target, name, content) in [
-            (&uri, "big.csv", big),
-            (&uri, "small.csv", small),
-            (&tables_uri, "rows.csv", "id,label\n1,a\n".into()),
-            (&tables_uri, "rows.csv", rows.into()),
+        for (target, name, content_type, content, status) in [
+            (
+                &uri,
+                "small.csv",
+                mime::TEXT_CSV,
+                Bytes::from("id,label\n3,c\n4,d\n"),
+                StatusCode::OK,
+            ),
+            (
+                &uri,
+                "big.csv",
+                mime::TEXT_CSV,
+                Bytes::from(too_big),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                &uri,
+                "packed.bin",
+                gzip_type.clone(),
+                Bytes::from(packed),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                &uri,
+                "bomb.bin",
+                gzip_type,
+                Bytes::from(bomb),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (
+                &tables_uri,
+                "rows.csv",
+                mime::TEXT_CSV,
+                Bytes::from("id,label\n1,a\n"),
+                StatusCode::OK,
+            ),
+            (
+                &tables_uri,
+                "rows.csv",
+                mime::TEXT_CSV,
+                Bytes::from(rows),
+                StatusCode::OK,
+            ),
         ] {
             let (body, headers) = create_form_data_payload_and_headers(
                 "file[]",
                 Some(name.to_string()),
-                Some(mime::TEXT_CSV),
-                Bytes::from(content),
+                Some(content_type),
+                content,
             );
             let req = headers
                 .into_iter()
@@ -796,32 +878,49 @@ mod tests {
                 })
                 .set_payload(body)
                 .to_request();
-            assert_eq!(
-                call_service(&app, req).await.status(),
-                StatusCode::OK,
-                "{name}"
-            );
+            let resp = call_service(&app, req).await;
+            assert_eq!(resp.status(), status, "{name}");
+            if status == StatusCode::PAYLOAD_TOO_LARGE {
+                let refusal: StatusMessageDescription =
+                    serde_json::from_slice(&read_body(resp).await)?;
+                assert!(
+                    refusal.status_description.contains("upload session"),
+                    "{name}'s refusal points to upload sessions: {}",
+                    refusal.status_description
+                );
+            }
         }
         let workspace = workspaces::get(&repo, &workspace_id)?
             .ok_or_else(|| OxenError::WorkspaceNotFound(workspace_id.clone().into()))?;
         let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
-        for (path, height) in [("data/big.csv", big_rows), ("data/small.csv", 2)] {
-            let staged = staged_db_manager
-                .read_from_staged_db(path)?
-                .unwrap_or_else(|| panic!("{path} is staged"));
-            let EMerkleTreeNode::File(file_node) = staged.node.node else {
-                panic!("{path} is staged as a file");
-            };
-            let Some(GenericMetadata::MetadataTabular(metadata)) = file_node.metadata() else {
-                panic!(
-                    "{path} is staged with tabular metadata: {:?}",
-                    file_node.metadata()
-                );
-            };
-            assert_eq!(
-                (metadata.tabular.width, metadata.tabular.height),
-                (2, height),
-                "{path} is staged with its columns and rows"
+        let staged = staged_db_manager
+            .read_from_staged_db("data/small.csv")?
+            .expect("small.csv is staged");
+        let EMerkleTreeNode::File(file_node) = staged.node.node else {
+            panic!("small.csv is staged as a file");
+        };
+        let Some(GenericMetadata::MetadataTabular(metadata)) = file_node.metadata() else {
+            panic!(
+                "small.csv is staged with tabular metadata: {:?}",
+                file_node.metadata()
+            );
+        };
+        assert_eq!(
+            (metadata.tabular.width, metadata.tabular.height),
+            (2, 2),
+            "small.csv is staged with its columns and rows"
+        );
+        assert!(
+            !repo
+                .version_store()
+                .version_exists(&util::hasher::hash_buffer(&unzipped_bomb))
+                .await?,
+            "a gzip bomb's contents are not stored"
+        );
+        for path in ["data/big.csv", "data/packed.bin", "data/bomb.bin"] {
+            assert!(
+                staged_db_manager.read_from_staged_db(path)?.is_none(),
+                "{path} is not staged once its part is refused"
             );
         }
         for path in ["tables/rows.csv", "tables"] {
@@ -1016,40 +1115,24 @@ mod tests {
             status.staged_files.keys()
         );
 
-        // Build a gzipped part that inflates to one byte past the decompression cap. Highly
-        // compressible zero bytes keep the compressed body tiny while the decompressed size trips
-        // the limit — the decompression-bomb shape the endpoint guards against. Size via
-        // stream_segment_size() so the test tracks the active cap (128 KiB under bin/test).
-        let decompressed = vec![0u8; stream_segment_size() as usize + 1];
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&decompressed)?;
-        let gzipped = encoder.finish()?;
-
         // A part labeled gzip that is not gzip data, then two valid gzipped parts for one path,
-        // follow the bomb, to check refused parts leave the rest, and that the later of two parts
-        // for one path is the one staged. A committed file uploaded with new content and then
-        // with its committed content leaves its directory staged for a later file in it.
-        let gzip = |content: &[u8]| -> std::io::Result<Vec<u8>> {
-            let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(content)?;
-            encoder.finish()
-        };
-        let after = gzip(b"after the bomb")?;
-        let later = gzip(b"later for the same path")?;
-        let (changed_rows, committed_rows) = (gzip(b"id,label\n9,z\n")?, gzip(rows.as_bytes())?);
-        let more = gzip(b"more")?;
-        // An uncompressed gzip of `stream_segment_size()` bytes arrives longer than that, so it is
-        // spooled to disk and gunzipped there.
+        // check that a part left out leaves the rest, and that the later of two parts for one path
+        // is the one staged. A committed file uploaded with new content and then with its committed
+        // content leaves its directory staged for a later file in it.
+        let after = gzip(b"after the corrupt part", Compression::default())?;
+        let later = gzip(b"later for the same path", Compression::default())?;
+        let changed_rows = gzip(b"id,label\n9,z\n", Compression::default())?;
+        let committed_rows = gzip(rows.as_bytes(), Compression::default())?;
+        let more = gzip(b"more", Compression::default())?;
+        // An uncompressed gzip of `stream_segment_size()` bytes arrives longer than that, within
+        // the growth gzip is allowed.
         let large: Vec<u8> = (0..stream_segment_size())
             .map(|i| (i % 251) as u8)
             .collect();
-        let mut encoder = GzEncoder::new(Vec::new(), Compression::none());
-        encoder.write_all(&large)?;
-        let large_gzipped = encoder.finish()?;
-        let boundary = "test-bomb-boundary";
+        let large_gzipped = gzip(&large, Compression::none())?;
+        let boundary = "test-gzip-boundary";
         let mut body: Vec<u8> = Vec::new();
         for (filename, part) in [
-            ("data/bomb.bin", &gzipped),
             ("data/corrupt.bin", &b"not gzip data".to_vec()),
             ("data/after.txt", &after),
             ("data/after.txt", &later),
@@ -1099,13 +1182,13 @@ mod tests {
                 "tables/more.txt",
             ]
             .map(PathBuf::from),
-            "the gzip bomb and the part that is not gzip data are refused"
+            "the part that is not gzip data is left out"
         );
         assert!(
             repo.version_store()
                 .version_exists(&util::hasher::hash_buffer(&large))
                 .await?,
-            "a spooled gzipped part is stored gunzipped"
+            "a gzipped part that gzip made longer than the file it holds is stored gunzipped"
         );
         // Scoped so the workspace's handles on the repository close before the cleanup below.
         {
@@ -1128,13 +1211,6 @@ mod tests {
                 "the later of two parts for one path is the one staged"
             );
         }
-
-        // The decompressed content was never hashed or stored, so its blob must be absent.
-        let bomb_hash = util::hasher::hash_buffer(&decompressed);
-        assert!(
-            !repo.version_store().version_exists(&bomb_hash).await?,
-            "gzip bomb contents should not have been stored"
-        );
 
         // Cut the body one byte into the first part's data, so no part is stored.
         let first_data = body

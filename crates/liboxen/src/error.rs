@@ -599,6 +599,11 @@ pub enum OxenError {
     #[error("Version upload refused: {0}")]
     VersionUploadRefused(StringError),
 
+    /// Gzipped data inflates past the `limit` bytes its reader allows, which keeps a gzip bomb from
+    /// filling memory. oxen-server maps this to HTTP 413.
+    #[error("Gzipped data inflates past the {limit} byte limit")]
+    GzipTooLarge { limit: u64 },
+
     /// Encountered when authentication fails. Contains the authentication error message.
     #[error("Authentication failed: {0}")]
     Authentication(StringError),
@@ -1125,6 +1130,7 @@ impl OxenError {
             OxenError::InvalidCommitArchiveEntry(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,
             OxenError::VersionUploadRefused(_) => true,
+            OxenError::GzipTooLarge { .. } => true,
             // A malformed file or an unsatisfiable query reads the same way every time. Only the
             // IO case can resolve on its own.
             OxenError::PolarsError(_) | OxenError::DataFrameError(DataFrameError::Polars(_)) => {
