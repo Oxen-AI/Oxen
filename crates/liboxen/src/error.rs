@@ -302,6 +302,14 @@ pub enum OxenError {
     #[error("Expected a file path, but the path is empty")]
     EmptyPath,
 
+    /// A requested image resize or video thumbnail width or height is zero or larger than the
+    /// server produces. Carries the parameter and the value the caller sent.
+    #[error(
+        "The {param} {value} is out of range: a resized image is 1 to {max} pixels on each side",
+        max = crate::constants::MAX_RESIZE_DIMENSION
+    )]
+    InvalidResizeDimension { param: &'static str, value: u32 },
+
     /// A move or rename targeted its own source path or a path inside it.
     #[error("Cannot move {0} into itself")]
     MoveIntoItself(PathBufError),
@@ -1126,6 +1134,7 @@ impl OxenError {
             OxenError::InvalidFileType(_)
             | OxenError::DataFrameError(DataFrameError::InvalidFileType { .. }) => true,
             OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
+            OxenError::InvalidResizeDimension { .. } => true,
             OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidCommitArchiveEntry(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,

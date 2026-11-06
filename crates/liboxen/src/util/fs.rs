@@ -6,8 +6,6 @@ mod atomic_file;
 pub use atomic_file::AtomicFile;
 pub(crate) use atomic_file::AtomicPartsFile;
 
-use async_std::pin::Pin;
-use bytes::Bytes;
 use futures::StreamExt;
 use jwalk::WalkDir;
 
@@ -18,33 +16,22 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::BufReader;
-use std::io::Cursor;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::io::prelude::*;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::OnceLock;
-use tokio_stream::Stream;
 
 use crate::constants::OXEN_HIDDEN_DIR;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::model::merkle_tree::node::FileNode;
-use crate::model::metadata::metadata_image::ImgResize;
-use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::model::{EntryDataType, LocalRepository};
-use crate::storage::version_store::VersionStore;
 use crate::view::health::DiskUsage;
 use crate::{constants, repositories, util};
 use filetime::FileTime;
-#[cfg(feature = "ffmpeg")]
-use image::{DynamicImage, ImageBuffer, Rgb};
-use image::{ImageFormat, ImageReader};
-#[cfg(feature = "ffmpeg")]
-use video_rs::decode::Decoder;
 
 /// Write `data` at `offset` in the existing file at `path`. Writes to separate ranges may run on any
 /// number of threads at once.
@@ -101,59 +88,6 @@ pub fn oxen_config_dir() -> Result<PathBuf, OxenError> {
 
 pub fn config_filepath(repo_path: &Path) -> PathBuf {
     oxen_hidden_dir(repo_path).join(constants::REPO_CONFIG_FILENAME)
-}
-
-pub async fn handle_image_resize(
-    version_store: Arc<dyn VersionStore>,
-    file_hash: String,
-    file_path: &Path,
-    img_resize: ImgResize,
-) -> Result<
-    (
-        Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
-        u64,
-    ),
-    OxenError,
-> {
-    log::debug!("img_resize {img_resize:?}");
-    let derived_filename = resized_filename(file_path, img_resize.width, img_resize.height);
-
-    let stream =
-        resize_cache_image_version_store(version_store, &file_hash, &derived_filename, img_resize)
-            .await?;
-    log::debug!("Got the resized image! {derived_filename}");
-
-    Ok(stream)
-}
-
-pub fn resized_filename(img_path: &Path, width: Option<u32>, height: Option<u32>) -> String {
-    let extension = img_path.extension().unwrap().to_str().unwrap();
-    let width = width.map(|w| w.to_string());
-    let height = height.map(|w| w.to_string());
-    format!(
-        "{}x{}.{}",
-        width.unwrap_or("".to_string()),
-        height.unwrap_or("".to_string()),
-        extension
-    )
-}
-
-pub fn video_thumbnail_filename(
-    width: Option<u32>,
-    height: Option<u32>,
-    timestamp: Option<f64>,
-) -> String {
-    let extension = "jpg";
-    let (width_str, height_str) = match (width, height) {
-        (Some(w), Some(h)) => (w.to_string(), h.to_string()),
-        (Some(w), None) => (w.to_string(), "auto".to_string()),
-        (None, Some(h)) => ("auto".to_string(), h.to_string()),
-        (None, None) => ("320".to_string(), "240".to_string()),
-    };
-    let timestamp_str = timestamp
-        .map(|t| format!("t{t:.1}"))
-        .unwrap_or_else(|| "t1.0".to_string());
-    format!("thumbnail_{width_str}x{height_str}_{timestamp_str}.{extension}")
 }
 
 pub fn extension_from_path(path: &Path) -> String {
@@ -1305,245 +1239,6 @@ pub fn open_file(path: impl AsRef<Path>) -> Result<File, OxenError> {
             path.as_ref(),
             err
         ))),
-    }
-}
-
-async fn detect_image_format_from_version(
-    versioned_store: Arc<dyn VersionStore>,
-    hash: &str,
-) -> Result<ImageFormat, OxenError> {
-    let mut stream = versioned_store.get_version_stream(hash).await?;
-
-    let mut header = Vec::with_capacity(16);
-    while header.len() < 16 {
-        if let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| {
-                OxenError::basic_str(format!("Failed to read version file {hash}: {e}"))
-            })?;
-            let to_take = 16 - header.len();
-            header.extend_from_slice(&chunk[..to_take.min(chunk.len())]);
-        } else {
-            break; // EOF
-        }
-    }
-
-    if header.is_empty() {
-        return Err(OxenError::basic_str(format!(
-            "Version file {hash} is empty"
-        )));
-    }
-
-    let format = image::guess_format(&header)
-        .map_err(|_| OxenError::basic_str(format!("Unknown image format for version: {hash}")))?;
-
-    Ok(format)
-}
-
-pub async fn resize_cache_image_version_store(
-    version_store: Arc<dyn VersionStore>,
-    img_hash: &str,
-    derived_filename: &str,
-    resize: ImgResize,
-) -> Result<
-    (
-        Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
-        u64,
-    ),
-    OxenError,
-> {
-    if version_store
-        .derived_version_exists(img_hash, derived_filename)
-        .await?
-    {
-        log::debug!("In the resize cache! {derived_filename}");
-        let content_length = version_store
-            .get_version_derived_size(img_hash, derived_filename)
-            .await?;
-        let stream = version_store
-            .get_version_derived_stream(img_hash, derived_filename)
-            .await?;
-        return Ok((stream.boxed(), content_length));
-    }
-
-    log::debug!("create resized image {derived_filename} from hash {img_hash}");
-    let image_format = detect_image_format_from_version(Arc::clone(&version_store), img_hash).await;
-    let image_data = version_store.get_version(img_hash).await?;
-
-    let img = match image_format {
-        Ok(format) => {
-            let reader = Cursor::new(&image_data);
-            image::load(reader, format)?
-        }
-        Err(_) => {
-            log::debug!("Could not detect image format, opening file without format");
-            let reader = Cursor::new(&image_data);
-
-            ImageReader::new(reader).with_guessed_format()?.decode()?
-        }
-    };
-
-    let resized_img = if let Some(resize_width) = resize.width
-        && let Some(resize_height) = resize.height
-    {
-        img.resize_exact(
-            resize_width,
-            resize_height,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else if let Some(resize_width) = resize.width {
-        img.resize(
-            resize_width,
-            resize_width,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else if let Some(resize_height) = resize.height {
-        img.resize(
-            resize_height,
-            resize_height,
-            image::imageops::FilterType::Lanczos3,
-        )
-    } else {
-        img
-    };
-
-    let image_format = ImageFormat::from_path(derived_filename)?;
-    let mut buf = Vec::new();
-    resized_img.write_to(&mut Cursor::new(&mut buf), image_format)?;
-    // Pre-`Bytes::from` once so we can share the same allocation between the version-store write
-    // and the streamed response without copying. `Bytes::clone` is an atomic refcount bump.
-    let bytes = Bytes::from(buf);
-    let content_length = bytes.len() as u64;
-    version_store
-        .store_version_derived(img_hash, derived_filename, bytes.clone())
-        .await?;
-
-    let stream: Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> =
-        futures::stream::once(async move { Ok(bytes) }).boxed();
-
-    Ok((stream, content_length))
-}
-
-/// Initialize the FFmpeg/libav globals once per process for video decoding.
-#[cfg(feature = "ffmpeg")]
-fn ensure_video_decoding_initialized() -> Result<(), OxenError> {
-    static INIT: OnceLock<Result<(), String>> = OnceLock::new();
-    INIT.get_or_init(|| video_rs::init().map_err(|e| e.to_string()))
-        .clone()
-        .map_err(|e| OxenError::internal_error(format!("Failed to initialize video decoding: {e}")))
-}
-
-/// Generate a video's JPEG thumbnail with video-rs (FFmpeg) and store it in the version store.
-#[cfg(feature = "ffmpeg")]
-async fn generate_video_thumbnail_version_store(
-    version_store: Arc<dyn VersionStore>,
-    video_hash: &str,
-    derived_filename: &str,
-    thumbnail: VideoThumbnail,
-    dir: &Path,
-) -> Result<(), OxenError> {
-    log::debug!(
-        "generate thumbnail derived_filename {derived_filename} from video hash {video_hash}"
-    );
-    if version_store
-        .derived_version_exists(video_hash, derived_filename)
-        .await?
-    {
-        return Ok(());
-    }
-
-    // video-rs decodes from a filesystem path, so materialize the video file. The guard
-    // `version_file` is held on the async side (its drop runs after the blocking generation below)
-    // so a materialized S3 temp outlives the read; the closure takes a plain path copy.
-    let version_file = version_store.materialize(video_hash, dir).await?;
-    let version_path = version_file.to_pathbuf();
-
-    // Output dimensions bound the thumbnail; `DynamicImage::thumbnail` preserves aspect ratio.
-    let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
-        (Some(w), Some(h)) => (w, h),
-        (Some(w), None) => (w, w), // Use width for both if only width specified
-        (None, Some(h)) => (h, h), // Use height for both if only height specified
-        (None, None) => (320, 240),
-    };
-
-    // The thumbnail is taken from the first decoded frame; thumbnail.timestamp is not yet honored.
-    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
-        ensure_video_decoding_initialized()?;
-
-        let mut decoder = Decoder::new(version_path.as_path()).map_err(|e| {
-            OxenError::internal_error(format!("Failed to open video for thumbnailing: {e}"))
-        })?;
-
-        let (width, height) = decoder.size();
-        let (_timestamp, frame) = decoder
-            .decode()
-            .map_err(|e| OxenError::internal_error(format!("Failed to decode video frame: {e}")))?;
-
-        // video-rs hands back an RGB frame as a contiguous (height, width, 3) ndarray.
-        let pixels = frame
-            .as_slice()
-            .ok_or_else(|| OxenError::internal_error("Decoded video frame was not contiguous"))?;
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(width, height, pixels.to_vec()).ok_or_else(|| {
-                OxenError::internal_error("Failed to build image buffer from video frame")
-            })?;
-
-        let thumb = DynamicImage::ImageRgb8(img).thumbnail(output_width, output_height);
-
-        let mut buf = Vec::new();
-        thumb
-            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-            .map_err(|e| OxenError::internal_error(format!("Failed to encode thumbnail: {e}")))?;
-        Ok(buf)
-    })
-    .await??;
-
-    // Save the thumbnail image
-    version_store
-        .store_version_derived(video_hash, derived_filename, buf.into())
-        .await?;
-
-    log::debug!("saved thumbnail {derived_filename}");
-    Ok(())
-}
-
-/// Handle video thumbnail generation: generate thumbnail if needed and return a stream.
-/// Only enabled if the 'ffmpeg' feature is enabled.
-#[allow(unused_variables)]
-pub async fn handle_video_thumbnail(
-    version_store: Arc<dyn VersionStore>,
-    file_hash: String,
-    video_thumbnail: VideoThumbnail,
-    dir: &Path,
-) -> Result<Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>, OxenError> {
-    #[cfg(not(feature = "ffmpeg"))]
-    {
-        let _ = (version_store, file_hash, video_thumbnail, dir);
-        Err(OxenError::ThumbnailingNotEnabled)
-    }
-
-    #[cfg(feature = "ffmpeg")]
-    {
-        log::debug!("video_thumbnail {video_thumbnail:?}");
-        let derived_filename = video_thumbnail_filename(
-            video_thumbnail.width,
-            video_thumbnail.height,
-            video_thumbnail.timestamp,
-        );
-
-        generate_video_thumbnail_version_store(
-            version_store.clone(),
-            &file_hash,
-            &derived_filename,
-            video_thumbnail,
-            dir,
-        )
-        .await?;
-
-        log::debug!("In the thumbnail cache! {derived_filename}");
-        let stream = version_store
-            .get_version_derived_stream(&file_hash, &derived_filename)
-            .await?;
-        Ok(stream.boxed())
     }
 }
 

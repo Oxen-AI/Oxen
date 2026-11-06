@@ -23,6 +23,7 @@ use liboxen::model::merkle_tree::node::EMerkleTreeNode;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::repositories::commits;
+use liboxen::repositories::versions::previews;
 use liboxen::repositories::{self, branches};
 use liboxen::util;
 use liboxen::util::fs::AtomicFile;
@@ -129,14 +130,16 @@ pub struct FileQueryParams {
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "Voice-Data"),
         ("resource" = String, Path, description = "Path to the file (including branch/commit info)", example = "main/audio/moo.wav"),
-        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
-        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
-        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from (default: 1.0)", example = 1.0),
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Not yet used: a thumbnail is always taken from the video's first frame", example = 1.0),
         ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),
     responses(
         (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>),
-        (status = 404, description = "File not found")
+        (status = 400, description = "Width or height out of range"),
+        (status = 404, description = "File not found"),
+        (status = 415, description = "The file's image format is not supported for resizing")
     )
 )]
 pub async fn get(
@@ -206,7 +209,7 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let (file_stream, content_length) = util::fs::handle_image_resize(
+        let (file_stream, content_length) = previews::handle_image_resize(
             version_store.clone(),
             hash_str.clone(),
             &path,
@@ -231,7 +234,7 @@ pub async fn get(
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
         let tmp_dir = util::fs::oxen_hidden_dir(&repo.path).join("tmp");
-        let stream = util::fs::handle_video_thumbnail(
+        let stream = previews::handle_video_thumbnail(
             Arc::clone(&version_store),
             hash_str,
             video_thumbnail,

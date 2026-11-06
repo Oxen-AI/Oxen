@@ -15,6 +15,7 @@ use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::{MerkleHash, Workspace};
 use liboxen::repositories;
+use liboxen::repositories::versions::previews;
 use liboxen::storage::VersionStore;
 use liboxen::util;
 use liboxen::util::compression::decompress_gzip_capped;
@@ -61,9 +62,9 @@ pub struct WorkspaceFileQueryParams {
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
         ("path" = String, Path, description = "The path to the file in the workspace", example = "images/train/dog_1.jpg"),
-        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail", example = 320),
-        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail", example = 240),
-        ("timestamp" = Option<f64>, Query, description = "Timestamp in seconds to extract video thumbnail from", example = 1.0),
+        ("width" = Option<u32>, Query, description = "Width for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 320),
+        ("height" = Option<u32>, Query, description = "Height for image resize or video thumbnail, from 1 to 2048 pixels. An image is never scaled past its own size", example = 240),
+        ("timestamp" = Option<f64>, Query, description = "Not yet used: a thumbnail is always taken from the video's first frame", example = 1.0),
         ("thumbnail" = Option<bool>, Query, description = "Set to true to generate a video thumbnail instead of returning the full video", example = true)
     ),
     responses(
@@ -74,7 +75,8 @@ pub struct WorkspaceFileQueryParams {
             )
         ),
         (status = 404, description = "Workspace or File not found"),
-        (status = 400, description = "Invalid parameters")
+        (status = 400, description = "Invalid parameters"),
+        (status = 415, description = "The file's image format is not supported for resizing")
     )
 )]
 pub async fn get(
@@ -141,7 +143,7 @@ pub async fn get(
         };
         log::debug!("img_resize {img_resize:?}");
 
-        let (file_stream, content_length) = util::fs::handle_image_resize(
+        let (file_stream, content_length) = previews::handle_image_resize(
             Arc::clone(&version_store),
             hash_str.clone(),
             &PathBuf::from(&path),
@@ -165,7 +167,7 @@ pub async fn get(
         };
         log::debug!("video_thumbnail {video_thumbnail:?}");
 
-        let stream = util::fs::handle_video_thumbnail(
+        let stream = previews::handle_video_thumbnail(
             Arc::clone(&version_store),
             hash_str,
             video_thumbnail,

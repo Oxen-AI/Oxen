@@ -20,6 +20,7 @@ use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::repositories;
+use liboxen::repositories::versions::previews;
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
@@ -145,7 +146,9 @@ pub async fn clean(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
                 ("oxen-revision-id" = String, description = "The commit ID of the file version")
             )
         ),
+        (status = 400, description = "Width or height out of range"),
         (status = 404, description = "Repository, commit, or file not found"),
+        (status = 415, description = "The file's image format is not supported for resizing"),
     )
 )]
 pub async fn download(
@@ -182,7 +185,7 @@ pub async fn download(
         log::debug!("img_resize {img_resize:?}");
 
         let (file_stream, content_length) =
-            util::fs::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
+            previews::handle_image_resize(Arc::clone(&version_store), hash_str, &path, img_resize)
                 .await?;
 
         return Ok(
@@ -875,6 +878,23 @@ mod tests {
             .unwrap();
         let bytes = body::to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(content_length, bytes.len());
+        let resized = image::load_from_memory(&bytes).expect("the resized image decodes");
+        assert_eq!(
+            (resized.width(), resized.height()),
+            (1, 1),
+            "a size over the image's own gets the image at its own size"
+        );
+
+        // A size up to 2048 is accepted, and one of zero or over 2048 is refused.
+        for (query, status) in [
+            ("height=2048", actix_web::http::StatusCode::OK),
+            ("width=0", actix_web::http::StatusCode::BAD_REQUEST),
+            ("height=2049", actix_web::http::StatusCode::BAD_REQUEST),
+        ] {
+            let uri = format!("/oxen/{namespace}/{repo_name}/versions/main/{image_path}?{query}");
+            let resp = actix_web::test::call_service(&app, get(uri)).await;
+            assert_eq!(resp.status(), status, "{query}");
+        }
 
         let uri =
             format!("/oxen/{namespace}/{repo_name}/versions/nonexistent_commit_id/{relative_path}");
