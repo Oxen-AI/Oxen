@@ -68,7 +68,6 @@ colored = { workspace = true }
 comfy-table = { workspace = true }
 deadqueue = { workspace = true }
 derive_more = { workspace = true }
-difference = { workspace = true }
 dirs = { workspace = true }
 duckdb = { workspace = true, optional = true }
 dunce = { workspace = true }
@@ -122,6 +121,7 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 sha2 = { workspace = true }
 simdutf8 = { workspace = true }
+similar = { workspace = true }
 sql_query_builder = { workspace = true }
 sqlparser = { workspace = true }
 strum = { workspace = true, features = ["derive"] }

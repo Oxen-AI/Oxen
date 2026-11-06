@@ -183,6 +183,14 @@ pub enum OxenError {
         head: String,
     },
 
+    /// A version of a file is too large for a line diff. Names the file.
+    #[error(
+        "{0} is too large to compare line by line: a line diff takes versions of up to {max_mib} MiB and {max_lines} lines",
+        max_mib = crate::constants::MAX_TEXT_DIFF_BYTES / (1024 * 1024),
+        max_lines = crate::constants::MAX_TEXT_DIFF_LINES
+    )]
+    TextDiffTooLarge(PathBufError),
+
     /// The user supplied a CSV delimiter that was not exactly one byte.
     #[error("Delimiter must be a single character")]
     InvalidDelimiter,
@@ -1117,6 +1125,7 @@ impl OxenError {
             | OxenError::HttpDeserializeError { status, .. } => is_fatal_http_status(*status),
             OxenError::HTTP(req_err) => req_err.status().is_some_and(is_fatal_http_status),
             OxenError::VersionsMissingOnServer { .. } => true,
+            OxenError::TextDiffTooLarge(_) => true,
             OxenError::RemovalAlreadyStaged(_) => true,
             OxenError::DestinationExists(_) | OxenError::SourceHasStagedChanges(_) => true,
             OxenError::RmWouldLoseChanges(_) => true,

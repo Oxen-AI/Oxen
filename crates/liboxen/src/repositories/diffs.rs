@@ -8,7 +8,10 @@
 //! oxen diff <file_1> <file_2> [options]
 //! ```
 
-use crate::constants::{CACHE_DIR, COMPARES_DIR, LEFT_COMPARE_COMMIT, RIGHT_COMPARE_COMMIT};
+use crate::constants::{
+    CACHE_DIR, COMPARES_DIR, LEFT_COMPARE_COMMIT, MAX_TEXT_DIFF_BYTES, MAX_TEXT_DIFF_LINES,
+    RIGHT_COMPARE_COMMIT,
+};
 use crate::core::merge::entry_merge_conflict_reader::EntryMergeConflictReader;
 use crate::model::entry::commit_entry::CommitPath;
 use crate::model::merkle_tree::node::FileNode;
@@ -207,6 +210,10 @@ pub async fn diff_uncommitted(
     Ok(diff_result)
 }
 
+/// Diffs a path between two revisions. A path that is a file in either commit gets that file's
+/// diff or the error it fails with, such as [`OxenError::TextDiffTooLarge`] for a version over the
+/// line diff's limits. A directory gets a diff for each changed file under it, leaving out any file
+/// whose diff fails.
 pub async fn diff_revs(
     repo: &LocalRepository,
     rev_1: &str,
@@ -227,6 +234,13 @@ pub async fn diff_revs(
     let commit_2 = repositories::revisions::get(repo, rev_2)?
         .ok_or_else(|| OxenError::RevisionNotFound(rev_2.into()))?;
 
+    if repositories::entries::get_file(repo, &commit_1, path_1)?.is_some()
+        || repositories::entries::get_file(repo, &commit_2, path_2)?.is_some()
+    {
+        let result = diff_commit_paths(repo, &commit_1, path_1, &commit_2, path_2, opts).await?;
+        return Ok(vec![result]);
+    }
+
     let dir_diff = diff_path(repo, &commit_1, &commit_2, path_1, path_2, opts).await?;
     log::debug!(
         "Directory structural diff found {} entries",
@@ -238,104 +252,27 @@ pub async fn diff_revs(
     for entry in dir_diff.entries {
         log::debug!("entry: {entry:#?}");
 
-        match (entry.head_resource, entry.base_resource) {
-            (Some(head_res), Some(base_res)) => {
-                log::debug!("Computing content diff for file: {:?}", head_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: head_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: base_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        log::debug!("Content diff successful for file: {:?}", head_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!(
-                            "Failed to compute diff for file {:?}: {}",
-                            head_res.path,
-                            err
-                        );
-                    }
-                }
-            }
-            (None, Some(base_res)) => {
-                log::debug!("Computing content diff for file: {:?}", base_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: base_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: base_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        // log::debug!("Content diff successful for file: {:?}", base_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!("Failed to compute diff for file {err}");
-                    }
-                }
-            }
-
-            (Some(head_res), None) => {
-                log::debug!("Computing content diff for file: {:?}", head_res.path);
-                let cpath_1 = CommitPath {
-                    commit: Some(commit_1.clone()),
-                    path: head_res.path.clone(),
-                };
-                let cpath_2 = CommitPath {
-                    commit: Some(commit_2.clone()),
-                    path: head_res.path,
-                };
-
-                match diff_commits(
-                    repo,
-                    cpath_1,
-                    cpath_2,
-                    opts.keys.clone(),
-                    opts.targets.clone(),
-                    vec![],
-                )
-                .await
-                {
-                    Ok(result) => {
-                        // log::debug!("Content diff successful for file: {:?}", head_res.path);
-                        content_diffs.push(result);
-                    }
-                    Err(err) => {
-                        log::debug!("Failed to compute diff for file {err}");
-                    }
-                }
-            }
-
-            _ => {}
+        let (entry_path_1, entry_path_2) = match (entry.head_resource, entry.base_resource) {
+            (Some(head_res), Some(base_res)) => (head_res.path, base_res.path),
+            (Some(res), None) | (None, Some(res)) => (res.path.clone(), res.path),
+            (None, None) => continue,
+        };
+        match diff_commit_paths(
+            repo,
+            &commit_1,
+            &entry_path_1,
+            &commit_2,
+            &entry_path_2,
+            opts,
+        )
+        .await
+        {
+            Ok(result) => content_diffs.push(result),
+            Err(err) => tracing::debug!(
+                oxen.file_path = %entry_path_1.display(),
+                exception.message = %err,
+                "Could not compute a file's diff between revisions"
+            ),
         }
     }
     log::debug!(
@@ -343,6 +280,35 @@ pub async fn diff_revs(
         content_diffs.len()
     );
     Ok(content_diffs)
+}
+
+/// Calls [`diff_commits`] for `path_1` in `commit_1` and `path_2` in `commit_2`, with the keys and
+/// targets in `opts`.
+async fn diff_commit_paths(
+    repo: &LocalRepository,
+    commit_1: &Commit,
+    path_1: &Path,
+    commit_2: &Commit,
+    path_2: &Path,
+    opts: &DiffOpts,
+) -> Result<DiffResult, OxenError> {
+    let cpath_1 = CommitPath {
+        commit: Some(commit_1.clone()),
+        path: path_1.to_path_buf(),
+    };
+    let cpath_2 = CommitPath {
+        commit: Some(commit_2.clone()),
+        path: path_2.to_path_buf(),
+    };
+    diff_commits(
+        repo,
+        cpath_1,
+        cpath_2,
+        opts.keys.clone(),
+        opts.targets.clone(),
+        vec![],
+    )
+    .await
 }
 
 pub async fn diff_commits(
@@ -779,49 +745,60 @@ pub async fn diff_text_file_and_node(
     Ok(DiffResult::Text(result))
 }
 
+/// A line diff of two versions of a text file, either of which may be missing (an added or removed
+/// file). Refuses with [`OxenError::TextDiffTooLarge`] a version over [`MAX_TEXT_DIFF_BYTES`] or
+/// [`MAX_TEXT_DIFF_LINES`].
 pub async fn diff_text_file_nodes(
     repo: &LocalRepository,
     file_1: Option<&FileNode>,
     file_2: Option<&FileNode>,
 ) -> Result<TextDiff, OxenError> {
-    let version_store = repo.version_store();
-    match (file_1, file_2) {
-        (Some(file_1), Some(file_2)) => {
-            let file_content_1 =
-                read_version_file_to_string(&version_store, &file_1.hash().to_string()).await?;
-            let file_content_2 =
-                read_version_file_to_string(&version_store, &file_2.hash().to_string()).await?;
-            utf8_diff::diff(
-                Some(file_content_1),
-                Some(PathBuf::from(file_1.name())),
-                Some(file_content_2),
-                Some(PathBuf::from(file_2.name())),
-            )
-        }
-        (Some(file_1), None) => {
-            let file_content_1 =
-                read_version_file_to_string(&version_store, &file_1.hash().to_string()).await?;
-            utf8_diff::diff(
-                Some(file_content_1),
-                Some(PathBuf::from(file_1.name())),
-                None,
-                None,
-            )
-        }
-        (None, Some(file_2)) => {
-            let file_content_2 =
-                read_version_file_to_string(&version_store, &file_2.hash().to_string()).await?;
-            utf8_diff::diff(
-                None,
-                None,
-                Some(file_content_2),
-                Some(PathBuf::from(file_2.name())),
-            )
-        }
-        (None, None) => Err(OxenError::basic_str(
+    if file_1.is_none() && file_2.is_none() {
+        return Err(OxenError::basic_str(
             "Could not find one or both of the files to compare",
-        )),
+        ));
     }
+    let version_store = repo.version_store();
+    // Check both sizes before reading either. The store's size, not the node's, is the size of
+    // the bytes a read returns.
+    for node in [file_1, file_2].into_iter().flatten() {
+        if version_store
+            .get_version_size(&node.hash().to_string())
+            .await?
+            > MAX_TEXT_DIFF_BYTES
+        {
+            return Err(OxenError::TextDiffTooLarge(
+                PathBuf::from(node.name()).into(),
+            ));
+        }
+    }
+    let content_1 = match file_1 {
+        Some(node) => Some(read_text_for_line_diff(&version_store, node).await?),
+        None => None,
+    };
+    let content_2 = match file_2 {
+        Some(node) => Some(read_text_for_line_diff(&version_store, node).await?),
+        None => None,
+    };
+    let name_1 = file_1.map(|node| PathBuf::from(node.name()));
+    let name_2 = file_2.map(|node| PathBuf::from(node.name()));
+    tokio::task::spawn_blocking(move || utf8_diff::diff(content_1, name_1, content_2, name_2))
+        .await?
+}
+
+/// A text file version's content, refused with [`OxenError::TextDiffTooLarge`] when it is over
+/// [`MAX_TEXT_DIFF_LINES`].
+async fn read_text_for_line_diff(
+    version_store: &Arc<dyn VersionStore>,
+    node: &FileNode,
+) -> Result<String, OxenError> {
+    let content = read_version_file_to_string(version_store, &node.hash().to_string()).await?;
+    if content.lines().count() > MAX_TEXT_DIFF_LINES {
+        return Err(OxenError::TextDiffTooLarge(
+            PathBuf::from(node.name()).into(),
+        ));
+    }
+    Ok(content)
 }
 
 pub async fn tabular(
@@ -2103,6 +2080,128 @@ train/cat_2.jpg,cat,30.5,44.0,333,396
                 }
                 _ => panic!("expected tabular result"),
             }
+
+            Ok(())
+        })
+        .await
+    }
+
+    // The compare route's single-file diff and `oxen diff` between commits read the same versions,
+    // so one history checks both: a line diff under the limits, then a version over the line limit
+    // and one over the byte limit, each of which gets no line diff.
+    #[tokio::test]
+    async fn test_text_diff_of_a_version_over_its_limits() -> Result<(), OxenError> {
+        use crate::constants::{MAX_TEXT_DIFF_BYTES, MAX_TEXT_DIFF_LINES};
+        use crate::model::diff::generic_diff::GenericDiff;
+        use crate::model::{LocalRepository, diff::TextDiff};
+        use crate::opts::DFOpts;
+
+        async fn commit_text(
+            repo: &LocalRepository,
+            path: &Path,
+            text: &str,
+        ) -> Result<Commit, OxenError> {
+            let full_path = repo.path.join(path);
+            util::fs::write_to_path(&full_path, text)?;
+            repositories::add(repo, &full_path).await?;
+            repositories::commit(repo, "edit")
+        }
+
+        async fn compare(
+            repo: &LocalRepository,
+            path: &Path,
+            base: &Commit,
+            head: &Commit,
+        ) -> Result<Option<TextDiff>, OxenError> {
+            let base_entry = repositories::entries::get_file(repo, base, path)?;
+            let head_entry = repositories::entries::get_file(repo, head, path)?;
+            let entry = repositories::diffs::diff_entries(
+                repo,
+                path,
+                base_entry,
+                base,
+                head_entry,
+                head,
+                DFOpts::empty(),
+            )
+            .await?;
+            Ok(match entry.diff {
+                Some(GenericDiff::TextDiff(diff)) => Some(diff),
+                Some(other) => panic!("expected a text diff, got {other:?}"),
+                None => None,
+            })
+        }
+
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let path = Path::new("notes.txt");
+            let first = commit_text(&repo, path, "first\nsecond\n").await?;
+            let edited = commit_text(&repo, path, "first\nchanged\n").await?;
+            let many_lines =
+                commit_text(&repo, path, &"x\n".repeat(MAX_TEXT_DIFF_LINES + 1)).await?;
+            let many_bytes =
+                commit_text(&repo, path, &"y".repeat(MAX_TEXT_DIFF_BYTES as usize + 1)).await?;
+
+            let diff = compare(&repo, path, &first, &edited)
+                .await?
+                .expect("versions under the limits get a line diff");
+            let changed: Vec<_> = diff
+                .lines
+                .iter()
+                .filter(|line| line.modification != ChangeType::Unchanged)
+                .map(|line| (line.modification, line.text.as_str()))
+                .collect();
+            assert_eq!(
+                changed,
+                vec![
+                    (ChangeType::Removed, "second"),
+                    (ChangeType::Added, "changed")
+                ]
+            );
+
+            // The CLI and the Python package diff two revisions through `diff`.
+            let oxen_diff = |path: &Path, base: &Commit, head: &Commit| {
+                repositories::diffs::diff(DiffOpts {
+                    repo_dir: Some(repo.path.clone()),
+                    path_1: path.to_path_buf(),
+                    revision_1: Some(base.id.clone()),
+                    revision_2: Some(head.id.clone()),
+                    ..DiffOpts::default()
+                })
+            };
+            let result = oxen_diff(path, &first, &edited).await?;
+            assert!(
+                matches!(result.as_slice(), [DiffResult::Text(_)]),
+                "oxen diff of a file under the limits gets its line diff, got {result:?}"
+            );
+
+            for (head, limit) in [(&many_lines, "lines"), (&many_bytes, "bytes")] {
+                assert!(
+                    compare(&repo, path, &edited, head).await?.is_none(),
+                    "a version over the {limit} limit gets no line diff"
+                );
+                let result = oxen_diff(path, &edited, head).await;
+                assert!(
+                    matches!(result, Err(OxenError::TextDiffTooLarge(_))),
+                    "oxen diff of the file refuses a version over the {limit} limit, got {result:?}"
+                );
+                let result = oxen_diff(Path::new(""), &edited, head).await?;
+                assert!(
+                    result.is_empty(),
+                    "oxen diff of the repository leaves out a version over the {limit} limit, got \
+                     {result:?}"
+                );
+            }
+
+            // Every other error a file's diff fails with reaches the caller too.
+            let image = Path::new("photo.jpeg");
+            util::fs::copy(test::test_img_file(), repo.path.join(image))?;
+            repositories::add(&repo, &repo.path.join(image)).await?;
+            let with_image = repositories::commit(&repo, "add an image")?;
+            let result = oxen_diff(image, &many_bytes, &with_image).await;
+            assert!(
+                matches!(result, Err(OxenError::InvalidFileType(_))),
+                "oxen diff of a file it cannot compare refuses it, got {result:?}"
+            );
 
             Ok(())
         })
