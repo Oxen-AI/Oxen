@@ -11,6 +11,7 @@ use liboxen::opts::PaginateOpts;
 use liboxen::perf_guard;
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::util::fs::AtomicFile;
 use liboxen::util::hasher;
 use liboxen::view::MerkleHashesResponse;
 use liboxen::view::branch::BranchName;
@@ -37,10 +38,9 @@ use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::fs::OpenOptions;
 use std::io::Cursor;
+use std::io::ErrorKind;
 use std::io::Read;
-use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -725,74 +725,37 @@ pub async fn upload_chunk(
         "upload_chunk got chunk {chunk_num}/{total_chunks} of upload {id} of total size {size}"
     );
 
-    // Create a tmp dir for this upload
-    let tmp_dir = hidden_dir.join("tmp").join("chunked").join(id);
-    let chunk_file = tmp_dir.join(format!("chunk_{chunk_num:016}"));
-
-    // mkdir if !exists
-    if !tmp_dir.exists()
-        && let Err(err) = util::fs::create_dir_all(&tmp_dir)
-    {
-        log::error!("upload_chunk could not complete chunk upload, mkdir failed: {err:?}");
-        return Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()));
-    }
-
     // Read bytes from body
     let mut bytes = web::BytesMut::new();
     while let Some(item) = chunk.next().await {
         bytes.extend_from_slice(&item.map_err(|_| OxenHttpError::FailedToReadRequestPayload)?);
     }
+    let bytes = bytes.freeze();
 
-    // Write to tmp file
+    let tmp_dir = hidden_dir.join("tmp").join("chunked").join(id);
+    let chunk_file = chunk_path(&tmp_dir, chunk_num);
     log::debug!("upload_chunk writing file {chunk_file:?}");
-    match OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&chunk_file)
-    {
-        Ok(mut f) => {
-            match f.write_all(&bytes) {
-                Ok(_) => {
-                    // Successfully wrote chunk
-                    log::debug!("upload_chunk successfully wrote chunk {chunk_file:?}");
+    // The chunk's file is closed before the completion check, which can remove its directory: on
+    // NFS an unlinked file still open lingers as .nfsXXXX and the rmdir fails with ENOTEMPTY.
+    tasks::spawn_blocking(move || AtomicFile::new(&chunk_file).write(&bytes))
+        .await
+        .map_err(OxenError::from)??;
 
-                    // TODO: there is a race condition here when multiple chunks
-                    // are uploaded in parallel Currently doesn't hurt anything,
-                    // but we should find a more elegant solution because we're
-                    // doing a lot of extra work unpacking tarballs multiple
-                    // times.
-                    if let Err(err) = check_if_upload_complete_and_unpack(
-                        &repo,
-                        tmp_dir,
-                        total_chunks,
-                        size,
-                        expected_hash,
-                    )
-                    .await
-                    {
-                        log::error!("upload_chunk unpack failed: {err:?}");
-                        return Err(err);
-                    }
+    // TODO: there is a race condition here when multiple chunks
+    // are uploaded in parallel Currently doesn't hurt anything,
+    // but we should find a more elegant solution because we're
+    // doing a lot of extra work unpacking tarballs multiple
+    // times.
+    check_if_upload_complete_and_unpack(&repo, tmp_dir, total_chunks, size, expected_hash)
+        .await
+        .inspect_err(|err| log::error!("upload_chunk unpack failed: {err:?}"))?;
 
-                    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
-                }
-                Err(err) => {
-                    log::error!(
-                        "upload_chunk could not complete chunk upload, file write_all failed: {err:?} -> {chunk_file:?}"
-                    );
-                    Ok(HttpResponse::InternalServerError()
-                        .json(StatusMessage::internal_server_error()))
-                }
-            }
-        }
-        Err(err) => {
-            log::error!(
-                "upload_chunk could not complete chunk upload, file create failed: {err:?} -> {chunk_file:?}"
-            );
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
-        }
-    }
+    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+}
+
+/// The file in a chunked upload's directory that holds chunk `chunk_num`.
+fn chunk_path(tmp_dir: &Path, chunk_num: usize) -> PathBuf {
+    tmp_dir.join(format!("chunk_{chunk_num:016}"))
 }
 
 async fn check_if_upload_complete_and_unpack(
@@ -802,25 +765,23 @@ async fn check_if_upload_complete_and_unpack(
     total_size: usize,
     expected_hash: MerkleHash,
 ) -> Result<(), OxenHttpError> {
-    let mut files = util::fs::list_files_in_dir(&tmp_dir).await?;
-
-    log::debug!(
-        "check_if_upload_complete_and_unpack checking if complete... {} / {}",
-        files.len(),
-        total_chunks
-    );
-
-    if files.len() < total_chunks {
-        return Ok(());
-    }
-    files.sort();
-    let num_chunks = files.len();
-
+    let chunk_dir = tmp_dir.clone();
     let assembled = tasks::spawn_blocking(move || -> Result<_, OxenError> {
+        // Only the chunks themselves, so a write's scratch file in the directory is never taken for
+        // a chunk. Built lazily, since `total_chunks` comes from the request.
+        let files = || (0..total_chunks).map(|chunk_num| chunk_path(&chunk_dir, chunk_num));
         let mut uploaded_size: u64 = 0;
-        for file in files.iter() {
-            let metadata = util::fs::metadata(file)?;
-            uploaded_size += metadata.len();
+        // Last chunk first, since chunks arrive in order and every request before the last finds
+        // it missing.
+        for file in files().rev() {
+            match std::fs::metadata(&file) {
+                Ok(metadata) => uploaded_size += metadata.len(),
+                Err(err) if err.kind() == ErrorKind::NotFound => {
+                    log::debug!("check_if_upload_complete_and_unpack still waiting on {file:?}");
+                    return Ok(None);
+                }
+                Err(err) => return Err(OxenError::file_metadata_error(&file, err)),
+            }
         }
 
         log::debug!(
@@ -833,16 +794,17 @@ async fn check_if_upload_complete_and_unpack(
 
         // Get tar.gz bytes for history/COMMIT_ID data
         let mut buffer = Vec::with_capacity(uploaded_size as usize);
-        for file in files.iter() {
+        for file in files() {
             log::debug!("Reading file bytes {file:?}");
             let mut f =
-                std::fs::File::open(file).map_err(|e| OxenError::file_open_error(file, e))?;
+                std::fs::File::open(&file).map_err(|e| OxenError::file_open_error(&file, e))?;
 
             f.read_to_end(&mut buffer)
-                .map_err(|e| OxenError::file_read_error(file, e))?;
+                .map_err(|e| OxenError::file_read_error(&file, e))?;
         }
-        // `files` is sorted, so the concatenation restores the original byte offsets, and a chunk
-        // that arrived corrupt, truncated, or out of order fails the hash before anything unpacks.
+        // `files` is in chunk order, so the concatenation restores the original byte offsets, and
+        // a chunk that arrived corrupt, truncated, or out of order fails the hash before anything
+        // unpacks.
         let hash = MerkleHash::new(hasher::hash_buffer_128bit(&buffer));
         Ok(Some((buffer, hash)))
     })
@@ -869,7 +831,9 @@ async fn check_if_upload_complete_and_unpack(
         // Unpack tarball to our hidden dir using async streaming
         unpack_entry_tarball_async(repo, buffer).await?;
 
-        log::debug!("check_if_upload_complete_and_unpack unpacked {num_chunks} files successfully");
+        log::debug!(
+            "check_if_upload_complete_and_unpack unpacked {total_chunks} files successfully"
+        );
 
         remove_chunks(tmp_dir).await;
     }
@@ -1163,6 +1127,10 @@ mod tests {
             let unpacked = hidden_dir.join(&commit_dir).join(dir).join("node");
             assert_eq!(util::fs::read_from_path(unpacked)?, dir);
         }
+        assert!(
+            !hidden_dir.join("tmp").join("chunked").join(&hash).exists(),
+            "an unpacked payload must not keep its chunks"
+        );
 
         // A payload that does not match its declared hash, here a chunk corrupted at its original
         // length, is refused before it unpacks, and its chunks go, so sending them again succeeds
@@ -1180,10 +1148,16 @@ mod tests {
             !hidden_dir.join(&other_commit_dir).exists(),
             "a payload that failed its hash must not unpack"
         );
+        let chunk_dir = hidden_dir.join("tmp").join("chunked").join(&hash);
         assert!(
-            !hidden_dir.join("tmp").join("chunked").join(&hash).exists(),
+            !chunk_dir.exists(),
             "a payload that failed its hash must not keep its chunks"
         );
+        // The scratch file a killed chunk write leaves behind is not taken for a chunk
+        util::fs::write_to_path(
+            chunk_path(&chunk_dir, 0).with_extension("oxentmp.abc123"),
+            "torn",
+        )?;
         let chunks = [first, second];
         for chunk_num in 0..chunks.len() {
             let resp =
