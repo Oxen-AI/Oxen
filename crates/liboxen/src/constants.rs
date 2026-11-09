@@ -101,6 +101,10 @@ pub const DUCKDB_CACHE_DIR: &str = "duckdb";
 pub const DUCKDB_DF_TABLE_NAME: &str = "df";
 /// Max number of rows to query from a dataframe
 pub const MAX_QUERYABLE_ROWS: usize = 5_000_000;
+/// The largest version, in bytes, a single-file line diff reads. A larger one gets no line diff.
+pub(crate) const MAX_TEXT_DIFF_BYTES: u64 = 1024 * 1024;
+/// The most lines a version can have for a single-file line diff. A longer one gets no line diff.
+pub(crate) const MAX_TEXT_DIFF_LINES: usize = 20_000;
 /// prefix for the sync status dirs to tell if commits are synced locally
 pub const SYNC_STATUS_DIR: &str = "sync_status";
 /// Flag for if the repository was cloned in a shallow fashion

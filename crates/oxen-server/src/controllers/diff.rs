@@ -351,7 +351,7 @@ pub async fn dir_entries(
     get,
     path = "/api/repos/{namespace}/{repo_name}/compare/{base_head}/file/{resource}",
     tag = "Compare",
-    description = "Get the detailed diff for a specific file between two revisions.",
+    description = "Get the detailed diff for a specific file between two revisions. A text file gets no line diff when either version is over 1 MiB or 20,000 lines.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "compare-datasets"),
