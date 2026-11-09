@@ -4,16 +4,20 @@ use std::panic;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use actix_multipart::Field;
 use actix_web::http::header;
-use actix_web::web::{Bytes, Payload};
+use actix_web::web::{Bytes, BytesMut, Payload};
 use actix_web::{HttpResponse, HttpResponseBuilder};
+use bytesize::ByteSize;
+use futures_util::TryStreamExt as _;
 use futures_util::stream::{self, StreamExt as _};
 use liboxen::api::requests::RepoNew;
-use liboxen::constants::STREAMING_BUF_SIZE;
-use liboxen::error::OxenError;
+use liboxen::constants::{STREAMING_BUF_SIZE, stream_segment_size};
+use liboxen::error::{OxenError, StringError};
 use liboxen::model::{LocalRepository, User};
 use liboxen::repositories;
 use liboxen::util;
+use liboxen::util::compression::decompress_gzip_capped;
 use liboxen::view::StatusMessage;
 use serde::Serialize;
 use tempfile::NamedTempFile;
@@ -254,6 +258,91 @@ pub(crate) async fn spool_to_temp_file(
         .await
         .map_err(|e| OxenError::internal_error(format!("spool task panicked: {e}")))??;
     Ok(spooled)
+}
+
+/// How many bytes gzip may add to a file part whose content does not compress, 64 KiB. zlib's own
+/// bound adds about 3.2 KiB to 10 MiB.
+pub(crate) const GZIP_GROWTH_ALLOWANCE: u64 = 64 * 1024;
+
+/// A multipart file part's bytes as they arrived, before any gunzipping.
+pub(crate) struct PartBytes {
+    bytes: Bytes,
+    gzipped: bool,
+    /// What identifies the part to the client.
+    label: String,
+}
+
+/// A file part that holds a file larger than `stream_segment_size()`, which fails the whole upload
+/// with 413. Unlike [`OxenHttpError`], it can be returned from a spawned task.
+pub(crate) struct PartTooLarge {
+    label: String,
+}
+
+impl From<PartTooLarge> for OxenHttpError {
+    fn from(part: PartTooLarge) -> Self {
+        let limit = ByteSize::b(stream_segment_size()).display().iec();
+        OxenHttpError::PayloadTooLarge(StringError::new(format!(
+            "{} is larger than the {limit} a file part may hold. Send a larger file through an \
+             upload session (POST /versions/uploads).",
+            part.label
+        )))
+    }
+}
+
+impl PartBytes {
+    /// Whether the part was labeled `application/gzip`, so [`Self::into_file`] gunzips it.
+    pub(crate) fn is_gzipped(&self) -> bool {
+        self.gzipped
+    }
+
+    /// The file the part holds, gunzipped when the part was labeled `application/gzip`. The outer
+    /// error is a gzipped part that unzips past `stream_segment_size()` bytes, and the inner one is
+    /// a gzipped part that is not gzip data. Gunzipping is CPU-bound, so call this off the async
+    /// runtime when [`Self::is_gzipped`].
+    pub(crate) fn into_file(self) -> Result<Result<Bytes, OxenError>, PartTooLarge> {
+        let PartBytes {
+            bytes,
+            gzipped,
+            label,
+        } = self;
+        if !gzipped {
+            return Ok(Ok(bytes));
+        }
+        match decompress_gzip_capped(&bytes, stream_segment_size()) {
+            Ok(file) => Ok(Ok(Bytes::from(file))),
+            Err(OxenError::GzipTooLarge { .. }) => Err(PartTooLarge { label }),
+            Err(e) => Ok(Err(e)),
+        }
+    }
+}
+
+/// Receive `field`, the file part that `label` identifies to the client, into memory. Fails with
+/// [`PartTooLarge`] once the part passes `stream_segment_size()` bytes, or passes it by more than
+/// [`GZIP_GROWTH_ALLOWANCE`] when it is labeled `application/gzip`.
+pub(crate) async fn receive_part_bytes(
+    mut field: Field,
+    label: String,
+) -> Result<PartBytes, OxenHttpError> {
+    let gzipped = field
+        .content_type()
+        .is_some_and(|mime| mime.type_() == mime::APPLICATION && mime.subtype() == "gzip");
+    let max_len = if gzipped {
+        stream_segment_size() + GZIP_GROWTH_ALLOWANCE
+    } else {
+        stream_segment_size()
+    };
+    let mut received = BytesMut::new();
+    while let Some(chunk) = field.try_next().await.map_err(actix_web::Error::from)? {
+        if (received.len() + chunk.len()) as u64 > max_len {
+            return Err(PartTooLarge { label }.into());
+        }
+        received.extend_from_slice(&chunk);
+    }
+    Ok(PartBytes {
+        bytes: received.freeze(),
+        gzipped,
+        label,
+    })
 }
 
 #[cfg(test)]
