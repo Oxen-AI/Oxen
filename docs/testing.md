@@ -50,7 +50,7 @@ A change that merges or deletes tests keeps executing every line of non-test cod
 - Never sleep in a test. A commit records its time to below a second, so two commits made back to back already sort by date, and work that runs in the background gets polled at a 2 ms interval against a bounded deadline rather than waited out.
 - Never test that an operation moves its work off the calling thread. Whether it hands blocking work to `spawn_blocking` shows in its code, and a test of that checks tokio rather than the operation.
 - Test runs set `OXEN_STREAM_SEGMENT_SIZE` to 128 KiB through `bin/test`, so any file larger than about 128 KiB exercises the streamed-transfer and chunked-download paths. Size a test file for that path as `stream_segment_size() + N` with N small (1 byte to about 1 MiB), not a hardcoded multi-MB value. A 1.1 MiB test file exercises the same chunked-transfer code as a 100 MB production file.
-- A test of the S3 version store's multipart upload lowers the store's `oneshot_size` and sizes its data from `MIN_PART_SIZE` (`MIN_PART_SIZE + 1` for a short last part, `2 * MIN_PART_SIZE` for an exact part boundary). Every upload at or under `oneshot_size`, 100 MiB by default, goes out as a single PUT, so a test that only makes its data large never reaches the multipart path.
+- A test of the S3 version store's multipart upload lowers the store's `oneshot_size` and sizes its data from `MIN_PART_SIZE` (`MIN_PART_SIZE + 1` for a short last part, `2 * MIN_PART_SIZE` for an exact part boundary). Every upload at or under `oneshot_size`, 10 MiB by default, goes out as a single PUT, so a test that doesn't lower it needs over 10 MiB of data to reach the multipart path.
 
 ## Doctests
 

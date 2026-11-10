@@ -34,8 +34,9 @@ use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
 use xxhash_rust::xxh3::Xxh3;
 
-/// AWS recommends uploading to S3 in a single PUT if filesize is <= 100 MB.
-const DEFAULT_ONESHOT_SIZE: u64 = 100 * 1024 * 1024;
+/// The largest file uploaded to S3 in a single PUT, which reads all of it into memory first: the
+/// smallest size a multipart upload splits into two full parts.
+const DEFAULT_ONESHOT_SIZE: u64 = 2 * MIN_PART_SIZE as u64;
 
 /// The smallest part S3 accepts, 5 MiB, except the last.
 pub(crate) const MIN_PART_SIZE: usize = 5 * 1024 * 1024;
@@ -432,9 +433,10 @@ impl VersionStore for S3VersionStore {
 
     /// Streams file content to S3 without writing to disk.
     ///
-    /// The caller must provide the file size up front. Files up to 100 MB are uploaded in a
-    /// single PUT request (per AWS best-practice guidelines). Larger files are uploaded via
-    /// multipart upload with a dynamically chosen part size and up to 16 concurrent part uploads.
+    /// The caller must provide the file size up front. Files up to `oneshot_size`
+    /// (`DEFAULT_ONESHOT_SIZE` unless a test lowers it) are uploaded in a single PUT request.
+    /// Larger files are uploaded via multipart upload with a dynamically chosen part size and up to
+    /// 16 concurrent part uploads.
     /// If any part fails, the multipart upload is cancelled so no orphaned parts are left behind.
     ///
     /// Bytes are hashed (xxh3-128) as they stream from the reader and verified against the
@@ -468,7 +470,7 @@ impl VersionStore for S3VersionStore {
                 )));
             }
             client
-                .put_object() // AWS recommends switching to multipart uploads for > 100 MB
+                .put_object()
                 .bucket(&self.bucket)
                 .key(&key)
                 .body(ByteStream::from(buf))
