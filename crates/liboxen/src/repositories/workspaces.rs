@@ -9,6 +9,7 @@ use crate::model::entry::metadata_entry::{WorkspaceChanges, WorkspaceMetadataEnt
 use crate::model::{MetadataEntry, ParsedResource, StagedData, StagedEntryStatus};
 use crate::repositories;
 use crate::repositories::merkle_tree::node::EMerkleTreeNode;
+use crate::tasks;
 use crate::util;
 
 use crate::model::{Commit, LocalRepository, Workspace, workspace::WorkspaceConfig};
@@ -68,7 +69,7 @@ pub async fn get_async(
 ) -> Result<Option<Workspace>, OxenError> {
     let repo = repo.clone();
     let workspace_id = workspace_id.to_string();
-    tokio::task::spawn_blocking(move || get(&repo, workspace_id)).await?
+    tasks::spawn_blocking(move || get(&repo, workspace_id)).await?
 }
 
 pub fn get_by_dir(
@@ -173,7 +174,7 @@ pub async fn get_by_name_async(
 ) -> Result<Option<Workspace>, OxenError> {
     let repo = repo.clone();
     let workspace_name = workspace_name.to_string();
-    tokio::task::spawn_blocking(move || get_by_name(&repo, workspace_name)).await?
+    tasks::spawn_blocking(move || get_by_name(&repo, workspace_name)).await?
 }
 
 /// Creates a new workspace and saves it to the filesystem
@@ -205,7 +206,7 @@ pub async fn create_with_name(
 
     let (base_repo, commit, workspace_id) =
         (base_repo.clone(), commit.clone(), workspace_id.to_string());
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let workspace = create_on_disk(
             &base_repo,
             &commit,
@@ -380,7 +381,7 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
             Ok(())
         } else {
             let repo_for_task = repo.clone();
-            match tokio::task::spawn_blocking(move || {
+            match tasks::spawn_blocking(move || {
                 let result = (|| {
                     let idx = workspace_name_index::get_index(&repo_for_task)?;
                     idx.rebuild_from_disk(&repo_for_task)
@@ -403,7 +404,7 @@ async fn ensure_name_index(repo: &LocalRepository) -> Result<(), OxenError> {
                     // never-populated index. The cleanup does filesystem IO, so it
                     // runs on a blocking thread rather than the async worker.
                     let repo_for_cleanup = repo.clone();
-                    let _ = tokio::task::spawn_blocking(move || {
+                    let _ = tasks::spawn_blocking(move || {
                         invalidate_name_index(&repo_for_cleanup);
                     })
                     .await;
@@ -538,7 +539,7 @@ fn iter_workspaces(
 
 pub async fn list(repo: &LocalRepository) -> Result<Vec<Workspace>, OxenError> {
     let repo = repo.clone();
-    tokio::task::spawn_blocking(move || Ok(iter_workspaces(&repo)?.collect())).await?
+    tasks::spawn_blocking(move || Ok(iter_workspaces(&repo)?.collect())).await?
 }
 
 pub fn get_non_editable_by_commit_id(
@@ -596,7 +597,7 @@ pub fn delete(workspace: &Workspace) -> Result<(), OxenError> {
 /// [`delete`], off the async worker.
 pub async fn delete_async(workspace: &Workspace) -> Result<(), OxenError> {
     let workspace = workspace.clone();
-    tokio::task::spawn_blocking(move || delete(&workspace)).await?
+    tasks::spawn_blocking(move || delete(&workspace)).await?
 }
 
 pub fn clear(repo: &LocalRepository) -> Result<(), OxenError> {
@@ -1296,7 +1297,7 @@ mod tests {
             let remote_repo_clone2 = remote_repo.clone();
 
             // Spawn two concurrent commit tasks
-            let commit_task1 = tokio::spawn(async move {
+            let commit_task1 = tasks::spawn(async move {
                 api::client::workspaces::commit(
                     &remote_repo_clone1,
                     DEFAULT_BRANCH_NAME,
@@ -1305,7 +1306,7 @@ mod tests {
                 )
                 .await
             });
-            let commit_task2 = tokio::spawn(async move {
+            let commit_task2 = tasks::spawn(async move {
                 api::client::workspaces::commit(
                     &remote_repo_clone2,
                     DEFAULT_BRANCH_NAME,
@@ -1342,7 +1343,7 @@ mod tests {
             for i in 0..NUM_TASKS {
                 let remote_repo = remote_repo.clone();
                 let repo = repo.clone();
-                let handle = tokio::spawn(async move {
+                let handle = tasks::spawn(async move {
                     // Create a unique branch for this task
                     let branch_name = format!("branch-{i}");
                     api::client::branches::create_from_branch(
@@ -1446,7 +1447,7 @@ mod tests {
             for i in 0..NUM_TASKS {
                 let repo = repo.clone();
                 let commit = commit.clone();
-                handles.push(tokio::spawn(async move {
+                handles.push(tasks::spawn(async move {
                     let workspace_id = format!("ws-id-{i}");
                     create_with_name(
                         &repo,

@@ -20,6 +20,7 @@ use crate::model::file::FileNew;
 use crate::model::merkle_tree;
 use crate::storage::S3Opts;
 use crate::sync_dir::{create_placed_repo_dir, is_server_owned, placed_repo_dir, repo_dirs};
+use crate::tasks;
 use crate::util;
 use crate::util::fs::AtomicFile;
 use crate::view::repository::RepositoryListView;
@@ -27,7 +28,6 @@ use regex::Regex;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
-use tokio::task::spawn_blocking;
 use uuid::Uuid;
 
 pub mod add;
@@ -189,7 +189,7 @@ pub async fn get_by_namespace_and_name_async(
     let namespace = namespace.to_string();
     let name = name.to_string();
     let server_s3_opts = server_s3_opts.cloned();
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         get_by_namespace_and_name(&sync_dir, &namespace, &name, server_s3_opts.as_ref())
     })
     .await?
@@ -197,8 +197,7 @@ pub async fn get_by_namespace_and_name_async(
 
 pub async fn is_empty(repo: &LocalRepository) -> Result<bool, OxenError> {
     let repo = repo.clone();
-    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.is_empty()))
-        .await?
+    tasks::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.is_empty())).await?
 }
 
 pub fn list_namespaces(sync_dir: &Path) -> Result<Vec<String>, OxenError> {
@@ -701,7 +700,7 @@ where
     R: Send + 'static,
 {
     let table = name_table::NameTable::new(sync_dir);
-    spawn_blocking(move || edit(&table)).await?
+    tasks::spawn_blocking(move || edit(&table)).await?
 }
 
 /// Create the repository under `sync_dir`, recording `identity` as who it is and placed by the UUID
@@ -721,7 +720,7 @@ async fn create_unclaimed(
     let files = new_repo.files.take().unwrap_or_default();
     let sync_dir = sync_dir.to_path_buf();
     let server_s3_opts = server_s3_opts.cloned();
-    let (repo_dir, saved) = spawn_blocking(move || {
+    let (repo_dir, saved) = tasks::spawn_blocking(move || {
         let repo_dir = create_placed_repo_dir(&sync_dir, identity.repo_uuid)?;
         log::debug!("repositories::create repo dir: {repo_dir:?}");
         let saved = save_new_repo(&repo_dir, &new_repo, identity, server_s3_opts.as_ref());
@@ -811,7 +810,7 @@ async fn set_up_new_repo(
     let user = files.first().map(|file| file.user.clone());
     log::debug!("repositories::create files: {:?}", files.len());
     let repo = local_repo.clone();
-    let paths = spawn_blocking(move || {
+    let paths = tasks::spawn_blocking(move || {
         // Create history dir
         let history_dir = util::fs::oxen_hidden_dir(&repo.path).join(constants::HISTORY_DIR);
         util::fs::create_dir_all(history_dir)?;
@@ -842,7 +841,7 @@ async fn set_up_new_repo(
     }
 
     let repo = local_repo.clone();
-    spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let commit = core::v_latest::commits::commit_with_user(&repo, "Initial commit", &user)?;
         branches::create(&repo, constants::DEFAULT_BRANCH_NAME, &commit.id)?;
         Ok::<(), OxenError>(())
@@ -858,7 +857,7 @@ async fn set_up_new_repo(
 pub async fn release_recorded_name(sync_dir: &Path, repo_dir: &Path) -> Result<(), OxenError> {
     let sync_dir = sync_dir.to_path_buf();
     let repo_dir = repo_dir.to_path_buf();
-    spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let Some((namespace, name, repo_uuid)) = held_name_in_config(&repo_dir) else {
             return Ok(());
         };
@@ -903,7 +902,7 @@ pub async fn delete(repo: LocalRepository) -> Result<(), OxenError> {
 /// can be opened.
 pub async fn delete_dir(path: &Path) -> Result<(), OxenError> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+    tasks::spawn_blocking(move || -> Result<(), OxenError> {
         // Close DB instances before trying to delete the directory
         core::staged::remove_from_cache_with_children(&path)?;
         core::refs::ref_manager::remove_from_cache(&path)?;

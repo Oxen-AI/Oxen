@@ -95,6 +95,7 @@ pub mod request_context;
 pub mod resource;
 pub mod storage;
 pub mod sync_dir;
+pub mod tasks;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test;
 pub mod util;

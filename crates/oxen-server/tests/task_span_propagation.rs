@@ -1,9 +1,10 @@
 //! Locks in the tracing context `oxen_server::tasks` carries onto work that leaves the request
 //! thread: a blocking task is timed under the span it was spawned from, a span the work opens on
 //! the pool thread lands under that, and a future built in a handler but polled after it returned
-//! still belongs to the request. Without this, essentially every sizeable server operation — all
-//! of which run on the blocking pool or behind a streaming body — is exported as an unrelated
-//! root, leaving a request's trace a lone HTTP span.
+//! still belongs to the request. liboxen's spawns keep the caller's span without opening one.
+//! Without this, essentially every sizeable server operation — all of which run on the blocking
+//! pool or behind a streaming body — is exported as an unrelated root, leaving a request's trace a
+//! lone HTTP span.
 //!
 //! Lives as its own integration test binary because the assertions read what a *different thread*
 //! resolves, which only a process-wide subscriber provides. A scoped one binds the thread that
@@ -14,7 +15,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use oxen_server::tasks::{inherit_hub, spawn_blocking};
+use liboxen::tasks as liboxen_tasks;
+use oxen_server::tasks::{inherit_hub, spawn_blocking, spawn_detached};
 use tracing::Instrument;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::LookupSpan;
@@ -86,9 +88,26 @@ async fn work_off_the_request_thread_stays_in_the_request_span() {
         spawn_blocking(|| tracing::info_span!("unpacking under test").in_scope(|| ()))
             .await
             .expect("the blocking task should not have panicked");
+        liboxen_tasks::spawn_blocking(|| {
+            tracing::info_span!("liboxen blocking work").in_scope(|| ())
+        })
+        .await
+        .expect("the liboxen blocking task should not have panicked");
+        liboxen_tasks::spawn(async { tracing::info_span!("liboxen task work").in_scope(|| ()) })
+            .await
+            .expect("the liboxen task should not have panicked");
     }
     .instrument(request.clone())
     .await;
+
+    for liboxen_span in ["liboxen blocking work", "liboxen task work"] {
+        assert_eq!(
+            recorder.parent_of(liboxen_span),
+            Some(Some("request under test".to_string())),
+            "liboxen's spawns open no span of their own; recorded: {:?}",
+            recorder.recorded()
+        );
+    }
 
     assert_eq!(
         recorder.parent_of("blocking task"),
@@ -128,6 +147,42 @@ async fn work_off_the_request_thread_stays_in_the_request_span() {
 
     assert_eq!(
         recorder.parent_of("bare deferred work under test"),
+        Some(None),
+        "recorded: {:?}",
+        recorder.recorded()
+    );
+
+    // How a background delete spawns: the task outlives the request, so it runs in a root span of
+    // its own rather than keeping the request's span open.
+    async {
+        spawn_detached(async { tracing::info_span!("detached work under test").in_scope(|| ()) })
+            .await
+            .expect("the detached task should not have panicked");
+    }
+    .instrument(request.clone())
+    .await;
+
+    assert_eq!(
+        recorder.parent_of("detached task"),
+        Some(None),
+        "a detached task's span is a root; recorded: {:?}",
+        recorder.recorded()
+    );
+    assert_eq!(
+        recorder.parent_of("detached work under test"),
+        Some(Some("detached task".to_string())),
+        "recorded: {:?}",
+        recorder.recorded()
+    );
+
+    // How the process-lifetime loops spawn at startup, outside any span: the task opens none,
+    // since a span that never ends is never exported.
+    spawn_detached(async { tracing::info_span!("startup loop work under test").in_scope(|| ()) })
+        .await
+        .expect("the detached task should not have panicked");
+
+    assert_eq!(
+        recorder.parent_of("startup loop work under test"),
         Some(None),
         "recorded: {:?}",
         recorder.recorded()

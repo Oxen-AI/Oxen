@@ -24,6 +24,7 @@ use crate::model::{
     Commit, EntryDataType, LocalRepository, MerkleHash, MerkleTreeNodeType, PartialNode,
     TMerkleTreeNode,
 };
+use crate::tasks;
 use crate::{repositories, util};
 
 /// This will return the MerkleTreeNode with type CommitNode if the Commit exists
@@ -190,7 +191,7 @@ pub async fn get_node_by_path_async(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || get_node_by_path(&repo, &commit, &path)).await?
+    tasks::spawn_blocking(move || get_node_by_path(&repo, &commit, &path)).await?
 }
 
 pub fn get_node_by_path_with_children(
@@ -227,7 +228,7 @@ pub async fn get_file_by_path_async(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.as_ref().to_path_buf();
-    tokio::task::spawn_blocking(move || get_file_by_path(&repo, &commit, &path)).await?
+    tasks::spawn_blocking(move || get_file_by_path(&repo, &commit, &path)).await?
 }
 
 pub fn get_dir_with_children(
@@ -1795,7 +1796,7 @@ pub async fn find_missing_added_objects(
     let base = base.cloned();
     let head = head.clone();
     let (missing_nodes, added_versions) =
-        tokio::task::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), OxenError> {
+        tasks::spawn_blocking(move || -> Result<(Vec<String>, Vec<String>), OxenError> {
             let Some(added) = added_objects::<HashSet<String>>(&walk_repo, base.as_ref(), &head)?
             else {
                 // No root dir node for head means the commit's tree wasn't uploaded at all.

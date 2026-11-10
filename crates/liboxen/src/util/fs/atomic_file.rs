@@ -16,6 +16,7 @@ use xxhash_rust::xxh3::{Xxh3, xxh3_128};
 use crate::constants;
 use crate::error::OxenError;
 use crate::model::MerkleHash;
+use crate::tasks;
 use crate::util::hasher::{HashingReader, HashingWriter};
 
 /// Infix used in `AtomicTempFile` scratch file names: `<target_basename>.oxentmp.<random>`. Private
@@ -27,7 +28,7 @@ const ATOMIC_TEMP_INFIX: &str = ".oxentmp.";
 /// A temp file opened in `target`'s parent directory, ready to be written into and then atomically
 /// renamed over `target` via `commit`.
 ///
-/// **Sync** per `docs/async_policy.md`. Async callers run this inside a `tokio::task::spawn_blocking`
+/// **Sync** per `docs/async_policy.md`. Async callers run this inside a `tasks::spawn_blocking`
 /// closure (directly, or via the **Channel hand-off** pattern for streaming sources — see
 /// [`AtomicFile::stream_async`]).
 ///
@@ -189,7 +190,7 @@ fn create_parent_dir(target: &Path) -> Result<Option<&Path>, OxenError> {
 ///   at `target`, never a wrong-mtime file.
 ///
 /// Sync on purpose where possible: per `docs/async_policy.md`, most leaf filesystem utilities use
-/// `std::fs` and run inside a `tokio::task::spawn_blocking` provided by the calling operation.
+/// `std::fs` and run inside a `tasks::spawn_blocking` provided by the calling operation.
 /// [`stream_async`][Self::stream_async] is the only `async` terminal, and uses the Channel
 /// hand-off pattern to bridge an async reader to a sync writer.
 #[must_use = "AtomicFile does nothing until a terminal method (write/write_with/stream/stream_from_paths/stream_async/copy_from/move_from) is called"]
@@ -416,7 +417,7 @@ impl AtomicFile {
         //
         // When `mtime` is `Some`, stamp the target file with the correct mtime after writing and
         // before committing.
-        let writer = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+        let writer = tasks::spawn_blocking(move || -> Result<(), OxenError> {
             let mut tmp = AtomicTempFile::create(&target)?;
             let mut hasher = expected_hash.map(|_| Xxh3::new());
             let mut saw_eof = false;
@@ -559,6 +560,7 @@ mod tests {
     use super::{ATOMIC_TEMP_INFIX, AtomicFile, AtomicTempFile};
     use crate::error::OxenError;
     use crate::model::MerkleHash;
+    use crate::tasks;
     use crate::test;
     use std::io::Write;
     use std::time::{Duration, SystemTime};
@@ -1174,7 +1176,7 @@ mod tests {
             for i in 0..n {
                 let target = target.clone();
                 let payload = format!("writer-{i}").into_bytes();
-                handles.push(tokio::task::spawn_blocking(move || {
+                handles.push(tasks::spawn_blocking(move || {
                     AtomicFile::new(&target).write(&payload)
                 }));
             }

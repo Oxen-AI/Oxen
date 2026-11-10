@@ -1,5 +1,6 @@
 use crate::error::OxenError;
 use crate::model::MerkleHash;
+use crate::tasks;
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 use aws_config::timeout::TimeoutConfig;
@@ -519,7 +520,7 @@ impl VersionStore for S3VersionStore {
                 }
                 buf.truncate(n);
                 hasher.update(&buf);
-                uploads.push(tokio::spawn(upload_part(
+                uploads.push(tasks::spawn(upload_part(
                     client.clone(),
                     self.bucket.clone(),
                     key.clone(),
@@ -779,7 +780,7 @@ impl VersionStore for S3VersionStore {
         // span stops being current, so each task carries the span `get_version_stream` ran in.
         let span = Span::current();
         let spawned = iter::once(first_part).chain(other_parts).map(move |part| {
-            let task = AbortOnDropHandle::new(tokio::spawn(part.instrument(span.clone())));
+            let task = AbortOnDropHandle::new(tasks::spawn(part.instrument(span.clone())));
             async move { task.await.map_err(io::Error::other)? }
         });
         let parts = stream::iter(spawned).buffered(RANGE_READS_IN_FLIGHT);
@@ -1424,14 +1425,14 @@ pub(crate) mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        let server_handle = tokio::spawn(async move {
+        let server_handle = tasks::spawn(async move {
             loop {
                 let (stream, _) = match listener.accept().await {
                     Ok(conn) => conn,
                     Err(_) => break,
                 };
                 let service = service.clone();
-                tokio::spawn(async move {
+                tasks::spawn(async move {
                     let stream = hyper_util::rt::TokioIo::new(stream);
                     let _ = hyper::server::conn::http1::Builder::new()
                         .serve_connection(stream, service)

@@ -20,6 +20,7 @@ use crate::repositories::commits;
 use crate::repositories::commits::commit_writer::compute_commit_id;
 use crate::repositories::tree::{DeclaredSizes, added_objects};
 use crate::repositories::workspaces;
+use crate::tasks;
 
 /// Examples of each finding a report carries alongside the count.
 const SAMPLE_LIMIT: usize = 10;
@@ -211,7 +212,7 @@ async fn check_workspace_pins(
     // DB IO, one blocking unit.
     let walk_repo = repo.clone();
     let (checked, dangling, unreadable) =
-        tokio::task::spawn_blocking(move || -> Result<WorkspaceFindings, OxenError> {
+        tasks::spawn_blocking(move || -> Result<WorkspaceFindings, OxenError> {
             let mut checked = 0;
             let mut dangling = Findings::default();
             let mut unreadable = Vec::new();
@@ -290,7 +291,7 @@ async fn check_commits(
 
     // Sync core: every commit lookup is a node-store read, one blocking unit.
     let walk_repo = repo.clone();
-    let found = tokio::task::spawn_blocking(move || -> Result<CommitFindings, OxenError> {
+    let found = tasks::spawn_blocking(move || -> Result<CommitFindings, OxenError> {
         let mut found = CommitFindings::default();
         // Commits already read or reported unreadable, so each is looked up once.
         let mut seen = HashSet::new();
@@ -402,7 +403,7 @@ async fn check_tree_nodes(
     // Sync core: the merkle walk and the node-existence probes are sync DB IO, one blocking unit.
     let walk_repo = repo.clone();
     let (versions, missing_nodes, unreadable) =
-        tokio::task::spawn_blocking(move || -> Result<TreeFindings, OxenError> {
+        tasks::spawn_blocking(move || -> Result<TreeFindings, OxenError> {
             let mut by_hash: HashMap<MerkleHash, &Commit> = HashMap::new();
             for commit in &commits {
                 by_hash.insert(commit.hash()?, commit);

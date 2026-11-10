@@ -8,6 +8,11 @@ disallowed-methods = [
     { path = "duckdb::Connection::open", reason = "Open DuckDB connections via `df_db::open_duckdb_connection` so connection-level configuration is applied in one place." },
     { path = "duckdb::Connection::open_with_flags", reason = "Open DuckDB connections via `df_db::open_duckdb_connection` or `df_db::open_hardened_query_connection` so connection-level config (the thread cap, and for hardened connections external access off, extensions off, locked) stays in one place." },
 
+    # Spawning off the calling task without the caller's context: the request's tracing span and its Sentry hub.
+    { path = "tokio::task::spawn_blocking", reason = "Use the crate's `tasks::spawn_blocking` (`liboxen::tasks` in liboxen, `crate::tasks` in oxen-server), which carries the caller's tracing span and Sentry hub onto the blocking pool." },
+    { path = "tokio::spawn", reason = "Use the crate's `tasks::spawn`, which carries the caller's tracing span and Sentry hub onto the task. A task in oxen-server that outlives its request on purpose uses `crate::tasks::spawn_detached`." },
+    { path = "actix_web::web::block", reason = "Use `crate::tasks::spawn_blocking`: `web::block` loses the request's context and discards a panic's message." },
+
     # Non-atomic filesystem writes — production code must use `AtomicFile` # (`crates/liboxen/src/util/fs.rs`) so a crash
     # mid-write can never leave a torn or partially-written file. Commented out until the existing violations are migrated.
     # Uncomment once `cargo clippy --workspace --all-targets --no-deps -- -D warnings` passes with these enabled.

@@ -56,6 +56,8 @@ impl TracingGuard {
     pub async fn shutdown(&self) {
         #[cfg(feature = "otel")]
         {
+            use crate::tasks;
+
             let tracer_provider = self._tracer_provider.clone();
             let logger_provider = self._logger_provider.clone();
             if tracer_provider.is_none() && logger_provider.is_none() {
@@ -68,12 +70,12 @@ impl TracingGuard {
             // Concurrently rather than one after the other: each provider's shutdown carries its
             // own five-second export timeout, and draining them in sequence adds those timeouts
             // together against whatever grace period the process gets before it is killed.
-            let tracer = tokio::task::spawn_blocking(move || {
+            let tracer = tasks::spawn_blocking(move || {
                 if let Some(provider) = tracer_provider {
                     report_shutdown("tracer", provider.shutdown());
                 }
             });
-            let logger = tokio::task::spawn_blocking(move || {
+            let logger = tasks::spawn_blocking(move || {
                 if let Some(provider) = logger_provider {
                     report_shutdown("logger", provider.shutdown());
                 }

@@ -11,6 +11,7 @@ use crate::model::parsed_resource::ParsedResourceView;
 use crate::model::{Commit, LocalRepository, MerkleHash, MetadataEntry};
 use crate::repositories;
 use crate::storage::VersionStore;
+use crate::tasks;
 use crate::util;
 use crate::util::fs::{
     LineCounts, data_type_from_head, file_extension, mime_type_from_head, read_head,
@@ -29,7 +30,6 @@ use std::io::{self, Cursor, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::runtime::Handle;
-use tokio::task::spawn_blocking;
 
 pub mod audio;
 pub mod image;
@@ -333,7 +333,7 @@ impl StoredBytes {
             rest
         } else {
             // A CSV's head grows toward 64 MiB, too large to copy on the runtime.
-            spawn_blocking(move || {
+            tasks::spawn_blocking(move || {
                 let mut joined = BytesMut::with_capacity(head.len() + rest.len());
                 joined.extend_from_slice(&head);
                 joined.extend_from_slice(&rest);
@@ -480,7 +480,7 @@ pub(crate) async fn inspect_stored(
             let version = version.clone();
             let file_path = file_path.to_path_buf();
             let data_type = data_type.clone();
-            spawn_blocking(move || {
+            tasks::spawn_blocking(move || {
                 let source = ByteSource::Stored(&version);
                 get_file_metadata(&mut version.reader(), &source, &file_path, &data_type)
             })

@@ -9,6 +9,7 @@ use crate::model::{
 use crate::opts::UploadOpts;
 use crate::repositories;
 use crate::storage::VersionStore;
+use crate::tasks;
 use crate::util::fs::AtomicFile;
 use crate::view::entries::{EMetadataEntry, PaginatedMetadataEntriesResponse};
 use crate::{api, constants};
@@ -23,7 +24,6 @@ use http::Method;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
 use tokio_util::io::StreamReader;
 
 /// Returns the metadata given a file path
@@ -660,7 +660,7 @@ pub async fn download_large_entry(
         .collect();
     let tmp_dir_for_cleanup = tmp_dir.clone();
     let local_path_for_blocking = local_path.to_path_buf();
-    spawn_blocking(move || -> Result<(), OxenError> {
+    tasks::spawn_blocking(move || -> Result<(), OxenError> {
         AtomicFile::new(&local_path_for_blocking)
             .with_hash(expected_hash)
             .stream_from_paths(&chunk_paths)?;
@@ -771,7 +771,7 @@ async fn download_entry_chunk(
         reqwest::StatusCode::OK => {
             let bytes = response.bytes().await?;
             let path = local_path.to_path_buf();
-            spawn_blocking(move || AtomicFile::new(&path).write(&bytes)).await??;
+            tasks::spawn_blocking(move || AtomicFile::new(&path).write(&bytes)).await??;
             Ok(status)
         }
         reqwest::StatusCode::NOT_FOUND => Err(OxenError::path_does_not_exist(remote_path)),

@@ -266,6 +266,7 @@ mod tests {
     use super::*;
     use crate::error::OxenError;
     use crate::repositories;
+    use crate::tasks;
     use crate::test;
 
     #[tokio::test]
@@ -377,7 +378,7 @@ mod tests {
             for i in 0..10 {
                 let idx = idx.clone();
                 let id = format!("id-{i}");
-                handles.push(tokio::task::spawn_blocking(move || {
+                handles.push(tasks::spawn_blocking(move || {
                     idx.put_if_absent("shared-name", &id)
                         .map(|existing| (id, existing))
                 }));

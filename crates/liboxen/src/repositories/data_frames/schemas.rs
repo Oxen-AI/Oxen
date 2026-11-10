@@ -6,9 +6,9 @@
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, Schema};
 use crate::repositories;
+use crate::tasks;
 
 use std::path::Path;
-use tokio::task::spawn_blocking;
 
 pub use crate::core::v_latest::data_frames::schemas::list;
 
@@ -23,7 +23,7 @@ pub async fn get_by_path_async(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.to_path_buf();
-    spawn_blocking(move || get_by_path(&repo, &commit, path)).await?
+    tasks::spawn_blocking(move || get_by_path(&repo, &commit, path)).await?
 }
 
 /// Get a staged schema
@@ -39,7 +39,7 @@ pub async fn get_staged_schema_with_staged_db_manager_async(
 ) -> Result<Option<Schema>, OxenError> {
     let repo = repo.clone();
     let path = path.to_path_buf();
-    spawn_blocking(move || get_staged_schema_with_staged_db_manager(&repo, path)).await?
+    tasks::spawn_blocking(move || get_staged_schema_with_staged_db_manager(&repo, path)).await?
 }
 
 /// List all the staged schemas

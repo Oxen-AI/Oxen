@@ -29,6 +29,7 @@ use crate::model::workspace::Workspace;
 use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::GlobOpts;
 use crate::storage::version_store::VersionStore;
+use crate::tasks;
 use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
 use ignore::gitignore::Gitignore;
@@ -249,10 +250,8 @@ pub async fn add_files(
 
     if !unstaged_paths.is_empty() {
         let staged_db = Arc::clone(&staged_db);
-        tokio::task::spawn_blocking(move || {
-            delete_empty_staged_ancestors(&staged_db, &unstaged_paths)
-        })
-        .await??;
+        tasks::spawn_blocking(move || delete_empty_staged_ancestors(&staged_db, &unstaged_paths))
+            .await??;
     }
 
     // Stage the non-existent paths as removed
@@ -527,7 +526,7 @@ pub async fn process_add_dir(
                                         let added = {
                                             let file_status = file_status.clone();
                                             let path = path.clone();
-                                            tokio::task::spawn_blocking(move || {
+                                            tasks::spawn_blocking(move || {
                                                 process_add_file(
                                                     &repo,
                                                     &repo_path,
@@ -604,7 +603,7 @@ pub async fn process_add_dir(
     // Every staging write has finished, so no file is left staged without its directory's entry
     let unstaged_paths = mem::take(&mut *unstaged_paths_final.lock());
     if !unstaged_paths.is_empty() {
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             delete_empty_staged_ancestors(&staged_db_final, &unstaged_paths)
         })
         .await??;
@@ -623,7 +622,7 @@ fn walkdir_async_stream(
     let path = path.into();
     let (tx, rx) = mpsc::channel::<DirEntry>(512);
 
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         for entry in WalkDir::new(&path)
             .into_iter()
             .filter_entry(|e| {
@@ -742,7 +741,7 @@ async fn add_file_inner(
         Arc::clone(staged_db),
         path.to_path_buf(),
     );
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         process_add_file(
             &repo,
             &repo_path,
@@ -1028,7 +1027,7 @@ pub(crate) async fn stage_version_file(
     let relative_path = path_relative_to_dir(file.dst_path(), &workspace.base_repo.path)?;
     let workspace = workspace.clone();
     let (staged_db_manager, seen_dirs) = (staged_db_manager.clone(), Arc::clone(seen_dirs));
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let (file, status, previous_metadata) = match file {
             VersionFileToStage::AlreadyCommitted { hash, .. } => {
                 return unstage_reverted(

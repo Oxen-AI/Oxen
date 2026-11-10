@@ -17,6 +17,7 @@ use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
     list_dirs as list_workspace_dirs, read_config as read_workspace_config,
 };
+use crate::tasks;
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::ops::ControlFlow;
@@ -33,7 +34,6 @@ use crate::model::{
 use crate::repositories;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
-use tokio::task::spawn_blocking;
 
 pub mod columns;
 pub mod rows;
@@ -223,7 +223,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     let (file_hash, extension, db_path, parent) = {
         let workspace = workspace.clone();
         let path = path.to_path_buf();
-        spawn_blocking(move || -> Result<_, OxenError> {
+        tasks::spawn_blocking(move || -> Result<_, OxenError> {
             let path = path.as_path();
             let file_node = match repositories::tree::get_file_by_path(
                 &workspace.base_repo,
@@ -286,7 +286,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     // the sync-core / async-edge policy. The DuckDB connection lives entirely inside the closure
     // (it never crosses an `.await`), and `version_file` is held on the async side until the
     // blocking work finishes, so a materialized S3 temp file outlives the read.
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| {
                 // Drop any prior table (possibly partial or stale) and commit that
@@ -413,7 +413,7 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
         ));
     }
 
-    let recovered = tokio::task::spawn_blocking(move || -> Result<bool, OxenError> {
+    let recovered = tasks::spawn_blocking(move || -> Result<bool, OxenError> {
         let outcome = with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| -> Result<bool, DataFrameError> {
                 let schema = df_db::get_schema(conn, TABLE_NAME)?;
@@ -521,7 +521,7 @@ pub async fn rename(
         let workspace = workspace.clone();
         let path = path.clone();
         let new_path = new_path.clone();
-        spawn_blocking(move || -> Result<ControlFlow<PathBuf, _>, OxenError> {
+        tasks::spawn_blocking(move || -> Result<ControlFlow<PathBuf, _>, OxenError> {
             let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
             let staged_entry = staged_db_manager.read_from_staged_db(&path)?;
             // Renaming it would restore content the workspace already deleted, as a file `mv`
@@ -585,7 +585,7 @@ pub async fn rename(
     add(workspace, &workspace_file_path).await?;
 
     let workspace = workspace.clone();
-    spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         // Read the staged entry again after adding
         let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
         let staged_entry = staged_db_manager.read_from_staged_db(&new_path)?;

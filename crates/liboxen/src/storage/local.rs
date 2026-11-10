@@ -10,6 +10,7 @@ use crate::model::MerkleHash;
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore, VersionUpload,
 };
+use crate::tasks;
 use crate::util::fs::{AtomicFile, AtomicPartsFile};
 use crate::util::{concurrency, hasher};
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -26,7 +27,6 @@ use tokio::fs::{self, File, metadata};
 use tokio::io::AsyncReadExt;
 use tokio::io::BufReader;
 use tokio::sync::Semaphore;
-use tokio::task::spawn_blocking;
 use tokio_util::io::ReaderStream;
 
 /// Classifies a failed read of a version file. An absent file means the store holds no data for
@@ -133,7 +133,7 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<LocalFilePath, OxenError> {
         let version_path = self.version_path(&hash.to_string());
         let target = version_path.clone();
-        spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             if target.exists() {
                 return Ok(());
             }
@@ -151,7 +151,7 @@ impl VersionStore for LocalVersionStore {
         }
 
         let expected_hash: MerkleHash = hash.parse()?;
-        spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
                 .write(&data)
@@ -169,7 +169,7 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<(), OxenError> {
         let path = self.version_dir(orig_hash).join(derived_filename);
         let path_for_log = path.clone();
-        spawn_blocking(move || AtomicFile::new(&path).write(&derived_data)).await??;
+        tasks::spawn_blocking(move || AtomicFile::new(&path).write(&derived_data)).await??;
         log::debug!("Saved derived version file {path_for_log:?}");
         Ok(())
     }
@@ -187,7 +187,7 @@ impl VersionStore for LocalVersionStore {
         hashes: Vec<String>,
     ) -> Result<Vec<(String, Result<u64, OxenError>)>, OxenError> {
         let store = LocalVersionStore::new(&self.root_path);
-        let sizes = spawn_blocking(move || {
+        let sizes = tasks::spawn_blocking(move || {
             hashes
                 .into_par_iter()
                 .map(|hash| {
@@ -291,7 +291,7 @@ impl VersionStore for LocalVersionStore {
             }
         }
         let dest_path = dest_path.to_path_buf();
-        spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             AtomicFile::new(&dest_path)
                 .with_mtime(mtime)
                 .copy_from(&version_path)
@@ -368,7 +368,7 @@ impl VersionStore for LocalVersionStore {
             return Ok(());
         }
 
-        spawn_blocking(move || AtomicFile::new(&chunk_path).write(&data)).await??;
+        tasks::spawn_blocking(move || AtomicFile::new(&chunk_path).write(&data)).await??;
 
         Ok(())
     }
@@ -441,7 +441,7 @@ impl VersionStore for LocalVersionStore {
 
         // Run the full read-chunks + atomic-write + cleanup sequence in one `spawn_blocking`
         // closure: `stream_from_paths` concatenates the chunks in offset order.
-        spawn_blocking(move || -> Result<(), OxenError> {
+        tasks::spawn_blocking(move || -> Result<(), OxenError> {
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
                 .stream_from_paths(&chunk_paths)?;
@@ -466,7 +466,7 @@ impl VersionStore for LocalVersionStore {
     ) -> Result<Box<dyn VersionUpload>, OxenError> {
         let version_path = self.version_path(&hash.to_string());
         let target = version_path.clone();
-        let file = spawn_blocking(move || {
+        let file = tasks::spawn_blocking(move || {
             AtomicFile::new(&target)
                 .with_hash(hash)
                 .open_for_parts(size)
@@ -544,7 +544,7 @@ impl VersionStore for LocalVersionStore {
         for prefix_path in prefix_paths {
             let semaphore_cl = semaphore.clone();
             let stats_cl = stats.clone();
-            let handle = tokio::spawn(async move {
+            let handle = tasks::spawn(async move {
                 let mut suffix_rd = match fs::read_dir(&prefix_path).await {
                     Ok(rd) => rd,
                     Err(_) => {
@@ -611,7 +611,7 @@ impl VersionStore for LocalVersionStore {
 
                         // Compute hash in blocking thread
                         let actual_hash =
-                            match spawn_blocking(move || hasher::hash_buffer(&data)).await {
+                            match tasks::spawn_blocking(move || hasher::hash_buffer(&data)).await {
                                 Ok(h) => h,
                                 Err(_) => {
                                     log::debug!(
@@ -703,7 +703,7 @@ impl VersionUpload for LocalVersionUpload {
     async fn upload_part(&self, part_number: u64, data: Bytes) -> Result<(), OxenError> {
         let file = self.file.lock().clone().ok_or_else(|| self.ended())?;
         let offset = (part_number - 1) * self.part_size;
-        spawn_blocking(move || file.write_at(offset, &data)).await?
+        tasks::spawn_blocking(move || file.write_at(offset, &data)).await?
     }
 
     async fn complete(&self, actual_hash: MerkleHash) -> Result<(), OxenError> {
@@ -714,12 +714,12 @@ impl VersionUpload for LocalVersionUpload {
                 self.version_path
             ))
         })?;
-        spawn_blocking(move || file.commit(Some(actual_hash))).await?
+        tasks::spawn_blocking(move || file.commit(Some(actual_hash))).await?
     }
 
     async fn abort(&self) -> Result<(), OxenError> {
         let file = self.file.lock().take();
-        spawn_blocking(move || drop(file)).await?;
+        tasks::spawn_blocking(move || drop(file)).await?;
         Ok(())
     }
 }

@@ -9,6 +9,7 @@ use crate::model::merkle_tree::node::{DirNodeWithPath, FileNode, FileNodeWithDir
 use crate::model::{Commit, DiffEntry, LocalRepository, MerkleTreeNodeType};
 use crate::opts::DFOpts;
 use crate::repositories;
+use crate::tasks;
 use crate::util;
 use futures::{StreamExt, TryStreamExt, stream};
 
@@ -31,7 +32,7 @@ pub async fn list_diff_entries(
         let repo = repo.clone();
         let base_commit = base_commit.clone();
         let head_commit = head_commit.clone();
-        tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+        tasks::spawn_blocking(move || -> Result<_, OxenError> {
             let repo = &repo;
             let base_commit = &base_commit;
             let head_commit = &head_commit;
@@ -327,8 +328,7 @@ pub async fn list_changed_dirs(
     let repo = repo.clone();
     let base_commit = base_commit.clone();
     let head_commit = head_commit.clone();
-    tokio::task::spawn_blocking(move || list_changed_dirs_sync(&repo, &base_commit, &head_commit))
-        .await?
+    tasks::spawn_blocking(move || list_changed_dirs_sync(&repo, &base_commit, &head_commit)).await?
 }
 
 fn list_changed_dirs_sync(
@@ -372,7 +372,7 @@ pub async fn get_dir_diff_entry_with_summary(
     let repo = repo.clone();
     let base_commit = base_commit.clone();
     let head_commit = head_commit.clone();
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         get_dir_diff_entry_with_summary_sync(&repo, dir, &base_commit, &head_commit, summary)
     })
     .await?

@@ -1,6 +1,9 @@
 #[cfg(feature = "metrics")]
 use metrics_exporter_prometheus::{BuildError, PrometheusBuilder};
 
+#[cfg(feature = "metrics")]
+use crate::tasks;
+
 /// Guard for the Prometheus metrics exporter. Dropping this aborts the
 /// background HTTP server that serves the `/metrics` endpoint.
 ///
@@ -51,7 +54,7 @@ pub fn init_metrics_prometheus(port: u16) -> Result<MetricsGuard, BuildError> {
 
     metrics::set_global_recorder(prom_recorder)?;
 
-    let handle = tokio::spawn(async move {
+    let handle = tasks::spawn_detached(async move {
         prom_exporter_fut.await.map_err(|e| {
             let msg = format!("{e:?}");
             tracing::error!("Prometheus metrics exporter failed: {msg}");

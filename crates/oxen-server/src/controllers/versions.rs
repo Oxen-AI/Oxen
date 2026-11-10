@@ -405,7 +405,7 @@ pub async fn stream_versions_tar_gz(
     };
 
     // The body streams after the handler returns, outside the request hub.
-    tokio::spawn(tasks::inherit_hub(writer_task));
+    tasks::spawn(writer_task);
 
     let stream = archive_body_stream(reader, error_rx);
 
@@ -531,7 +531,7 @@ pub async fn stream_versions_zip(
     };
 
     // The body streams after the handler returns, outside the request hub.
-    tokio::spawn(tasks::inherit_hub(writer_task));
+    tasks::spawn(writer_task);
 
     let stream = archive_body_stream(reader, error_rx);
 

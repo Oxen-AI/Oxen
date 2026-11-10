@@ -11,12 +11,13 @@ use crate::core::v_latest::branches::OnConflict;
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, CommitEntry, LocalRepository};
 use crate::repositories;
+use crate::tasks;
 use crate::{core, util};
 
 /// List all the local branches within a repo
 pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
     let repo = repo.clone();
-    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
+    tasks::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
         .await?
 }
 
@@ -35,7 +36,7 @@ pub fn get_by_name(repo: &LocalRepository, name: &str) -> Result<Branch, OxenErr
 pub async fn get_by_name_async(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
     let repo = repo.clone();
     let name = name.to_string();
-    tokio::task::spawn_blocking(move || get_by_name(&repo, &name)).await?
+    tasks::spawn_blocking(move || get_by_name(&repo, &name)).await?
 }
 
 /// Get commit id from a branch by name

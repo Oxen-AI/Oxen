@@ -23,6 +23,7 @@ use crate::error::OxenError;
 use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::storage::version_store::VersionStore;
+use crate::tasks;
 
 pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
@@ -136,7 +137,7 @@ async fn resize_cache_image_version_store(
     let output_format = ImageFormat::from_path(derived_filename)?;
     let image_data = version_store.get_version(img_hash).await?;
 
-    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+    let buf = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
         let img = image::load_from_memory(&image_data)?;
         let mut buf = Vec::new();
         resize_within_source(img, resize.width, resize.height)
@@ -201,7 +202,7 @@ async fn generate_video_thumbnail_version_store(
     };
 
     // The thumbnail is taken from the first decoded frame; thumbnail.timestamp is not yet honored.
-    let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
+    let buf = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
         ensure_video_decoding_initialized()?;
 
         let mut decoder = Decoder::new(version_path.as_path()).map_err(|e| {

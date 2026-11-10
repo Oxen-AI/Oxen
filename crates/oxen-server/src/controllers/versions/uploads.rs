@@ -134,7 +134,7 @@ pub async fn upload_part(
         .await?;
 
     // Runs to the end even if the client disconnects, so a part is never left half recorded.
-    let stored = tokio::spawn(tasks::inherit_hub(receiving.store(part.freeze())))
+    let stored = tasks::spawn(receiving.store(part.freeze()))
         .await
         .map_err(OxenError::from)??;
 

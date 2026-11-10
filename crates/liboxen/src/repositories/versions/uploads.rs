@@ -30,6 +30,7 @@ use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 use crate::repositories::workspaces;
 use crate::storage::{StorageKind, VersionLocation, VersionUpload, s3};
+use crate::tasks;
 use crate::util::fs::LineCounts;
 use crate::view::versions::WorkspaceDestination;
 
@@ -466,12 +467,10 @@ impl ReceivingPart {
             return Ok(PartStored::Pending);
         };
         let hashing = Arc::clone(upload);
-        // Opened here, since the blocking pool's thread has no current span to open it under.
+        // A span of its own, under the caller's, so a part's hashing shows apart from its storing.
         let span =
             info_span!("part hashing", oxen.upload_id = %upload.id, oxen.part_number = part_number);
-        match tokio::task::spawn_blocking(move || span.in_scope(|| hashing.hash_runs(taken)))
-            .await??
-        {
+        match tasks::spawn_blocking(move || span.in_scope(|| hashing.hash_runs(taken))).await?? {
             None => Ok(PartStored::Pending),
             Some((actual_hash, lines)) => {
                 upload.complete(actual_hash, lines).await?;

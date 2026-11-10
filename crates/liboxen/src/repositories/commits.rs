@@ -8,6 +8,7 @@ use crate::error::OxenError;
 use crate::model::User;
 use crate::model::{Commit, LocalRepository};
 use crate::opts::PaginateOpts;
+use crate::tasks;
 use crate::util;
 use crate::view::{PaginatedCommits, PathHistoryPage, StatusMessage};
 
@@ -79,7 +80,7 @@ pub use crate::core::v_latest::commits::head_commit_maybe;
 /// [`head_commit_maybe`], off the async worker.
 pub async fn head_commit_maybe_async(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
     let repo = repo.clone();
-    tokio::task::spawn_blocking(move || head_commit_maybe(&repo)).await?
+    tasks::spawn_blocking(move || head_commit_maybe(&repo)).await?
 }
 
 /// Get the root commit of a repository
@@ -104,7 +105,7 @@ pub async fn get_by_id_async(
 ) -> Result<Option<Commit>, OxenError> {
     let repo = repo.clone();
     let commit_id = commit_id.to_string();
-    tokio::task::spawn_blocking(move || get_by_id(&repo, commit_id)).await?
+    tasks::spawn_blocking(move || get_by_id(&repo, commit_id)).await?
 }
 
 /// Commit id exists
@@ -140,7 +141,7 @@ pub async fn create_initial_commit(
         user.clone(),
         message.to_string(),
     );
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         core::v_latest::commits::create_initial_commit(&repo, &branch_name, &user, &message)
     })
     .await?
@@ -232,7 +233,7 @@ pub async fn list_from_paginated(
 ) -> Result<PaginatedCommits, OxenError> {
     let repo = repo.clone();
     let revision = revision.to_string();
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let _perf = crate::perf_guard!("commits::list_from_paginated");
 
         // Calculate skip and limit based on pagination parameters
@@ -289,7 +290,7 @@ pub async fn list_by_path_from_paginated(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let _perf = crate::perf_guard!("commits::list_by_path_from_paginated");
 
         log::info!("list_by_path_from_paginated: {commit:?} {path:?}");

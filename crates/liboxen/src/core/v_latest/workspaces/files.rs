@@ -16,7 +16,6 @@ use std::iter::successors;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
 use url::{Host, Url};
 use zip::ZipArchive;
 
@@ -40,6 +39,7 @@ use crate::model::{LocalRepository, NewCommitBody};
 use crate::repositories;
 use crate::repositories::metadata::{StoredVersion, inspect_bytes, inspect_file, inspect_stored};
 use crate::storage::VersionLocation;
+use crate::tasks;
 use crate::util;
 use crate::util::fs::{LineCounts, metadata as fs_metadata};
 use crate::view::ErrorFileInfo;
@@ -68,7 +68,7 @@ pub async fn rm(workspace: &Workspace, paths: &[PathBuf]) -> Result<Vec<ErrorFil
     let paths = paths.to_vec();
     // Staging a removal reads the committed tree (a directory's whole subtree) and writes the
     // staged db, all synchronously, so every path goes through one blocking hop off the worker.
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let mut err_files = vec![];
         for path in &paths {
             err_files.extend(p_rm(&workspace, path)?);
@@ -130,8 +130,10 @@ async fn inspect_stored_version(
     let store = workspace.base_repo.version_store();
     match store.version_location(&file_hash.to_string()).await? {
         VersionLocation::Local(data_path) => {
-            spawn_blocking(move || InspectedVersionFile::from_file(dst_path, file_hash, &data_path))
-                .await?
+            tasks::spawn_blocking(move || {
+                InspectedVersionFile::from_file(dst_path, file_hash, &data_path)
+            })
+            .await?
         }
         VersionLocation::S3 {
             url,
@@ -162,7 +164,7 @@ impl CommittedFiles {
     /// Read the directories of `workspace`'s commit.
     pub async fn load(workspace: &Workspace) -> Result<Arc<Self>, OxenError> {
         let (repo, commit) = (workspace.base_repo.clone(), workspace.commit.clone());
-        spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             let dir_hashes = CommitMerkleTree::dir_hashes(&repo, &commit)?;
             Ok(Arc::new(Self { repo, dir_hashes }))
         })
@@ -173,7 +175,7 @@ impl CommittedFiles {
     async fn get(files: &Arc<Self>, dst_path: &Path) -> Result<Option<FileNode>, OxenError> {
         let path = util::fs::path_relative_to_dir(dst_path, &files.repo.path)?;
         let files = Arc::clone(files);
-        spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             let node = CommitMerkleTree::read_file(&files.repo, &files.dir_hashes, &path)?;
             Ok(node.and_then(|node| match node.node {
                 EMerkleTreeNode::File(file_node) => Some(file_node),
@@ -941,7 +943,7 @@ pub async fn save_stream(
 
     let full_dir_cpy = full_dir.clone();
 
-    let mut file = tokio::task::spawn_blocking(move || {
+    let mut file = tasks::spawn_blocking(move || {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -952,7 +954,7 @@ pub async fn save_stream(
 
     log::debug!("liboxen::workspace::files::save_stream is writing to file: {file:?}");
 
-    tokio::task::spawn_blocking(move || file.write_all(&chunk).map(|_| file))
+    tasks::spawn_blocking(move || file.write_all(&chunk).map(|_| file))
         .await
         .map_err(|e| OxenError::basic_str(format!("spawn_blocking join error: {e}")))??;
 
@@ -1134,7 +1136,7 @@ async fn p_add_file(workspace: &Workspace, path: &Path) -> Result<(), OxenError>
     }
 
     let (workspace, path) = (workspace.clone(), path.to_path_buf());
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         process_add_file_with_staged_db_manager(
             &workspace,
             &file_status,
@@ -1345,7 +1347,7 @@ pub async fn mv(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(
     let workspace = workspace.clone();
     let path = util::fs::validate_and_normalize_path(path)?;
     let new_path = util::fs::validate_and_normalize_path(new_path)?;
-    tokio::task::spawn_blocking(move || mv_sync(&workspace, &path, &new_path)).await?
+    tasks::spawn_blocking(move || mv_sync(&workspace, &path, &new_path)).await?
 }
 
 /// The sync core of [`mv`]: Merkle reads and staged-db writes, all under one blocking hop.
@@ -1423,7 +1425,7 @@ pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result
         path.to_path_buf(),
         new_path.to_path_buf(),
     );
-    spawn_blocking(move || stage_copy(&workspace, &path, &new_path, copy)).await?
+    tasks::spawn_blocking(move || stage_copy(&workspace, &path, &new_path, copy)).await?
 }
 
 /// Stage `file_node` at `new_path` as a copy of the committed file at `path`, refusing the copy

@@ -9,6 +9,7 @@ use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::{Commit, DataFrameSize, EntryDataType, LocalRepository, Schema};
 use crate::opts::DFOpts;
 use crate::repositories;
+use crate::tasks;
 use polars::prelude::IntoLazy as _;
 
 use std::path::Path;
@@ -158,7 +159,7 @@ async fn handle_sql_querying(
     let query_repo = repo.clone();
     let query_commit = commit.clone();
     let query_path = path.to_path_buf();
-    let (workspace, df) = tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+    let (workspace, df) = tasks::spawn_blocking(move || -> Result<_, OxenError> {
         let workspace =
             crate::core::v_latest::workspaces::data_frames::get_queryable_data_frame_workspace(
                 &query_repo,
@@ -179,7 +180,7 @@ async fn handle_sql_querying(
     let schema_repo = repo.clone();
     let schema_commit = workspace.commit.clone();
     let schema_path = path.to_path_buf();
-    let stored_schema = tokio::task::spawn_blocking(move || {
+    let stored_schema = tasks::spawn_blocking(move || {
         repositories::data_frames::schemas::get_by_path(&schema_repo, &schema_commit, &schema_path)
     })
     .await??;
