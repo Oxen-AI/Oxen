@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures::future::join_all;
 use parking_lot::Mutex;
+use tracing::{Instrument, info_span};
 use uuid::Uuid;
 use xxhash_rust::xxh3::Xxh3;
 
@@ -159,7 +160,11 @@ impl Upload {
         let write = repo_locks::begin_write(repo)?;
         let store = repo.version_store();
         let hash = expected_hash.to_string();
-        let stored_size = match store.get_version_size(&hash).await {
+        let stored_size = match store
+            .get_version_size(&hash)
+            .instrument(info_span!("stored version size", oxen.file_hash = %hash))
+            .await
+        {
             Ok(stored_size) => Some(stored_size),
             Err(OxenError::VersionStoreBlobMissing { .. }) => None,
             Err(err) => return Err(err),
@@ -191,6 +196,9 @@ impl Upload {
         let lines = (workspace.is_some() && !stored_locally).then(|| LineCounts::new(true));
         let storage = store
             .begin_version_upload(expected_hash, size, part_size)
+            .instrument(
+                info_span!("storage upload begin", oxen.file_hash = %hash, oxen.file_byte_count = size),
+            )
             .await?;
         let upload = Arc::new(Upload {
             id: id.clone(),
@@ -343,21 +351,35 @@ impl Upload {
                 self.size, self.expected_hash
             )));
         }
-        self.storage.complete(actual_hash).await?;
+        self.storage
+            .complete(actual_hash)
+            .instrument(info_span!("storage upload complete", oxen.upload_id = %self.id))
+            .await?;
         let Some(destination) = &self.destination else {
             return Ok(());
         };
-        let workspace = workspaces::get_async(&self.repo, &destination.workspace_id)
-            .await?
-            .ok_or_else(|| OxenError::WorkspaceNotFound(destination.workspace_id.clone().into()))?;
-        files::add_stored_version_file(
-            &workspace,
-            &destination.path,
-            self.expected_hash,
-            self.size,
-            lines,
-        )
-        .await?;
+        let staging = async {
+            let workspace = workspaces::get_async(&self.repo, &destination.workspace_id)
+                .await?
+                .ok_or_else(|| {
+                    OxenError::WorkspaceNotFound(destination.workspace_id.clone().into())
+                })?;
+            files::add_stored_version_file(
+                &workspace,
+                &destination.path,
+                self.expected_hash,
+                self.size,
+                lines,
+            )
+            .await
+        };
+        staging
+            .instrument(info_span!(
+                "workspace staging",
+                oxen.upload_id = %self.id,
+                oxen.workspace_id = %destination.workspace_id,
+            ))
+            .await?;
         Ok(())
     }
 
@@ -369,7 +391,11 @@ impl Upload {
             progress.early.clear();
         }
         if let Err(err) = self.storage.abort().await {
-            tracing::warn!(upload_id = %self.id, error = %err, "Failed to abort a version upload");
+            tracing::warn!(
+                oxen.upload_id = %self.id,
+                exception.message = %err,
+                "Failed to abort a version upload"
+            );
         }
     }
 
@@ -419,6 +445,12 @@ impl ReceivingPart {
         upload
             .storage
             .upload_part(part_number, data.clone())
+            .instrument(info_span!(
+                "storage part upload",
+                oxen.upload_id = %upload.id,
+                oxen.part_number = part_number,
+                oxen.part_byte_count = size,
+            ))
             .await?;
 
         // Hash the part, and any parts that arrived early that it unblocks, off the async worker.
@@ -434,7 +466,12 @@ impl ReceivingPart {
             return Ok(PartStored::Pending);
         };
         let hashing = Arc::clone(upload);
-        match tokio::task::spawn_blocking(move || hashing.hash_runs(taken)).await?? {
+        // Opened here, since the blocking pool's thread has no current span to open it under.
+        let span =
+            info_span!("part hashing", oxen.upload_id = %upload.id, oxen.part_number = part_number);
+        match tokio::task::spawn_blocking(move || span.in_scope(|| hashing.hash_runs(taken)))
+            .await??
+        {
             None => Ok(PartStored::Pending),
             Some((actual_hash, lines)) => {
                 upload.complete(actual_hash, lines).await?;
@@ -483,7 +520,7 @@ async fn abort_idle(now: Instant) {
         .map(|(_, upload)| upload)
         .collect();
     join_all(idle.iter().map(|upload| {
-        tracing::info!(upload_id = %upload.id, "Aborting an idle version upload");
+        tracing::info!(oxen.upload_id = %upload.id, "Aborting an idle version upload");
         upload.abort()
     }))
     .await;

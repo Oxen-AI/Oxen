@@ -26,6 +26,7 @@ use tokio::time::timeout;
 use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 use tokio_util::task::AbortOnDropHandle;
+use tracing::{Instrument, Span};
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore, VersionUpload};
 use crate::constants::{VERSION_FILE_NAME, stream_segment_size};
@@ -774,9 +775,11 @@ impl VersionStore for S3VersionStore {
             read_range(Arc::clone(&client), bucket.clone(), key.clone(), start, end).boxed()
         });
         // Each part downloads in a task of its own at S3's pace, and dropping the stream aborts
-        // the parts still running.
-        let spawned = iter::once(first_part).chain(other_parts).map(|part| {
-            let task = AbortOnDropHandle::new(tokio::spawn(part));
+        // the parts still running. The parts start while the stream is read, after the caller's
+        // span stops being current, so each task carries the span `get_version_stream` ran in.
+        let span = Span::current();
+        let spawned = iter::once(first_part).chain(other_parts).map(move |part| {
+            let task = AbortOnDropHandle::new(tokio::spawn(part.instrument(span.clone())));
             async move { task.await.map_err(io::Error::other)? }
         });
         let parts = stream::iter(spawned).buffered(RANGE_READS_IN_FLIGHT);

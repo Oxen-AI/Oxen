@@ -6,6 +6,7 @@ use liboxen::view::StatusMessage;
 use liboxen::view::versions::{
     BeginVersionUploadRequest, VersionUploadPartResponse, VersionUploadResponse, VersionUploadStart,
 };
+use tracing::{Instrument, info_span};
 
 use crate::errors::OxenHttpError;
 use crate::helpers::get_repo_async;
@@ -109,18 +110,28 @@ pub async fn upload_part(
         }));
     };
     let size = receiving.size();
-    let mut part = web::BytesMut::with_capacity(size as usize);
-    while let Some(chunk) = body.next().await {
-        let chunk = chunk.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
-        if (part.len() + chunk.len()) as u64 > size {
-            return Err(OxenError::VersionUploadRefused(
-                format!("part {part_number} is longer than {size} bytes (upload {upload_id})")
-                    .into(),
-            )
-            .into());
+    let receive = async {
+        let mut part = web::BytesMut::with_capacity(size as usize);
+        while let Some(chunk) = body.next().await {
+            let chunk = chunk.map_err(|e| OxenHttpError::BadRequest(e.to_string().into()))?;
+            if (part.len() + chunk.len()) as u64 > size {
+                return Err(OxenHttpError::from(OxenError::VersionUploadRefused(
+                    format!("part {part_number} is longer than {size} bytes (upload {upload_id})")
+                        .into(),
+                )));
+            }
+            part.extend_from_slice(&chunk);
         }
-        part.extend_from_slice(&chunk);
-    }
+        Ok(part)
+    };
+    let part = receive
+        .instrument(info_span!(
+            "part body receive",
+            oxen.upload_id = %upload_id,
+            oxen.part_number = part_number,
+            oxen.part_byte_count = size,
+        ))
+        .await?;
 
     // Runs to the end even if the client disconnects, so a part is never left half recorded.
     let stored = tokio::spawn(tasks::inherit_hub(receiving.store(part.freeze())))
