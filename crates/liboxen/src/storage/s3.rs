@@ -28,7 +28,7 @@ use tokio_util::io::StreamReader;
 use tokio_util::task::AbortOnDropHandle;
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore, VersionUpload};
-use crate::constants::{VERSION_FILE_NAME, stream_segment_size};
+use crate::constants::VERSION_FILE_NAME;
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
 use crate::view::versions::CleanCorruptedVersionsResult;
@@ -47,9 +47,12 @@ pub(crate) const MAX_PARTS: usize = 10_000;
 /// The most keys S3 accepts in one DeleteObjects request.
 const DELETE_OBJECTS_MAX_KEYS: usize = 1000;
 
+/// The size of each ranged GET that reads a version file larger than it, 4 MiB.
+const RANGE_PART_SIZE: u64 = 4 * 1024 * 1024;
+
 /// How many ranged GETs one read of a version file keeps in flight, which also caps how many parts
-/// it holds in memory.
-const RANGE_READS_IN_FLIGHT: usize = 8;
+/// it holds in memory: 128 MiB of 4 MiB parts.
+const RANGE_READS_IN_FLIGHT: usize = 32;
 
 /// The longest one ranged GET may take, from sending the request to receiving its last byte.
 const RANGE_READ_TIMEOUT: Duration = Duration::from_secs(60);
@@ -197,7 +200,7 @@ impl S3VersionStore {
             region,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
-            range_part_size: stream_segment_size(),
+            range_part_size: RANGE_PART_SIZE,
             endpoint_url: None,
         }
     }
@@ -242,7 +245,7 @@ impl S3VersionStore {
             region,
             prefix,
             oneshot_size: DEFAULT_ONESHOT_SIZE,
-            range_part_size: stream_segment_size(),
+            range_part_size: RANGE_PART_SIZE,
             endpoint_url,
         }
     }
