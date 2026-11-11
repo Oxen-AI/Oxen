@@ -1,6 +1,7 @@
 //! Locks in what Sentry receives from work liboxen spawns under a request once oxen-server has
 //! registered its hub capture: events and panics report under the request's route, where the same
-//! work spawned the bare way reports under none.
+//! work spawned the bare way reports under none. A task oxen-server spawns detached reports under
+//! none on purpose, since it outlives the request.
 //!
 //! Lives as its own integration test binary because `sentry::init` binds the process hub, which a
 //! pool thread outside any request falls back to. Without it, the bare spawn's event would reach
@@ -15,7 +16,7 @@ use liboxen::error::OxenError;
 use liboxen::tasks;
 use oxen_server::errors::OxenHttpError;
 use oxen_server::middleware::run_request_as_task;
-use oxen_server::tasks::register_liboxen_hub_capture;
+use oxen_server::tasks::{register_liboxen_hub_capture, spawn_detached};
 use sentry::test::TestTransport;
 use sentry::{ClientOptions, Level, capture_message};
 
@@ -36,6 +37,13 @@ async fn liboxen_spawns() -> HttpResponse {
     tasks::spawn(async { capture_message("liboxen task", Level::Error) })
         .await
         .expect("the task should not have panicked");
+    HttpResponse::Ok().finish()
+}
+
+async fn detached_spawn() -> HttpResponse {
+    spawn_detached(async { capture_message("detached task", Level::Error) })
+        .await
+        .expect("the detached task should not have panicked");
     HttpResponse::Ok().finish()
 }
 
@@ -66,6 +74,7 @@ async fn liboxen_spawns_report_under_the_request() {
             .route("/bare", web::get().to(bare_spawn))
             .route("/liboxen", web::get().to(liboxen_spawns))
             .route("/panic", web::get().to(liboxen_panic))
+            .route("/detached", web::get().to(detached_spawn))
             .wrap(
                 sentry_actix::Sentry::builder()
                     .capture_server_errors(false)
@@ -92,7 +101,27 @@ async fn liboxen_spawns_report_under_the_request() {
     assert_eq!(spawned.len(), 2);
     for event in &spawned {
         assert_eq!(event.transaction.as_deref(), Some("GET /liboxen"));
+        assert!(
+            event.request.is_some(),
+            "a request-bound task's event carries the request"
+        );
     }
+
+    call_service(&app, TestRequest::get().uri("/detached").to_request()).await;
+    let detached = transport.fetch_and_clear_events();
+    assert_eq!(
+        detached.len(),
+        1,
+        "the detached task's event reaches the process hub's client"
+    );
+    assert_eq!(
+        detached[0].transaction, None,
+        "a detached task reports under no route"
+    );
+    assert!(
+        detached[0].request.is_none(),
+        "a detached task's event carries none of the request's scope"
+    );
 
     call_service(&app, TestRequest::get().uri("/panic").to_request()).await;
     let panic = transport
