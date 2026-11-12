@@ -214,7 +214,8 @@ mod tests {
                 );
                 remote_mode::commit(&files_repo, &commit_body).await?;
                 let keep_file = files_repo.path.join("keep_me.txt");
-                util::fs::write_to_path(&keep_file, "I am untracked, don't remove me")?;
+                let keep_contents = "I am untracked, don't remove me";
+                util::fs::write_to_path(&keep_file, keep_contents)?;
 
                 let branch_name = "feature";
                 remote_mode::create_checkout(&mut files_repo, branch_name).await?;
@@ -239,14 +240,14 @@ mod tests {
                 assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello");
                 assert_eq!(util::fs::read_from_path(&modified_file)?, "Hello");
                 assert!(!world_file.exists());
-                assert!(keep_file.exists());
+                assert_eq!(util::fs::read_from_path(&keep_file)?, keep_contents);
 
                 remote_mode::checkout(&mut files_repo, branch_name).await?;
                 assert_eq!(files_repo.workspace_name, branch_workspace);
                 assert_eq!(util::fs::read_from_path(&hello_file)?, "Hello");
                 assert_eq!(util::fs::read_from_path(&modified_file)?, "World");
-                assert!(world_file.exists());
-                assert!(keep_file.exists());
+                assert_eq!(util::fs::read_from_path(&world_file)?, "World");
+                assert_eq!(util::fs::read_from_path(&keep_file)?, keep_contents);
 
                 // Regression test: checkout in remote mode should not fail when a file exists in
                 // the source branch's tree but is not materialized on disk. Previously,
