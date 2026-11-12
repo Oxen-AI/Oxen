@@ -50,14 +50,16 @@ mod tests {
                 };
                 let add = async |repo: &LocalRepository, paths: Vec<PathBuf>| {
                     let workspace_identifier = repo.workspace_name.clone().unwrap();
-                    api::client::workspaces::files::add(
+                    let failures = api::client::workspaces::files::add(
                         &remote_repo,
                         &workspace_identifier,
                         ".",
                         paths,
                         &Some(repo.clone()),
                     )
-                    .await
+                    .await?;
+                    assert!(failures.is_empty(), "files failed to upload: {failures:?}");
+                    Ok::<(), OxenError>(())
                 };
 
                 // Files added by their full path, their path relative to the repo, and their
