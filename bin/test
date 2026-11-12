@@ -139,16 +139,6 @@ export OXEN_METRICS_PORT='off'
 # crates/liboxen/src/constants.rs.
 export OXEN_STREAM_SEGMENT_SIZE=131072  # 128 KiB
 
-# On macOS, SIP strips DYLD_LIBRARY_PATH from processes launched by system binaries (like
-# /usr/bin/env bash), so cargo can't find libpython. Re-derive the path from the active Python
-# install if needed.
-if [ "$(uname)" = "Darwin" ] && [ -z "${DYLD_LIBRARY_PATH:-}" ] && command -v python3 &>/dev/null; then
-    _pylib="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))' 2>/dev/null)"
-    if [ -n "$_pylib" ] && [ -d "$_pylib" ]; then
-        export DYLD_LIBRARY_PATH="$_pylib"
-    fi
-fi
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
@@ -245,10 +235,14 @@ fi
 
 # Build the binaries and the tests in one invocation, so dev-dependency features resolve once and
 # the `cargo test` below reuses this build instead of compiling the dependencies a second time.
+# Both leave out oxen-py, which has no Rust tests and which `-p` builds with maturin: building it
+# here turns on pyo3 in polars, linking libpython into every binary and test, and on macOS those
+# then fail to start when that library is off dyld's default path and DYLD_LIBRARY_PATH, which SIP
+# strips at every system binary, doesn't reach them.
 phase "Build"
-echo "==> Building oxen (cargo build --workspace --bins --tests $FEATURE_ARGS)..."
+echo "==> Building oxen (cargo build --workspace --exclude oxen-py --bins --tests $FEATURE_ARGS)..."
 # shellcheck disable=SC2086
-cargo build --workspace --bins --tests $FEATURE_ARGS
+cargo build --workspace --exclude oxen-py --bins --tests $FEATURE_ARGS
 
 if [ "$BUILD_ONLY" = true ]; then
     exit 0
@@ -392,9 +386,10 @@ else
         TARGET_ARGS="--lib --bins --tests"
         set -- "$@" -Z unstable-options --report-time
     fi
-    echo "==> Running tests with 'cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
+    echo "==> Running tests with 'cargo test --workspace --exclude oxen-py --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- $*' (stderr at ${CARGO_TEST_LOG}) ..."
     # shellcheck disable=SC2086
-    cargo test --workspace --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- "$@" 2>"$CARGO_TEST_LOG"
+    cargo test --workspace --exclude oxen-py --no-fail-fast $FEATURE_ARGS $TARGET_ARGS -- "$@" \
+        2>"$CARGO_TEST_LOG"
 fi
 
 # cleanup handled via the trapped cleanup function
