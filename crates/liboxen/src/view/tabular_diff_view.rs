@@ -8,6 +8,7 @@ use crate::model::merkle_tree::node::FileNode;
 use crate::model::{LocalRepository, Schema};
 use crate::opts::DFOpts;
 use crate::repositories;
+use crate::tasks;
 use crate::view::{JsonDataFrame, JsonDataFrameView};
 
 use crate::model::diff::tabular_diff_summary::{
@@ -136,7 +137,7 @@ impl TabularDiffView {
                     let (common_base_df, common_head_df) = {
                         let base_df = base_df.clone();
                         let head_df = head_df.clone();
-                        tokio::task::spawn_blocking(move || {
+                        tasks::spawn_blocking(move || {
                             let common_base_df = base_df.lazy().select(&cols).collect().unwrap();
                             let common_head_df = head_df.lazy().select(&cols).collect().unwrap();
                             (common_base_df, common_head_df)

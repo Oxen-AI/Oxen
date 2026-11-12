@@ -6,7 +6,6 @@ use std::str;
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
-use tokio::task;
 use utoipa::ToSchema;
 
 use super::StatusMessage;
@@ -17,6 +16,7 @@ use crate::model::DataFrameSize;
 use crate::model::data_frame::DataFrameSchemaSize;
 use crate::opts::SliceRange;
 use crate::opts::df_opts::DFOptsView;
+use crate::tasks;
 
 use crate::view::Pagination;
 use crate::view::entries::ResourceVersion;
@@ -160,7 +160,7 @@ impl JsonDataFrameView {
         slice_schema.update_metadata_from_schema(&og_schema);
 
         let data =
-            task::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
+            tasks::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
 
         Ok(JsonDataFrameView {
             schema: slice_schema,
@@ -214,7 +214,7 @@ impl JsonDataFrameView {
         let total_pages = (og_height as f64 / page_size as f64).ceil() as usize;
 
         let data =
-            task::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
+            tasks::spawn_blocking(move || JsonDataFrameView::json_from_df(&mut sliced_df)).await?;
 
         Ok(JsonDataFrameView {
             schema: slice_schema,

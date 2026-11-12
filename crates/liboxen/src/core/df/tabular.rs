@@ -10,7 +10,6 @@ use qsv_sniffer::metadata::Metadata as SniffedCsv;
 use serde_json::json;
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
-use tokio::task;
 
 use crate::constants;
 use crate::constants::EXCLUDE_OXEN_COLS;
@@ -26,6 +25,7 @@ use crate::opts::DFOpts;
 use crate::repositories;
 use crate::repositories::metadata::{ByteSource, MIN_FETCH, StoredVersion};
 use crate::storage::{VersionLocation, VersionStore};
+use crate::tasks;
 use crate::util::fs::{AtomicFile, LineCounts, line_counts, read_first_n_bytes};
 use crate::util::hasher;
 use std::sync::Arc;
@@ -166,7 +166,7 @@ pub(crate) async fn stored_size_and_schema(
     let Some(header) = header_lines(Some(extension)) else {
         let version = version.clone();
         let extension = extension.to_string();
-        return Ok(task::spawn_blocking(move || {
+        return Ok(tasks::spawn_blocking(move || {
             get_size_and_schema_with_extension(&ByteSource::Stored(&version), Some(&extension))
         })
         .await?);
@@ -209,13 +209,13 @@ async fn stored_schema(
     let extension = extension.to_string();
     if !matches!(extension.as_str(), "csv" | "tsv" | "data") {
         let version = version.clone();
-        return Ok(task::spawn_blocking(move || {
+        return Ok(tasks::spawn_blocking(move || {
             scan_schema(&ByteSource::Stored(&version), Some(&extension)).map(|(_, schema)| schema)
         })
         .await?);
     }
     let sample = version.fetch_head(CSV_SNIFF_SAMPLE_BYTES).await?;
-    let dialect = task::spawn_blocking(move || {
+    let dialect = tasks::spawn_blocking(move || {
         CsvDialect::sniff(&ByteSource::Memory(sample), &extension, &DFOpts::empty())
     })
     .await?;
@@ -224,7 +224,7 @@ async fn stored_schema(
         Err(err) => return Ok(Err(err)),
     };
     let head = csv_head(version, dialect.quote_char).await?;
-    Ok(task::spawn_blocking(move || {
+    Ok(tasks::spawn_blocking(move || {
         scan_df_csv(
             &ByteSource::Memory(head),
             dialect,
@@ -242,7 +242,7 @@ async fn csv_head(version: &StoredVersion, quote_char: Option<u8>) -> Result<Byt
     let mut head = version.fetch_head(MIN_FETCH).await?;
     while (head.len() as u64) < version.size().min(MAX_CSV_HEAD_LEN) {
         let counted = head.clone();
-        let rows = task::spawn_blocking(move || {
+        let rows = tasks::spawn_blocking(move || {
             count_rows_from_slice_par(
                 Buffer::from_owner(counted),
                 quote_char,
@@ -313,7 +313,7 @@ pub async fn add_col_lazy(
     dtype: &str,
     at: Option<usize>,
 ) -> Result<LazyFrame, OxenError> {
-    let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+    let mut df = match tasks::spawn_blocking(move || -> Result<DataFrame, OxenError> {
         df.collect()
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))
     })
@@ -358,7 +358,7 @@ pub fn add_col(
 }
 
 pub async fn add_row(df: LazyFrame, data: String) -> Result<LazyFrame, OxenError> {
-    let df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+    let df = match tasks::spawn_blocking(move || -> Result<DataFrame, OxenError> {
         df.collect()
             .map_err(|e| OxenError::basic_str(format!("{e:?}")))
     })
@@ -555,7 +555,7 @@ fn unique_count_df(df: LazyFrame, columns: Vec<String>) -> Result<LazyFrame, Oxe
 
 pub async fn transform(df: DataFrame, opts: DFOpts) -> Result<DataFrame, OxenError> {
     let df = transform_lazy(df.lazy(), opts.clone()).await?;
-    task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+    tasks::spawn_blocking(move || -> Result<DataFrame, OxenError> {
         Ok(transform_slice_lazy(df, &opts)?.collect()?)
     })
     .await?
@@ -603,7 +603,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
             if let Some(filter) = filter {
                 // `filter_df` resolves the frame schema (`collect_schema`) to build the predicate;
                 // run it off the async runtime so a cloud frame doesn't block_in_place-panic.
-                df = task::spawn_blocking(move || filter_df(df, &filter)).await??;
+                df = tasks::spawn_blocking(move || filter_df(df, &filter)).await??;
             }
         }
         Err(err) => {
@@ -682,7 +682,7 @@ pub async fn transform_lazy(mut df: LazyFrame, opts: DFOpts) -> Result<LazyFrame
         // drives Polars `block_in_place`, which panics on the server's current-thread runtime.
         // Mirrors the spawn_blocking-wrapped collects in `add_col_lazy`/`add_row`.
         let df_to_take = df.clone();
-        let new_df = task::spawn_blocking(move || take(df_to_take, indices)).await??;
+        let new_df = tasks::spawn_blocking(move || take(df_to_take, indices)).await??;
         df = new_df.lazy();
     }
     Ok(df)
@@ -1197,7 +1197,7 @@ async fn _read_lazy_df_with_extension(
     let extension = extension.to_string();
     let opts_clone = opts.clone();
 
-    task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         if !path.exists() {
             return Err(OxenError::entry_does_not_exist(&path));
         }
@@ -1224,14 +1224,14 @@ pub(crate) async fn collect_with_opts(
 ) -> Result<DataFrame, OxenError> {
     if opts.has_transform() {
         let transformed = transform_lazy(df_lazy, opts.clone()).await?;
-        task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             transform_slice_lazy(transformed, &opts)?
                 .collect()
                 .map_err(OxenError::from)
         })
         .await?
     } else {
-        task::spawn_blocking(move || df_lazy.collect().map_err(OxenError::from)).await?
+        tasks::spawn_blocking(move || df_lazy.collect().map_err(OxenError::from)).await?
     }
 }
 
@@ -1267,7 +1267,7 @@ pub async fn read_version_df(
             .await?;
             let extension = extension.to_string();
             let scan_opts = opts.clone();
-            task::spawn_blocking(move || {
+            tasks::spawn_blocking(move || {
                 let source = ByteSource::Stored(&version);
                 scan_df_with_extension(&source, Some(&extension), &scan_opts, None)
             })
@@ -1655,7 +1655,6 @@ mod tests {
         opts::{DFOpts, SliceRange},
     };
     use itertools::Itertools;
-    use tokio::task;
 
     #[test]
     fn test_filter_single_expr() -> Result<(), OxenError> {
@@ -1900,7 +1899,7 @@ mod tests {
             );
 
             // A row limit is pushed down as the same kind of slice.
-            let scanned = task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+            let scanned = tasks::spawn_blocking(move || -> Result<DataFrame, OxenError> {
                 tabular::scan_df_jsonl(&ByteSource::Path(&path), Some(3))?
                     .collect()
                     .map_err(OxenError::from)
@@ -1967,7 +1966,7 @@ mod tests {
         let df = tabular::scan_df_parquet(&ByteSource::Path(&test::test_1k_parquet()), Some(333))?;
         let df = tabular::transform_lazy(df, opts.clone()).await?;
 
-        let mut df = match task::spawn_blocking(move || -> Result<DataFrame, OxenError> {
+        let mut df = match tasks::spawn_blocking(move || -> Result<DataFrame, OxenError> {
             tabular::transform_slice_lazy(df.lazy(), &opts)?
                 .collect()
                 .map_err(OxenError::from)

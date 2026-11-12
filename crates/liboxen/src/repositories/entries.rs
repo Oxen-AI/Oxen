@@ -6,6 +6,7 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
+use crate::tasks;
 use crate::util::concurrency;
 
 use crate::constants::ROOT_PATH;
@@ -28,7 +29,7 @@ pub async fn get_directory_async(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.as_ref().to_path_buf();
-    tokio::task::spawn_blocking(move || get_directory(&repo, &commit, &path)).await?
+    tasks::spawn_blocking(move || get_directory(&repo, &commit, &path)).await?
 }
 
 /// Get a file node for a commit
@@ -138,7 +139,7 @@ pub async fn list_directory_w_workspace_depth_async(
     let revision = revision.as_ref().to_string();
     let paginate_opts = paginate_opts.clone();
     let sort_opts = sort_opts.clone();
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         list_directory_w_workspace_depth(
             &repo,
             &directory,
@@ -185,7 +186,7 @@ pub async fn get_meta_entry_async(
     let repo = repo.clone();
     let commit = commit.clone();
     let path = path.as_ref().to_path_buf();
-    tokio::task::spawn_blocking(move || get_meta_entry(&repo, &commit, &path)).await?
+    tasks::spawn_blocking(move || get_meta_entry(&repo, &commit, &path)).await?
 }
 
 /// List the paths of all the directories in a given commit

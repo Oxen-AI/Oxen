@@ -1,4 +1,5 @@
 use crate::core::refs::with_ref_manager;
+use crate::tasks;
 
 use crate::error::OxenError;
 use crate::model::{Branch, Commit, LocalRepository, ParsedResource, Workspace};
@@ -72,7 +73,7 @@ pub async fn parse_resource_from_path_async(
 ) -> Result<Option<ParsedResource>, OxenError> {
     let repo = repo.clone();
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || parse_resource_from_path(&repo, &path)).await?
+    tasks::spawn_blocking(move || parse_resource_from_path(&repo, &path)).await?
 }
 
 fn parsed_from_commit(resource_path: &Path, commit: Commit, file_path: PathBuf) -> ParsedResource {

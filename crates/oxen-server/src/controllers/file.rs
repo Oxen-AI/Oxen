@@ -3,6 +3,7 @@ use crate::helpers::{create_user_from_options, file_stream_response, get_repo, g
 use crate::params::{
     app_data, parse_resource, parse_resource_async, path_param, query_param, request_relative_path,
 };
+use crate::tasks;
 
 use actix_multipart::form::text::Text;
 use actix_multipart::form::{FieldReader, Limits, MultipartForm};
@@ -32,7 +33,6 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::slice;
 use std::sync::Arc;
-use tokio::task::spawn_blocking;
 use utoipa::ToSchema;
 
 #[derive(MultipartForm, ToSchema)]
@@ -749,7 +749,7 @@ async fn process_and_add_files(
     let paths: Vec<PathBuf> = payloads.iter().map(|(path, _)| path.clone()).collect();
 
     // Every publish fsyncs, so the whole materialization runs in one offload.
-    spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         for (path, bytes) in &payloads {
             AtomicFile::new(path).write(bytes)?;
         }

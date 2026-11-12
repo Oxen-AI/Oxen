@@ -26,13 +26,15 @@ The policy below threads this needle.
 
 2. **Network IO uses the native async API.** AWS SDK, reqwest, anything that talks over a socket. This is where async genuinely buys overlap — high-latency network round trips that can profitably proceed in parallel on a single thread.
 
-3. **Filesystem and sync-DB IO uses `std::fs` and sync bindings inside `tokio::task::spawn_blocking`, at operation granularity.** One `spawn_blocking` per *coherent unit of work* (ideally ≥1 ms of work inside the closure), not one per syscall. This amortizes the dispatch overhead over real work and avoids the `tokio::fs` per-call tax.
+3. **Filesystem and sync-DB IO uses `std::fs` and sync bindings inside `spawn_blocking`, at operation granularity.** One `spawn_blocking` per *coherent unit of work* (ideally ≥1 ms of work inside the closure), not one per syscall. This amortizes the dispatch overhead over real work and avoids the `tokio::fs` per-call tax.
 
 4. **File-based DB transactions live entirely inside one `spawn_blocking` closure.** Open, write, commit — all in the same closure. Never span an `.await`. This is especially important for LMDB write transactions and RocksDB write batches, which serialize global writers.
 
 5. **CPU-parallel batch work uses `rayon`, not `FuturesUnordered<spawn_blocking>`.** Tokio's blocking pool is sized and tuned for "lots of stuff occasionally blocked on syscalls" (default cap 512 threads, no work-stealing). It is not the right tool for "use all cores to hash 50 000 files." Rayon is.
 
 6. **Streaming IO that interleaves sync local work with async network work uses one long-lived `spawn_blocking` task on the sync side, paired with an async task on the network side, bridged by a bounded `tokio::sync::mpsc` channel.** The bound throttles a fast producer to the consumer's pace, keeping memory in check; the long-lived task means one blocking-pool worker for the whole stream rather than a fresh dispatch per chunk.
+
+In this document, `spawn_blocking` means the crate's context-carrying helper: `liboxen::tasks::spawn_blocking` in liboxen and `crate::tasks::spawn_blocking` in `oxen-server`. The workspace's `clippy.toml` disallows calling `tokio::task::spawn_blocking`, `tokio::spawn`, or `actix_web::web::block` directly ([Spawn through the crate's `tasks` module](#server-oxen-server)).
 
 ## The core philosophy
 
@@ -71,7 +73,7 @@ After:
 ```rust
 pub async fn list(repo: &LocalRepository) -> Result<Vec<Branch>, OxenError> {
     let repo = repo.clone();
-    tokio::task::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
+    tasks::spawn_blocking(move || with_ref_manager(&repo, |manager| manager.list_branches()))
         .await?
 }
 ```
@@ -96,7 +98,7 @@ The handler is async. It does any required network calls up front, then a single
 ```rust
 pub async fn handler(req: Request) -> Result<Response, OxenError> {
     let existing = s3.head_object(...).await?;           // async network
-    let result = tokio::task::spawn_blocking(move || {   // sync core
+    let result = tasks::spawn_blocking(move || {   // sync core
         do_local_work(existing)
     }).await??;
     s3.put_object(result.bytes).await?;                  // async network
@@ -112,11 +114,11 @@ When network results feed back into sync work (or vice versa), each side is its 
 
 ```rust
 let setup    = s3.list_versions(...).await?;
-let plan     = spawn_blocking(move || build_plan(setup)).await??;
+let plan     = tasks::spawn_blocking(move || build_plan(setup)).await??;
 let fetched  = futures::future::try_join_all(
                    plan.missing.iter().map(|h| s3.get_version(h))
                ).await?;
-let result   = spawn_blocking(move || install_locally(fetched, plan)).await??;
+let result   = tasks::spawn_blocking(move || install_locally(fetched, plan)).await??;
 s3.put_object(result.manifest).await?;
 ```
 
@@ -129,7 +131,7 @@ When sync and async sides need to interleave continuously on the same data strea
 ```rust
 let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(8);
 
-let reader = tokio::task::spawn_blocking(move || {
+let reader = tasks::spawn_blocking(move || {
     let mut f = std::fs::File::open(&path)?;
     let mut hasher = Xxh3::new();
     loop {
@@ -160,7 +162,7 @@ When the work is CPU-bound batch processing — hash N files, build N merkle nod
 
 ```rust
 let paths = ...; // many file paths
-let hashes = tokio::task::spawn_blocking(move || {
+let hashes = tasks::spawn_blocking(move || {
     paths.par_iter()
          .map(|p| hash_file(p))   // std::fs + xxh3, runs on rayon's pool
          .collect::<Result<Vec<_>, _>>()
@@ -175,7 +177,7 @@ Sometimes the cleanest code for an otherwise-sync operation needs to make a netw
 
 ```rust
 let handle = tokio::runtime::Handle::current();
-tokio::task::spawn_blocking(move || {
+tasks::spawn_blocking(move || {
     let s3_result = handle.block_on(s3.put_object(...).send())?;
     // ... more sync work using s3_result
 })
@@ -224,20 +226,18 @@ The server uses actix-web 4 with `#[actix_web::main]`, which expands to a curren
 - Handler futures do not have to be `Send` today (current-thread workers), but **write new code as if they did**. Any future move to a multi-threaded runtime (notably a migration to axum) will require it, and the sync-core / async-edge policy already eliminates the biggest hazard (`!Send` DB handles never crossing `.await` because they live inside `spawn_blocking`).
 - The escape hatch is a real code smell here: holding a blocking-pool worker on a network call can starve other requests' sync work. Use the **Sandwich** or **Channel hand-off** pattern instead.
 - **A request runs to completion even when its client goes away.** See [When the client resets its connection](#when-the-client-resets-its-connection).
-- **Spawn through `crate::tasks`, not through tokio or actix directly.** Two per-request contexts are thread-locals bound only around each *poll of the request future*: the Sentry hub `sentry-actix` installs, and the tracing span the HTTP root span occupies. A closure handed straight to `tokio::task::spawn_blocking` runs somewhere neither binding reached, so a panic inside it reports with no route and no request — a bare stack trace that says something crashed but not what was being served — and any span it opens is exported detached from the request's trace. `tasks::spawn_blocking` wraps a blocking closure; `tasks::inherit_hub` wraps a future before it goes to `tokio::spawn` or `JoinSet::spawn`. Tasks nest safely: an inner `tasks::spawn_blocking` inherits through an outer `tasks::inherit_hub`.
+- **Spawn through the crate's `tasks` module, not through tokio or actix directly.** Two per-request contexts are thread-locals bound only around each *poll of the request future*: the Sentry hub `sentry-actix` installs, and the tracing span the HTTP root span occupies. A closure handed straight to `tokio::task::spawn_blocking` runs somewhere neither binding reached, so a panic inside it reports with no route and no request — a bare stack trace that says something crashed but not what was being served — and any span it opens is exported detached from the request's trace. `tasks::spawn_blocking` wraps a blocking closure, `tasks::spawn` spawns a future, and `tasks::inherit_hub` wraps a future before it goes to `JoinSet::spawn` or into a response body. Tasks nest safely: an inner `tasks::spawn_blocking` inherits through an outer `tasks::inherit_hub`.
 
   `tasks::spawn_blocking` also opens a span for the work, named `blocking task` and tagged with its call site, which is the right granularity for one coherent operation per request. Inside a loop, use `tasks::spawn_blocking_per_item`: it carries the same context but opens no span, because a bulk endpoint handling thousands of files in one request would otherwise emit a span per file.
 
-  This applies to `oxen-server` only. liboxen keeps calling tokio directly — it also backs the CLI and the Python bindings, so it must not depend on `sentry`. Its blocking work therefore reports to Sentry without the request. An error it logs arrives with no route, and a panic arrives as two events: the panic itself, with its stack trace and no route, and the `JoinError` the handler returns, logged with the route and the panic message but without the panic's stack trace.
+  liboxen spawns through `liboxen::tasks` (`spawn_blocking`, `spawn`, and `inherit_context` for a future handed to `JoinSet::spawn`). It also backs the CLI and the Python bindings, so it must not depend on `sentry`: its helpers carry the caller's tracing span, and carry the Sentry hub through a hook `oxen-server` registers at startup (`tasks::register_liboxen_hub_capture`). They open no span of their own, so a liboxen operation that needs one gets `#[tracing::instrument]`, and they run only work the caller waits for (see below).
 
 ### Recognizing when a spawn needs the request's context
 
 Ask whether the response is still in flight when the task runs:
 
 - **The handler awaits it, or it produces the response body** → spawn through `crate::tasks`. For a response body, bind at *construction* time, in the handler: the middleware's binding is already gone by the time a body is polled, so binding from inside the task gets nothing. `helpers::stream_with_heartbeat` binds its work for every caller, so callers of it need no extra step.
-- **The task outlives the response** — a background repo delete, a temp-file cleanup at stream EOF, a process-lifetime loop — → keep tokio's own spawn. There is no live request to name, and stamping the task with an already-answered one is more misleading than reporting it with none.
-
-When auditing for missed sites, note that **three call shapes reach the blocking pool and only two of them contain the string `spawn_blocking`**. `actix_web::web::block` is the third; grep for it separately.
+- **The task outlives the response** — a background repo delete, a temp-file cleanup at stream EOF, a process-lifetime loop — → spawn through `crate::tasks::spawn_detached`. There is no live request to name, and stamping the task with an already-answered one is more misleading than reporting it with none. Carrying the request's span would also hold that span open: a tracing span ends when its last handle drops, so a task keeping the request's span stretches the exported HTTP span to the task's end, far past the response. A child span or a new root linked to the request does not, so `spawn_detached` runs the task in a root span of its own linked to the caller's (and in none when the caller has no span, as a process-lifetime loop started at startup has not, since a span that never ends is never exported). This is why liboxen's helpers, which keep the caller's span rather than opening a child, run only work the caller waits for.
 
 ### When the client resets its connection
 

@@ -15,6 +15,7 @@ use crate::constants::{
 use crate::core::merge::entry_merge_conflict_reader::EntryMergeConflictReader;
 use crate::model::entry::commit_entry::CommitPath;
 use crate::model::merkle_tree::node::FileNode;
+use crate::tasks;
 
 use crate::core::df::tabular;
 use crate::error::OxenError;
@@ -782,8 +783,7 @@ pub async fn diff_text_file_nodes(
     };
     let name_1 = file_1.map(|node| PathBuf::from(node.name()));
     let name_2 = file_2.map(|node| PathBuf::from(node.name()));
-    tokio::task::spawn_blocking(move || utf8_diff::diff(content_1, name_1, content_2, name_2))
-        .await?
+    tasks::spawn_blocking(move || utf8_diff::diff(content_1, name_1, content_2, name_2)).await?
 }
 
 /// A text file version's content, refused with [`OxenError::TextDiffTooLarge`] when it is over
@@ -867,7 +867,7 @@ pub async fn diff_dfs(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         let schema_diff = get_schema_diff(&df_1, &df_2);
 
         let (keys, targets) = get_keys_targets_smart_defaults(keys, targets, &schema_diff)?;
@@ -1065,7 +1065,7 @@ pub async fn compute_new_rows(
     let (added_indices, removed_indices) = {
         let base_df = base_df.clone();
         let head_df = head_df.clone();
-        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+        tasks::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
     };
 
     // Take added from the current df
@@ -1073,8 +1073,7 @@ pub async fn compute_new_rows(
         let opts = DFOpts::from_schema_columns(schema);
         let head_df = tabular::transform(head_df.clone(), opts).await?;
         let taken =
-            tokio::task::spawn_blocking(move || tabular::take(head_df.lazy(), added_indices))
-                .await??;
+            tasks::spawn_blocking(move || tabular::take(head_df.lazy(), added_indices)).await??;
         Some(taken)
     } else {
         None
@@ -1086,8 +1085,7 @@ pub async fn compute_new_rows(
         let opts = DFOpts::from_schema_columns(schema);
         let base_df = tabular::transform(base_df.clone(), opts).await?;
         let taken =
-            tokio::task::spawn_blocking(move || tabular::take(base_df.lazy(), removed_indices))
-                .await??;
+            tasks::spawn_blocking(move || tabular::take(base_df.lazy(), removed_indices)).await??;
         Some(taken)
     } else {
         None
@@ -1119,7 +1117,7 @@ pub async fn compute_new_rows_proj(
     let (added_indices, removed_indices) = {
         let base_df = base_df.clone();
         let head_df = head_df.clone();
-        tokio::task::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
+        tasks::spawn_blocking(move || compute_new_row_indices(&base_df, &head_df)).await??
     };
 
     // Take added from the current df
@@ -1127,7 +1125,7 @@ pub async fn compute_new_rows_proj(
         let opts = DFOpts::from_schema_columns(head_schema);
         let proj_head_df = tabular::transform(proj_head_df.clone(), opts).await?;
         let taken =
-            tokio::task::spawn_blocking(move || tabular::take(proj_head_df.lazy(), added_indices))
+            tasks::spawn_blocking(move || tabular::take(proj_head_df.lazy(), added_indices))
                 .await??;
         Some(taken)
     } else {
@@ -1139,10 +1137,9 @@ pub async fn compute_new_rows_proj(
     let removed_rows = if !removed_indices.is_empty() {
         let opts = DFOpts::from_schema_columns(base_schema);
         let proj_base_df = tabular::transform(proj_base_df.clone(), opts).await?;
-        let taken = tokio::task::spawn_blocking(move || {
-            tabular::take(proj_base_df.lazy(), removed_indices)
-        })
-        .await??;
+        let taken =
+            tasks::spawn_blocking(move || tabular::take(proj_base_df.lazy(), removed_indices))
+                .await??;
         Some(taken)
     } else {
         None

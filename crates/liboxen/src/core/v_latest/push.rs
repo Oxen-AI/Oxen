@@ -13,6 +13,7 @@ use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
     Branch, Commit, CommitEntry, LocalRepository, MerkleHash, MerkleTreeNodeType, RemoteRepository,
 };
+use crate::tasks;
 
 use crate::opts::PushOpts;
 use crate::storage::VersionLocation;
@@ -650,7 +651,7 @@ async fn chunk_and_send_large_entries(
         let first_error = first_error.clone();
         let version_store = Arc::clone(&version_store);
 
-        let handle = tokio::spawn(async move {
+        let handle = tasks::spawn(async move {
             loop {
                 if should_stop.load(Ordering::Relaxed) {
                     break;
@@ -805,7 +806,7 @@ async fn bundle_and_send_small_entries(
         let bar = Arc::clone(progress);
         let should_stop = should_stop.clone();
         let first_error = first_error.clone();
-        let handle = tokio::spawn(async move {
+        let handle = tasks::spawn(async move {
             loop {
                 log::debug!("worker[{worker}] processing task");
                 if should_stop.load(Ordering::Relaxed) {

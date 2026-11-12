@@ -10,20 +10,23 @@
 //! an empty one.
 //!
 //! Spawning through this module hands the task a hub inheriting the caller's scope and re-enters
-//! the caller's span around it.
+//! the caller's span around it. [`register_liboxen_hub_capture`] gives liboxen's own spawns, made
+//! through `liboxen::tasks`, the same hub.
 //!
 //! Use [`spawn_blocking`] in place of `tokio::task::spawn_blocking` — or [`spawn_blocking_per_item`]
-//! where the spawn is one of many in a loop — and [`inherit_hub`] around a future handed to
-//! `tokio::spawn`, `JoinSet::spawn`, or a streaming response body. A task deliberately detached
-//! from its request — one that outlives the response, like a background repo delete — keeps using
-//! tokio's own spawn: stamping it with an already-answered request is more misleading than
+//! where the spawn is one of many in a loop — [`spawn`] in place of `tokio::spawn`, and
+//! [`inherit_hub`] around a future handed to `JoinSet::spawn` or a streaming response body. The
+//! workspace's `clippy.toml` disallows tokio's two spawns. A task deliberately detached from its
+//! request — one that outlives the response, like a background repo delete — spawns through
+//! [`spawn_detached`]: stamping it with an already-answered request is more misleading than
 //! reporting it with none.
 
 use std::future::Future;
 use std::panic::Location;
 use std::sync::Arc;
 
-use sentry::{Hub, SentryFuture, SentryFutureExt};
+use liboxen::tasks::{EnterContext, register_context_capture};
+use sentry::{Hub, HubSwitchGuard, SentryFuture, SentryFutureExt};
 use tokio::task::JoinHandle;
 use tracing::instrument::Instrumented;
 use tracing::{Instrument, Span};
@@ -75,6 +78,10 @@ where
 /// Run `f` on the blocking pool inside `span`, with a hub inheriting the caller's scope.
 ///
 /// Both must be resolved on the calling thread: a pool thread sees neither.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the blocking spawn the rest of oxen-server goes through"
+)]
 fn spawn_blocking_in<F, R>(span: Span, f: F) -> JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
@@ -82,6 +89,62 @@ where
 {
     let hub = inherited_hub();
     tokio::task::spawn_blocking(move || span.in_scope(|| Hub::run(hub, f)))
+}
+
+/// `tokio::spawn` of [`inherit_hub`]`(future)`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the future spawn the rest of oxen-server goes through"
+)]
+pub fn spawn<F>(future: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    tokio::spawn(inherit_hub(future))
+}
+
+/// `tokio::spawn` for a task that outlives the caller's request, such as a background delete or a
+/// process-lifetime loop. It reports under a hub with none of the request's scope, and runs in a
+/// root span of its own linked to the caller's, so the request's span still ends with its
+/// response. Spawned outside any span, the task opens none.
+#[track_caller]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the spawn for tasks that outlive their request"
+)]
+pub fn spawn_detached<F>(future: F) -> JoinHandle<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    let caller = Span::current();
+    let span = if caller.is_none() {
+        Span::none()
+    } else {
+        let location = Location::caller();
+        let span = tracing::info_span!(
+            parent: None,
+            "detached task",
+            code.file.path = location.file(),
+            code.line.number = location.line(),
+        );
+        span.follows_from(&caller);
+        span
+    };
+    let hub = Arc::new(Hub::new_from_top(Hub::main()));
+    tokio::spawn(future.bind_hub(hub).instrument(span))
+}
+
+/// Have every spawn through `liboxen::tasks` run under a hub inheriting the spawning thread's
+/// scope, as this module's spawns do. Call it before serving requests.
+pub fn register_liboxen_hub_capture() {
+    register_context_capture(capture_hub);
+}
+
+fn capture_hub() -> EnterContext {
+    let hub = inherited_hub();
+    Box::new(move || Box::new(HubSwitchGuard::new(Arc::clone(&hub))))
 }
 
 /// Bind the caller's crash-reporting and tracing context to `future`, so a panic while it runs — on
@@ -219,21 +282,5 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].transaction.as_deref(), Some(ROUTE));
-    }
-
-    /// The bare spawn this module exists to replace: the pool thread resolves its own hub, which
-    /// carries no route — the baseline the two assertions above are measured against. The tracing
-    /// half of the same contract is asserted in `tests/task_span_propagation.rs`.
-    #[actix_web::test]
-    async fn a_bare_spawn_loses_the_route() {
-        let events = events_from_request(|| async {
-            tokio::task::spawn_blocking(|| capture_message("from the blocking pool", Level::Error))
-                .await
-                .expect("the blocking task should not have panicked");
-            HttpResponse::Ok().finish()
-        })
-        .await;
-
-        assert!(events.iter().all(|event| event.transaction.is_none()));
     }
 }

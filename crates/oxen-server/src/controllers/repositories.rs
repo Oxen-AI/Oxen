@@ -600,7 +600,7 @@ pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHtt
 
     // Delete in a background task because it could take awhile; the blocking directory
     // removal runs inside delete's own spawn_blocking.
-    tokio::spawn(async move {
+    tasks::spawn_detached(async move {
         // Keep the write in flight across the deferred removal (the handler has already returned),
         // so a maintenance operation waits instead of running against a directory that is going
         // away.

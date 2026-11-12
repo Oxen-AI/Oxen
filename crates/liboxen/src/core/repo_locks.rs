@@ -249,6 +249,7 @@ async fn drain(gate: &RepoGate) {
 mod tests {
     use super::*;
     use crate::repositories::size::{self, SizeStatus};
+    use crate::tasks;
     use crate::test;
     use std::time::Instant;
     use tokio::sync::oneshot;
@@ -262,7 +263,7 @@ mod tests {
             let (release_tx, release_rx) = oneshot::channel();
 
             let repo_excl = repo.clone();
-            let handle = tokio::spawn(async move {
+            let handle = tasks::spawn(async move {
                 with_repo_exclusive(&repo_excl, async move {
                     held_tx.send(()).expect("signal exclusive held");
                     release_rx.await.expect("await release");
@@ -308,7 +309,7 @@ mod tests {
 
             // An exclusive acquire waits for the in-flight write to drain, then proceeds.
             let repo_excl = repo.clone();
-            let handle = tokio::spawn(async move {
+            let handle = tasks::spawn(async move {
                 with_repo_exclusive(&repo_excl, async { Ok::<(), OxenError>(()) }).await
             });
             let deadline = Instant::now() + Duration::from_secs(10);

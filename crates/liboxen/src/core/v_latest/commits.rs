@@ -24,6 +24,7 @@ use crate::model::merkle_tree::node::{CommitNode, DirNode, EMerkleTreeNode};
 use crate::model::{Commit, LocalRepository, MerkleHash, User};
 use crate::opts::PaginateOpts;
 use crate::repositories::commits::commit_writer;
+use crate::tasks;
 use crate::view::{PathHistoryPage, StatusMessage};
 use crate::{repositories, util};
 
@@ -877,7 +878,7 @@ pub async fn list_between_exclusive(
     let repo = repo.clone();
     let base = base.clone();
     let head = head.clone();
-    tokio::task::spawn_blocking(move || -> Result<Vec<Commit>, OxenError> {
+    tasks::spawn_blocking(move || -> Result<Vec<Commit>, OxenError> {
         // Pass 1: mark everything reachable from base. Purely graph-based, so the
         // outcome can't hinge on the order commits happen to sort in.
         let mut on_base: HashSet<String> = HashSet::new();

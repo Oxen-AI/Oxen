@@ -16,6 +16,7 @@ use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::download_tree_opts::DownloadTreeOpts;
 use crate::opts::fetch_opts::FetchOpts;
 use crate::repositories::tree::{NodeReport, pack_nodes, pack_nodes_byte_estimate, unpack};
+use crate::tasks;
 use crate::view::tree::MerkleHashResponse;
 use crate::view::tree::merkle_hashes::MerkleHashes;
 use crate::view::{MerkleHashesResponse, StatusMessage};
@@ -70,7 +71,7 @@ impl<W: Write> Write for CountingWriter<W> {
 ///
 /// Packs the nodes into the canonical tar-gz wire format and streams the bytes straight
 /// into the HTTP upload body — no intermediate `Vec<u8>` is materialized. The pack runs
-/// on a blocking worker (`tokio::task::spawn_blocking`) that writes into one end of a
+/// on a blocking worker (`tasks::spawn_blocking`) that writes into one end of a
 /// `tokio::io::duplex`; the HTTP body reads from the other end through `ReaderStream`,
 /// so upload and pack progress together with back-pressure.
 pub async fn create_nodes(
@@ -94,7 +95,7 @@ pub async fn create_nodes(
     let (async_writer, async_reader) = tokio::io::duplex(64 * 1024);
     let repo = local_repo.clone();
     let progress_for_pack = Arc::clone(progress);
-    let pack_handle = tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+    let pack_handle = tasks::spawn_blocking(move || -> Result<(), OxenError> {
         let mut counting_writer = CountingWriter {
             inner: SyncIoBridge::new(async_writer),
             progress: progress_for_pack,
@@ -384,7 +385,7 @@ async fn node_download_request(
     let mut sync_reader = SyncIoBridge::new(async_reader);
 
     let repo = local_repo.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), OxenError> {
+    tasks::spawn_blocking(move || -> Result<(), OxenError> {
         // Download path: overwrite existing files on disk
         unpack(
             &repo,

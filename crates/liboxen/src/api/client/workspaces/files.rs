@@ -5,6 +5,7 @@ use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::GlobOpts;
+use crate::tasks;
 use crate::util::{self, concurrency};
 use crate::view::versions::WorkspaceDestination;
 use crate::view::workspaces::{RenameRequest, ValidateUploadFeasibilityRequest};
@@ -21,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio::time::{Duration, sleep};
 
 use futures::stream;
@@ -428,8 +430,12 @@ pub(crate) async fn parallel_batched_small_file_upload(
 
     let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe.clone();
 
+    // Dropping the set aborts whichever task is still running, so a panic in one takes the other
+    // with it.
+    let mut upload = JoinSet::new();
+
     // Initiate the producer
-    let producer_handle = tokio::spawn(async move {
+    upload.spawn(tasks::inherit_context(async move {
         stream::iter(file_batches)
             .for_each_concurrent(worker_count, {
                 let head_commit_local_repo_maybe_clone = head_commit_local_repo_maybe_clone.clone();
@@ -480,7 +486,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                                     continue;
                                 }
 
-                                let file_data_maybe = tokio::task::spawn_blocking(move || {
+                                let file_data_maybe = tasks::spawn_blocking(move || {
                                     // When preserve_paths is set or in remote-mode repos, use the
                                     // full relative path. Otherwise use just the filename. The
                                     // server reads this as the staging path and computes the
@@ -545,7 +551,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
                 }
             })
             .await;
-    });
+    }));
 
     let client_clone = client.clone();
     let workspace_id_clone = workspace_id.clone();
@@ -557,7 +563,7 @@ pub(crate) async fn parallel_batched_small_file_upload(
     let progress_clone = Arc::clone(&progress);
 
     // Initiate the receiver
-    let consumer_handle = tokio::spawn(async move {
+    upload.spawn(tasks::inherit_context(async move {
         let rx_stream = ReceiverStream::new(rx);
         rx_stream
             .for_each_concurrent(worker_count, |processed_batch| {
@@ -614,10 +620,12 @@ pub(crate) async fn parallel_batched_small_file_upload(
                 }
             })
             .await;
-    });
+    }));
 
     // Join the tasks and run to completion
-    tokio::try_join!(producer_handle, consumer_handle)?;
+    while let Some(joined) = upload.join_next().await {
+        joined?;
+    }
 
     // Get the err_files from both processes
     let mutex = match Arc::try_unwrap(err_files) {
@@ -807,8 +815,8 @@ async fn stage_multipart_batch_to_workspace_with_retry(
 
         // Re-reading and gzipping from disk is blocking FS + CPU work, so keep it off the runtime.
         let files_for_form = remaining.clone();
-        let form = tokio::task::spawn_blocking(move || build_workspace_files_form(&files_for_form))
-            .await??;
+        let form =
+            tasks::spawn_blocking(move || build_workspace_files_form(&files_for_form)).await??;
         remaining = match post_workspace_files_batch(&client, &url, form).await {
             Ok(staged) => {
                 transport_error = None;

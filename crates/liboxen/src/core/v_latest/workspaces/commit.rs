@@ -23,6 +23,7 @@ use crate::model::{
 };
 use crate::repositories;
 use crate::repositories::size;
+use crate::tasks;
 use crate::util;
 use crate::util::progress_bar::FinishOnDropProgressBar;
 use crate::view::merge::{MergeConflictFile, Mergeable};
@@ -124,7 +125,7 @@ async fn commit_inner(
             branch_name.to_string(),
             Arc::clone(&commit_guard),
         );
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             let _commit_guard = commit_guard;
             // Reload under the lock: a commit that held it may have moved this workspace's base
             // commit.
@@ -176,7 +177,7 @@ async fn commit_inner(
         new_commit.clone(),
         branch_name.to_string(),
     );
-    tokio::task::spawn_blocking(move || {
+    tasks::spawn_blocking(move || {
         // Held until the write finishes, even when the caller stops waiting for it.
         let _commit_guard = commit_guard;
         let commit = repositories::commits::commit_writer::commit_dir_entries(
@@ -400,7 +401,7 @@ async fn export_tabular_data_frames(
                     let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
                     let (indexed, staged_table) = if is_tabular {
                         let (workspace, node_path) = (workspace.clone(), node_path.clone());
-                        tokio::task::spawn_blocking(move || -> Result<_, OxenError> {
+                        tasks::spawn_blocking(move || -> Result<_, OxenError> {
                             let indexed = repositories::workspaces::data_frames::is_indexed(
                                 &workspace, &node_path,
                             )?;
@@ -450,7 +451,7 @@ async fn export_tabular_data_frames(
                                 file_node.clone(),
                                 Arc::clone(commit_guard),
                             );
-                            tokio::task::spawn_blocking(move || {
+                            tasks::spawn_blocking(move || {
                                 let _commit_guard = commit_guard;
                                 workspaces::data_frames::extract_file_node_to_working_dir(
                                     &workspace, &dir_path, &file_node,
@@ -534,7 +535,7 @@ async fn compute_staged_merkle_tree_node(
     let (mtime, num_bytes, hash, mime_type, metadata, metadata_hash, combined_hash) = {
         let workspace_repo = workspace.workspace_repo.clone();
         let (path, data_type) = (path.clone(), data_type.clone());
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             let metadata = util::fs::metadata(&path)?;
             let mtime = FileTime::from_last_modification_time(&metadata);
             let hash = util::hasher::get_hash_given_metadata(&path, &metadata)?;

@@ -92,7 +92,7 @@ impl RefsStore {
         let store = Arc::clone(self);
         // One operation, one spawn_blocking; the txn never spans an `.await`.
         // Map the JoinError to OxenError per docs/async_policy.md.
-        tokio::task::spawn_blocking(move || store.get(&name)).await?
+        tasks::spawn_blocking(move || store.get(&name)).await?
     }
 }
 ```

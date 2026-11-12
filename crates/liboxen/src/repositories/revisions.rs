@@ -8,6 +8,7 @@ use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository};
 use crate::repositories;
 use crate::storage::BoxedByteStream;
+use crate::tasks;
 
 /// Get a commit object from a commit id or branch name
 /// Returns Ok(None) if the revision does not exist
@@ -32,7 +33,7 @@ pub async fn get_async(
 ) -> Result<Option<Commit>, OxenError> {
     let repo = repo.clone();
     let revision = revision.to_string();
-    tokio::task::spawn_blocking(move || get(&repo, &revision)).await?
+    tasks::spawn_blocking(move || get(&repo, &revision)).await?
 }
 
 /// Streams the raw bytes of `path` as it existed at `revision`.

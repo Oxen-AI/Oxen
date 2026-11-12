@@ -1,5 +1,6 @@
 use crate::core::df::tabular::{write_df, write_df_parquet};
 use crate::model::merkle_tree::node::FileNodeWithDir;
+use crate::tasks;
 use crate::view::data_frames::columns::NewColumn;
 use polars::frame::DataFrame;
 
@@ -19,7 +20,6 @@ use crate::{repositories, util};
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
 use std::path::{Path, PathBuf};
-use tokio::task::spawn_blocking;
 
 pub mod columns;
 pub mod embeddings;
@@ -49,7 +49,7 @@ pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameE
 pub async fn is_indexed_async(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
     let workspace = workspace.clone();
     let path = path.to_path_buf();
-    Ok(spawn_blocking(move || is_indexed(&workspace, &path)).await??)
+    Ok(tasks::spawn_blocking(move || is_indexed(&workspace, &path)).await??)
 }
 
 /// Whether a staged DuckDB table exists on disk for this data frame,
@@ -115,7 +115,7 @@ pub async fn restore(
     {
         let workspace = workspace.clone();
         let path = path.as_ref().to_path_buf();
-        spawn_blocking(move || unindex(&workspace, path)).await??;
+        tasks::spawn_blocking(move || unindex(&workspace, path)).await??;
     }
 
     // TODO: we could do this more granularly without a full reset
@@ -574,7 +574,7 @@ mod tests {
                 let stop = stop.clone();
                 // Under the test's own directory, so the test's cleanup removes the entries.
                 let filler_dir = repo.path.join("lru-pressure");
-                tokio::task::spawn_blocking(move || {
+                tasks::spawn_blocking(move || {
                     // Cycling through more entries than the cache keeps evicts this data frame's
                     // connection whenever no writer holds it, so writers reopen it throughout the
                     // run. The fillers are empty slots for paths that name no file, so nothing
@@ -603,24 +603,22 @@ mod tests {
                     let repo = repo.clone();
                     let workspace = workspace.clone();
                     let file_path = file_path.clone();
-                    handles.push(tokio::task::spawn_blocking(
-                        move || -> Result<(), OxenError> {
-                            for i in 0..appends_per_writer {
-                                let json_data = json!({
-                                    "file": format!("concurrent-{round}-{writer}-{i}.jpg"),
-                                    "label": "dog",
-                                    "min_x": 1.0,
-                                    "min_y": 2.0,
-                                    "width": 10.0,
-                                    "height": 10.0
-                                });
-                                workspaces::data_frames::rows::add(
-                                    &repo, &workspace, &file_path, &json_data,
-                                )?;
-                            }
-                            Ok(())
-                        },
-                    ));
+                    handles.push(tasks::spawn_blocking(move || -> Result<(), OxenError> {
+                        for i in 0..appends_per_writer {
+                            let json_data = json!({
+                                "file": format!("concurrent-{round}-{writer}-{i}.jpg"),
+                                "label": "dog",
+                                "min_x": 1.0,
+                                "min_y": 2.0,
+                                "width": 10.0,
+                                "height": 10.0
+                            });
+                            workspaces::data_frames::rows::add(
+                                &repo, &workspace, &file_path, &json_data,
+                            )?;
+                        }
+                        Ok(())
+                    }));
                 }
                 for handle in handles {
                     handle.await.expect("join append task")?;

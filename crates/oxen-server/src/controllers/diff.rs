@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::errors::OxenHttpError;
+use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::core::df::tabular;
@@ -391,7 +392,7 @@ pub async fn file(
         let base_commit = base_commit.clone();
         let head_commit = head_commit.clone();
         let resource = resource.clone();
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             let base_entry = repositories::entries::get_file(&repository, &base_commit, &resource)?;
             let head_entry = repositories::entries::get_file(&repository, &head_commit, &resource)?;
             Ok::<_, OxenError>((base_entry, head_entry))

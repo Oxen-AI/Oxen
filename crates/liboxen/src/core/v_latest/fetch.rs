@@ -11,6 +11,7 @@ use crate::model::{Branch, Commit, CommitEntry, MerkleHash};
 use crate::model::{LocalRepository, RemoteBranch, RemoteRepository};
 use crate::repositories;
 use crate::storage::VersionStore;
+use crate::tasks;
 use crate::util::concurrency;
 use crate::{api, util};
 
@@ -690,7 +691,7 @@ async fn pull_large_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tasks::spawn(async move {
             loop {
                 let Some((repo, remote_repo, commit_entry)) = queue.try_pop() else {
                     // reached end of queue
@@ -789,7 +790,7 @@ async fn pull_small_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tasks::spawn(async move {
             loop {
                 let Some((remote_repo, chunk, local_repo)) = queue.try_pop() else {
                     // reached end of queue
@@ -939,7 +940,7 @@ async fn download_large_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tasks::spawn(async move {
             while let Some((remote_repo, commit_entry, _dst, download_path)) = queue.try_pop() {
                 log::debug!("worker[{worker}] processing task...");
 
@@ -1029,7 +1030,7 @@ async fn download_small_entries(
     for worker in 0..worker_count {
         let queue = queue.clone();
         let progress_bar = Arc::clone(progress_bar);
-        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tokio::spawn(async move {
+        let handle: tokio::task::JoinHandle<Result<(), OxenError>> = tasks::spawn(async move {
             while let Some((remote_repo, chunk, path)) = queue.try_pop() {
                 log::debug!("worker[{worker}] processing task...");
 

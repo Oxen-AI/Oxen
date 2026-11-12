@@ -14,6 +14,7 @@ use liboxen::util::oxen_version::OxenVersion;
 
 use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
+use crate::tasks;
 use percent_encoding::percent_decode;
 
 pub mod aggregate_query;
@@ -248,7 +249,7 @@ pub async fn resolve_diff_base(
     // Sync core: the merge base walks both commit histories, so keep it off the actix worker.
     let repo = repo.clone();
     let head_commit = head_commit.clone();
-    let merge_base = tokio::task::spawn_blocking(move || -> Result<Commit, OxenError> {
+    let merge_base = tasks::spawn_blocking(move || -> Result<Commit, OxenError> {
         repositories::merge::lowest_common_ancestor_from_commits(&repo, &base_commit, &head_commit)?
             .ok_or_else(|| OxenError::NoMergeBase {
                 base: base_commit.id.clone(),

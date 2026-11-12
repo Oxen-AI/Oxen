@@ -9,6 +9,7 @@ use std::path::Path;
 use crate::core;
 use crate::error::OxenError;
 use crate::model::{StagedData, Workspace};
+use crate::tasks;
 
 pub fn status(workspace: &Workspace) -> Result<StagedData, OxenError> {
     status_from_dir(workspace, Path::new(""))
@@ -28,7 +29,7 @@ pub async fn status_from_dir_async(
 ) -> Result<StagedData, OxenError> {
     let workspace = workspace.clone();
     let directory = directory.to_path_buf();
-    tokio::task::spawn_blocking(move || status_from_dir(&workspace, directory)).await?
+    tasks::spawn_blocking(move || status_from_dir(&workspace, directory)).await?
 }
 
 #[cfg(test)]

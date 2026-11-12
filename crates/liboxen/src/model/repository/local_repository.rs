@@ -6,6 +6,7 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use crate::model::{MerkleHash, Remote, RemoteRepository, RepoIdentity};
 use crate::storage::{S3Opts, StorageConfig, VersionStore, create_version_store};
+use crate::tasks;
 use crate::util;
 use crate::util::fs::AtomicFile;
 use crate::view::RepositoryView;
@@ -608,7 +609,7 @@ impl LocalRepository {
         }
         // The remaining checks read and hash the file.
         let (path, node, metadata) = (path.to_path_buf(), node.clone(), metadata.clone());
-        tokio::task::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             util::fs::classify_modified_from_node_with_metadata(&path, &node, &metadata, false)
         })
         .await?

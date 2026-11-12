@@ -11,7 +11,7 @@ use liboxen::util::telemetry;
 
 // Imported as modules rather than as items: the `crate::`-rooted paths below — notably the utoipa
 // `paths(...)` list — resolve through this crate's root.
-use oxen_server::{app_data, config, controllers, crash_diagnostics, metrics, routes};
+use oxen_server::{app_data, config, controllers, crash_diagnostics, metrics, routes, tasks};
 
 extern crate liboxen;
 extern crate log;
@@ -842,6 +842,8 @@ async fn start(
 ) -> Result<(), std::io::Error> {
     let ServerOpts { test_mode } = opts;
 
+    tasks::register_liboxen_hub_capture();
+
     // Install DuckDB extensions before actix hands out any request threads. oxen-server
     // is a single-instance deploy, so every restart drains pent-up client retries into a
     // burst of concurrent first-use requests; two of them triggering autoload at once
@@ -892,7 +894,7 @@ async fn start(
     // to the client as a dropped connection (502 Bad Gateway).
     const ACTIX_KEEP_ALIVE_SECS: u64 = 75;
 
-    tokio::spawn(uploads::abort_idle_periodically());
+    tasks::spawn_detached(uploads::abort_idle_periodically());
 
     let server_result = HttpServer::new(move || {
         App::new()
