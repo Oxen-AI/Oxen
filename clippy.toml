@@ -13,6 +13,11 @@ disallowed-methods = [
     { path = "tokio::spawn", reason = "Use the crate's `tasks::spawn`, which carries the caller's tracing span and Sentry hub onto the task. A task in oxen-server that outlives its request on purpose uses `crate::tasks::spawn_detached`." },
     { path = "actix_web::web::block", reason = "Use `crate::tasks::spawn_blocking`: `web::block` loses the request's context and discards a panic's message." },
 
+    # Area averaging in one step: each output pixel's block of source pixels is summed in a `u32`, which a large shrink overflows.
+    { path = "image::DynamicImage::thumbnail", reason = "Use `fit_within_box` in `repositories::versions::previews`, which shrinks in steps small enough that the sums cannot overflow." },
+    { path = "image::DynamicImage::thumbnail_exact", reason = "Use `shrink_to` in `repositories::versions::previews`, which shrinks in steps small enough that the sums cannot overflow." },
+    { path = "image::imageops::thumbnail", reason = "Use `shrink_to` in `repositories::versions::previews`, which shrinks in steps small enough that the sums cannot overflow." },
+
     # Non-atomic filesystem writes — production code must use `AtomicFile` # (`crates/liboxen/src/util/fs.rs`) so a crash
     # mid-write can never leave a torn or partially-written file. Commented out until the existing violations are migrated.
     # Uncomment once `cargo clippy --workspace --all-targets --no-deps -- -D warnings` passes with these enabled.

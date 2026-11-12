@@ -97,12 +97,10 @@ fn resize_within_source(
 /// `img` shrunk to fit a `box_width` x `box_height` box, keeping its aspect ratio. A box at or
 /// over the image's size returns the image as it is.
 fn fit_within_box(img: DynamicImage, box_width: u32, box_height: u32) -> DynamicImage {
-    if box_width >= img.width() && box_height >= img.height() {
-        return img;
-    }
     // Rounds as `DynamicImage::thumbnail` does.
     let scale = (f64::from(box_width) / f64::from(img.width()))
-        .min(f64::from(box_height) / f64::from(img.height()));
+        .min(f64::from(box_height) / f64::from(img.height()))
+        .min(1.0);
     let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
     let (width, height) = (fit(img.width()), fit(img.height()));
     shrink_to(img, width, height)
@@ -111,6 +109,7 @@ fn fit_within_box(img: DynamicImage, box_width: u32, box_height: u32) -> Dynamic
 /// `img` shrunk to `target_width` x `target_height`, each at most its own side. Besides the
 /// shrunk image, it allocates only the steps on the way there, each about 1/256 the size of the
 /// image before it, except for a float image, which takes one Lanczos3 resize.
+#[allow(clippy::disallowed_methods)] // The steps keep `thumbnail_exact`'s sums from overflowing.
 fn shrink_to(mut img: DynamicImage, target_width: u32, target_height: u32) -> DynamicImage {
     if (img.width(), img.height()) == (target_width, target_height) {
         return img;
@@ -349,12 +348,18 @@ mod tests {
             "one side gives a square the image fits in, keeping its aspect ratio"
         );
         assert_eq!(resized(Some(512), None), (4, 2));
+        let boxed = super::fit_within_box(image::DynamicImage::new_rgb8(4, 2), 4, 1);
+        assert_eq!(
+            (boxed.width(), boxed.height()),
+            (2, 1),
+            "a box that is not square fits the image's tighter side"
+        );
     }
 
     #[test]
     fn test_resize_within_source_averages_large_downscales_without_overflow() {
         // Shrinking 512 x 256 to 1 x 1 in one step sums 131,072 pixels of 65,535 each, which
-        // overflows a `u32`.
+        // overflows a `u32`. One side alone goes through `fit_within_box`, as video thumbnails do.
         let white = || {
             image::DynamicImage::ImageLuma16(image::ImageBuffer::from_pixel(
                 512,
@@ -371,39 +376,6 @@ mod tests {
                 resized.as_raw()
             );
         }
-    }
-
-    #[test]
-    fn test_fit_within_box_averages_large_frames_without_overflow() {
-        // Shrinking 4200 x 4100 to 1 x 1 in one step sums 17,220,000 pixels of 255 each, which
-        // overflows a `u32`, as an 8K video frame shrunk to 1 x 1 would.
-        let white = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
-            4200,
-            4100,
-            image::Rgb([u8::MAX; 3]),
-        ));
-        let thumb = super::fit_within_box(white, 1, 1).into_rgb8();
-        assert_eq!(thumb.dimensions(), (1, 1));
-        assert_eq!(thumb.as_raw(), &[u8::MAX; 3]);
-    }
-
-    #[test]
-    fn test_fit_within_box_keeps_the_aspect_ratio() {
-        let fitted = |box_width, box_height| {
-            let thumb = super::fit_within_box(
-                image::DynamicImage::new_rgb8(400, 200),
-                box_width,
-                box_height,
-            );
-            (thumb.width(), thumb.height())
-        };
-        assert_eq!(fitted(100, 100), (100, 50));
-        assert_eq!(fitted(400, 20), (40, 20));
-        assert_eq!(
-            fitted(800, 800),
-            (400, 200),
-            "a box over the frame keeps the frame's size"
-        );
     }
 
     #[test]
