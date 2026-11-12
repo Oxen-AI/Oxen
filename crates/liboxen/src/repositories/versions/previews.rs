@@ -10,7 +10,6 @@ use std::sync::OnceLock;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 #[cfg(feature = "ffmpeg")]
 use image::{ImageBuffer, Rgb};
@@ -74,21 +73,21 @@ fn check_resize_dimensions(width: Option<u32>, height: Option<u32>) -> Result<()
 
 /// `img` resized as a request asks, never past its own size. A width and a height give the exact
 /// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
+/// It allocates only the resized image, whatever the source's size.
 fn resize_within_source(
     img: DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 ) -> DynamicImage {
-    let filter = FilterType::Lanczos3;
     match (width, height) {
         (Some(width), Some(height)) => {
-            img.resize_exact(width.min(img.width()), height.min(img.height()), filter)
+            img.thumbnail_exact(width.min(img.width()), height.min(img.height()))
         }
         (Some(side), None) | (None, Some(side)) => {
             if side >= img.width().max(img.height()) {
                 img
             } else {
-                img.resize(side, side, filter)
+                img.thumbnail(side, side)
             }
         }
         (None, None) => img,
