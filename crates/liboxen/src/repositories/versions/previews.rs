@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 
 use bytes::Bytes;
 use futures::StreamExt;
+use image::imageops::FilterType;
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 #[cfg(feature = "ffmpeg")]
 use image::{ImageBuffer, Rgb};
@@ -79,9 +80,9 @@ const MAX_THUMBNAIL_STEP: u32 = 16;
 /// `img` resized as a request asks, never past its own size. A width and a height give the exact
 /// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
 /// Besides the resized image, it allocates only the steps on the way there, each about 1/256 the
-/// size of the image before it.
+/// size of the image before it, except for a float image, which takes one Lanczos3 resize.
 fn resize_within_source(
-    img: DynamicImage,
+    mut img: DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 ) -> DynamicImage {
@@ -99,15 +100,22 @@ fn resize_within_source(
         }
         (None, None) => return img,
     };
-    thumbnail_in_steps(img, target_width, target_height)
-}
-
-/// `img` shrunk to `width` x `height`, each at most its own side, by area averaging in steps of at
-/// most [`MAX_THUMBNAIL_STEP`] per side.
-fn thumbnail_in_steps(mut img: DynamicImage, width: u32, height: u32) -> DynamicImage {
-    while (img.width(), img.height()) != (width, height) {
-        let step_width = width.max(img.width().div_ceil(MAX_THUMBNAIL_STEP));
-        let step_height = height.max(img.height().div_ceil(MAX_THUMBNAIL_STEP));
+    if (img.width(), img.height()) == (target_width, target_height) {
+        return img;
+    }
+    if matches!(
+        img,
+        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_)
+    ) {
+        // `thumbnail_exact` rounds each average by adding half the block's pixel count before
+        // dividing, which adds 0.5 to every float channel in each step. Lanczos3 keeps float
+        // values, and its buffer of the source's width by the target's height in `f32` RGBA is
+        // at most 4/3 the size of a float image already decoded.
+        return img.resize_exact(target_width, target_height, FilterType::Lanczos3);
+    }
+    while (img.width(), img.height()) != (target_width, target_height) {
+        let step_width = target_width.max(img.width().div_ceil(MAX_THUMBNAIL_STEP));
+        let step_height = target_height.max(img.height().div_ceil(MAX_THUMBNAIL_STEP));
         img = img.thumbnail_exact(step_width, step_height);
     }
     img
@@ -340,23 +348,47 @@ mod tests {
 
     #[test]
     fn test_resize_within_source_averages_large_downscales_without_overflow() {
-        // Shrinking 2048 x 1024 to 2 x 1 in one step sums 1024 x 1024 pixels of 65,535 each,
-        // which overflows a `u32`.
+        // Shrinking 512 x 256 to 1 x 1 in one step sums 131,072 pixels of 65,535 each, which
+        // overflows a `u32`.
         let white = || {
             image::DynamicImage::ImageLuma16(image::ImageBuffer::from_pixel(
-                2048,
-                1024,
+                512,
+                256,
                 image::Luma([u16::MAX]),
             ))
         };
-        for (width, height) in [(Some(2), Some(1)), (Some(2), None)] {
+        for (width, height) in [(Some(1), Some(1)), (Some(1), None)] {
             let resized = super::resize_within_source(white(), width, height).into_luma16();
-            assert_eq!(resized.dimensions(), (2, 1));
+            assert_eq!(resized.dimensions(), (1, 1));
             assert!(
                 resized.pixels().all(|pixel| pixel.0 == [u16::MAX]),
                 "{width:?} x {height:?} gave {:?}",
                 resized.as_raw()
             );
+        }
+    }
+
+    #[test]
+    fn test_resize_within_source_keeps_float_values() {
+        let constant = || {
+            image::DynamicImage::ImageRgb32F(image::ImageBuffer::from_pixel(
+                512,
+                256,
+                image::Rgb([0.0, 0.25, 1.0]),
+            ))
+        };
+        for (width, height) in [(Some(2), Some(1)), (Some(2), None)] {
+            let resized = super::resize_within_source(constant(), width, height).into_rgb32f();
+            assert_eq!(resized.dimensions(), (2, 1));
+            for pixel in resized.pixels() {
+                for (got, want) in pixel.0.iter().zip([0.0, 0.25, 1.0]) {
+                    assert!(
+                        (got - want).abs() < 1e-4,
+                        "{width:?} x {height:?} gave {:?}",
+                        resized.as_raw()
+                    );
+                }
+            }
         }
     }
 }
