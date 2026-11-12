@@ -20,6 +20,62 @@ pub use status::status;
 // pub mod sync;
 // pub use sync::sync;
 
+/// Steps the remote-mode tests share: a remote-mode clone, its workspace's status, and an add to
+/// its workspace
+#[cfg(test)]
+mod test_helpers {
+    use std::path::{Path, PathBuf};
+
+    use crate::api;
+    use crate::error::OxenError;
+    use crate::model::staged_data::StagedDataOpts;
+    use crate::model::{LocalRepository, RemoteRepository, StagedData};
+    use crate::opts::clone_opts::CloneOpts;
+    use crate::repositories;
+
+    /// Clones `remote_repo` in remote mode into `dir/name`
+    pub(super) async fn clone(
+        remote_repo: &RemoteRepository,
+        dir: &Path,
+        name: &str,
+    ) -> Result<LocalRepository, OxenError> {
+        let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join(name));
+        opts.is_remote = true;
+        let cloned_repo = repositories::clone(&opts).await?;
+        assert!(cloned_repo.is_remote_mode());
+        Ok(cloned_repo)
+    }
+
+    /// The status of `repo`'s workspace on `remote_repo`, over the whole repository
+    pub(super) async fn status(
+        repo: &LocalRepository,
+        remote_repo: &RemoteRepository,
+    ) -> Result<StagedData, OxenError> {
+        let workspace_identifier = repo.workspace_name.as_deref().unwrap();
+        let opts = StagedDataOpts::from_paths_remote_mode(std::slice::from_ref(&repo.path));
+        repositories::remote_mode::status(repo, remote_repo, workspace_identifier, ".", &opts).await
+    }
+
+    /// Adds `paths` to `repo`'s workspace on `remote_repo`, failing if any file does not upload
+    pub(super) async fn add(
+        repo: &LocalRepository,
+        remote_repo: &RemoteRepository,
+        paths: Vec<PathBuf>,
+    ) -> Result<(), OxenError> {
+        let workspace_identifier = repo.workspace_name.as_deref().unwrap();
+        let failures = api::client::workspaces::files::add(
+            remote_repo,
+            workspace_identifier,
+            ".",
+            paths,
+            &Some(repo.clone()),
+        )
+        .await?;
+        assert!(failures.is_empty(), "files failed to upload: {failures:?}");
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
