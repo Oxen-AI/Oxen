@@ -79,27 +79,39 @@ const MAX_THUMBNAIL_STEP: u32 = 16;
 
 /// `img` resized as a request asks, never past its own size. A width and a height give the exact
 /// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
-/// Besides the resized image, it allocates only the steps on the way there, each about 1/256 the
-/// size of the image before it, except for a float image, which takes one Lanczos3 resize.
 fn resize_within_source(
-    mut img: DynamicImage,
+    img: DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 ) -> DynamicImage {
-    let (target_width, target_height) = match (width, height) {
-        (Some(width), Some(height)) => (width.min(img.width()), height.min(img.height())),
-        (Some(side), None) | (None, Some(side)) => {
-            let longest = img.width().max(img.height());
-            if side >= longest {
-                return img;
-            }
-            // Rounds as `DynamicImage::thumbnail` does.
-            let scale = f64::from(side) / f64::from(longest);
-            let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
-            (fit(img.width()), fit(img.height()))
+    match (width, height) {
+        (Some(width), Some(height)) => {
+            let (width, height) = (width.min(img.width()), height.min(img.height()));
+            shrink_to(img, width, height)
         }
-        (None, None) => return img,
-    };
+        (Some(side), None) | (None, Some(side)) => fit_within_box(img, side, side),
+        (None, None) => img,
+    }
+}
+
+/// `img` shrunk to fit a `box_width` x `box_height` box, keeping its aspect ratio. A box at or
+/// over the image's size returns the image as it is.
+fn fit_within_box(img: DynamicImage, box_width: u32, box_height: u32) -> DynamicImage {
+    if box_width >= img.width() && box_height >= img.height() {
+        return img;
+    }
+    // Rounds as `DynamicImage::thumbnail` does.
+    let scale = (f64::from(box_width) / f64::from(img.width()))
+        .min(f64::from(box_height) / f64::from(img.height()));
+    let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+    let (width, height) = (fit(img.width()), fit(img.height()));
+    shrink_to(img, width, height)
+}
+
+/// `img` shrunk to `target_width` x `target_height`, each at most its own side. Besides the
+/// shrunk image, it allocates only the steps on the way there, each about 1/256 the size of the
+/// image before it, except for a float image, which takes one Lanczos3 resize.
+fn shrink_to(mut img: DynamicImage, target_width: u32, target_height: u32) -> DynamicImage {
     if (img.width(), img.height()) == (target_width, target_height) {
         return img;
     }
@@ -226,7 +238,7 @@ async fn generate_video_thumbnail_version_store(
     let version_file = version_store.materialize(video_hash, dir).await?;
     let version_path = version_file.to_pathbuf();
 
-    // Output dimensions bound the thumbnail; `DynamicImage::thumbnail` preserves aspect ratio.
+    // The thumbnail fits inside this box, keeping the frame's aspect ratio.
     let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
         (Some(w), Some(h)) => (w, h),
         (Some(w), None) => (w, w), // Use width for both if only width specified
@@ -256,14 +268,7 @@ async fn generate_video_thumbnail_version_store(
                 OxenError::internal_error("Failed to build image buffer from video frame")
             })?;
 
-        // A box at or over the frame's size returns the frame as it is, since `thumbnail` would
-        // scale it up to fill the box.
-        let frame = DynamicImage::ImageRgb8(img);
-        let thumb = if output_width >= width && output_height >= height {
-            frame
-        } else {
-            frame.thumbnail(output_width, output_height)
-        };
+        let thumb = fit_within_box(DynamicImage::ImageRgb8(img), output_width, output_height);
 
         let mut buf = Vec::new();
         thumb
@@ -366,6 +371,39 @@ mod tests {
                 resized.as_raw()
             );
         }
+    }
+
+    #[test]
+    fn test_fit_within_box_averages_large_frames_without_overflow() {
+        // Shrinking 4200 x 4100 to 1 x 1 in one step sums 17,220,000 pixels of 255 each, which
+        // overflows a `u32`, as an 8K video frame shrunk to 1 x 1 would.
+        let white = image::DynamicImage::ImageRgb8(image::ImageBuffer::from_pixel(
+            4200,
+            4100,
+            image::Rgb([u8::MAX; 3]),
+        ));
+        let thumb = super::fit_within_box(white, 1, 1).into_rgb8();
+        assert_eq!(thumb.dimensions(), (1, 1));
+        assert_eq!(thumb.as_raw(), &[u8::MAX; 3]);
+    }
+
+    #[test]
+    fn test_fit_within_box_keeps_the_aspect_ratio() {
+        let fitted = |box_width, box_height| {
+            let thumb = super::fit_within_box(
+                image::DynamicImage::new_rgb8(400, 200),
+                box_width,
+                box_height,
+            );
+            (thumb.width(), thumb.height())
+        };
+        assert_eq!(fitted(100, 100), (100, 50));
+        assert_eq!(fitted(400, 20), (40, 20));
+        assert_eq!(
+            fitted(800, 800),
+            (400, 200),
+            "a box over the frame keeps the frame's size"
+        );
     }
 
     #[test]
