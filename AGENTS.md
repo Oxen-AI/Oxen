@@ -47,7 +47,7 @@ A `cargo build` that a `cargo test` follows, in a script or a CI job, builds `--
 
 ### Testing
 
-Run tests with `bin/test`, never `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs `cargo test --workspace --no-fail-fast`, and tears everything down on exit. Its full usage is in a comment at the top of the script. `cargo test` alone works only after reproducing that setup by hand (the "Manual Test Setup" section of `crates/liboxen/README.md`).
+Run tests with `bin/test`, never `cargo test` directly. The script builds the workspace, raises the file-handle limit, sets up a ramdisk for test data, starts `oxen-server` on a free port, exports the environment the tests expect, runs `cargo test --workspace --exclude oxen-py --no-fail-fast` (the `-p` suite tests `oxen-py`), and tears everything down on exit. Its full usage is in a comment at the top of the script. `cargo test` alone works only after reproducing that setup by hand (the "Manual Test Setup" section of `crates/liboxen/README.md`).
 
 ```bash
 bin/test                         # Build and run all Rust tests
