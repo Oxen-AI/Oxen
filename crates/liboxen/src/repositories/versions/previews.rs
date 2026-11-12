@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use bytes::Bytes;
 use futures::StreamExt;
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 #[cfg(feature = "ffmpeg")]
 use image::{ImageBuffer, Rgb};
 use tokio_stream::Stream;
@@ -24,6 +24,9 @@ use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::storage::version_store::VersionStore;
 use crate::tasks;
+
+/// The most memory decoding an image for a resize may allocate: 1 GiB.
+const MAX_RESIZE_DECODE_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
@@ -69,27 +72,53 @@ fn check_resize_dimensions(width: Option<u32>, height: Option<u32>) -> Result<()
     Ok(())
 }
 
+/// The most one area-averaging step shrinks each side. `thumbnail_exact` sums each output pixel's
+/// block of source pixels in a `u32`, which a block over about 16.8 million pixels at 8 bits, or
+/// 65,536 at 16 bits, overflows. A step of at most 16 per side keeps a block to a few hundred.
+const MAX_THUMBNAIL_STEP: u32 = 16;
+
 /// `img` resized as a request asks, never past its own size. A width and a height give the exact
 /// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
+/// Besides the resized image, it allocates only the steps on the way there, each about 1/256 the
+/// size of the image before it, except for a float image, which takes one Lanczos3 resize.
 fn resize_within_source(
-    img: DynamicImage,
+    mut img: DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 ) -> DynamicImage {
-    let filter = FilterType::Lanczos3;
-    match (width, height) {
-        (Some(width), Some(height)) => {
-            img.resize_exact(width.min(img.width()), height.min(img.height()), filter)
-        }
+    let (target_width, target_height) = match (width, height) {
+        (Some(width), Some(height)) => (width.min(img.width()), height.min(img.height())),
         (Some(side), None) | (None, Some(side)) => {
-            if side >= img.width().max(img.height()) {
-                img
-            } else {
-                img.resize(side, side, filter)
+            let longest = img.width().max(img.height());
+            if side >= longest {
+                return img;
             }
+            // Rounds as `DynamicImage::thumbnail` does.
+            let scale = f64::from(side) / f64::from(longest);
+            let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+            (fit(img.width()), fit(img.height()))
         }
-        (None, None) => img,
+        (None, None) => return img,
+    };
+    if (img.width(), img.height()) == (target_width, target_height) {
+        return img;
     }
+    if matches!(
+        img,
+        DynamicImage::ImageRgb32F(_) | DynamicImage::ImageRgba32F(_)
+    ) {
+        // `thumbnail_exact` rounds each average by adding half the block's pixel count before
+        // dividing, which adds 0.5 to every float channel in each step. Lanczos3 keeps float
+        // values, and its buffer of the source's width by the target's height in `f32` RGBA is
+        // at most 4/3 the size of a float image already decoded.
+        return img.resize_exact(target_width, target_height, FilterType::Lanczos3);
+    }
+    while (img.width(), img.height()) != (target_width, target_height) {
+        let step_width = target_width.max(img.width().div_ceil(MAX_THUMBNAIL_STEP));
+        let step_height = target_height.max(img.height().div_ceil(MAX_THUMBNAIL_STEP));
+        img = img.thumbnail_exact(step_width, step_height);
+    }
+    img
 }
 
 /// The name a video thumbnail of the requested size is cached under. A requested timestamp has no
@@ -138,7 +167,11 @@ async fn resize_cache_image_version_store(
     let image_data = version_store.get_version(img_hash).await?;
 
     let buf = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
-        let img = image::load_from_memory(&image_data)?;
+        let mut reader = ImageReader::new(Cursor::new(&image_data)).with_guessed_format()?;
+        let mut limits = Limits::default();
+        limits.max_alloc = Some(MAX_RESIZE_DECODE_BYTES);
+        reader.limits(limits);
+        let img = reader.decode()?;
         let mut buf = Vec::new();
         resize_within_source(img, resize.width, resize.height)
             .write_to(&mut Cursor::new(&mut buf), output_format)?;
@@ -311,5 +344,51 @@ mod tests {
             "one side gives a square the image fits in, keeping its aspect ratio"
         );
         assert_eq!(resized(Some(512), None), (4, 2));
+    }
+
+    #[test]
+    fn test_resize_within_source_averages_large_downscales_without_overflow() {
+        // Shrinking 512 x 256 to 1 x 1 in one step sums 131,072 pixels of 65,535 each, which
+        // overflows a `u32`.
+        let white = || {
+            image::DynamicImage::ImageLuma16(image::ImageBuffer::from_pixel(
+                512,
+                256,
+                image::Luma([u16::MAX]),
+            ))
+        };
+        for (width, height) in [(Some(1), Some(1)), (Some(1), None)] {
+            let resized = super::resize_within_source(white(), width, height).into_luma16();
+            assert_eq!(resized.dimensions(), (1, 1));
+            assert!(
+                resized.pixels().all(|pixel| pixel.0 == [u16::MAX]),
+                "{width:?} x {height:?} gave {:?}",
+                resized.as_raw()
+            );
+        }
+    }
+
+    #[test]
+    fn test_resize_within_source_keeps_float_values() {
+        let constant = || {
+            image::DynamicImage::ImageRgb32F(image::ImageBuffer::from_pixel(
+                512,
+                256,
+                image::Rgb([0.0, 0.25, 1.0]),
+            ))
+        };
+        for (width, height) in [(Some(2), Some(1)), (Some(2), None)] {
+            let resized = super::resize_within_source(constant(), width, height).into_rgb32f();
+            assert_eq!(resized.dimensions(), (2, 1));
+            for pixel in resized.pixels() {
+                for (got, want) in pixel.0.iter().zip([0.0, 0.25, 1.0]) {
+                    assert!(
+                        (got - want).abs() < 1e-4,
+                        "{width:?} x {height:?} gave {:?}",
+                        resized.as_raw()
+                    );
+                }
+            }
+        }
     }
 }
