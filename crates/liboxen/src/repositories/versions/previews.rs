@@ -71,27 +71,46 @@ fn check_resize_dimensions(width: Option<u32>, height: Option<u32>) -> Result<()
     Ok(())
 }
 
+/// The most one area-averaging step shrinks each side. `thumbnail_exact` sums each output pixel's
+/// block of source pixels in a `u32`, which a block over about 16.8 million pixels at 8 bits, or
+/// 65,536 at 16 bits, overflows. A step of at most 16 per side keeps a block to a few hundred.
+const MAX_THUMBNAIL_STEP: u32 = 16;
+
 /// `img` resized as a request asks, never past its own size. A width and a height give the exact
 /// size, and one of them alone gives a square the image is fitted into, keeping its aspect ratio.
-/// It allocates only the resized image, whatever the source's size.
+/// Besides the resized image, it allocates only the steps on the way there, each about 1/256 the
+/// size of the image before it.
 fn resize_within_source(
     img: DynamicImage,
     width: Option<u32>,
     height: Option<u32>,
 ) -> DynamicImage {
-    match (width, height) {
-        (Some(width), Some(height)) => {
-            img.thumbnail_exact(width.min(img.width()), height.min(img.height()))
-        }
+    let (target_width, target_height) = match (width, height) {
+        (Some(width), Some(height)) => (width.min(img.width()), height.min(img.height())),
         (Some(side), None) | (None, Some(side)) => {
-            if side >= img.width().max(img.height()) {
-                img
-            } else {
-                img.thumbnail(side, side)
+            let longest = img.width().max(img.height());
+            if side >= longest {
+                return img;
             }
+            // Rounds as `DynamicImage::thumbnail` does.
+            let scale = f64::from(side) / f64::from(longest);
+            let fit = |length: u32| ((f64::from(length) * scale).round() as u32).max(1);
+            (fit(img.width()), fit(img.height()))
         }
-        (None, None) => img,
+        (None, None) => return img,
+    };
+    thumbnail_in_steps(img, target_width, target_height)
+}
+
+/// `img` shrunk to `width` x `height`, each at most its own side, by area averaging in steps of at
+/// most [`MAX_THUMBNAIL_STEP`] per side.
+fn thumbnail_in_steps(mut img: DynamicImage, width: u32, height: u32) -> DynamicImage {
+    while (img.width(), img.height()) != (width, height) {
+        let step_width = width.max(img.width().div_ceil(MAX_THUMBNAIL_STEP));
+        let step_height = height.max(img.height().div_ceil(MAX_THUMBNAIL_STEP));
+        img = img.thumbnail_exact(step_width, step_height);
     }
+    img
 }
 
 /// The name a video thumbnail of the requested size is cached under. A requested timestamp has no
@@ -317,5 +336,27 @@ mod tests {
             "one side gives a square the image fits in, keeping its aspect ratio"
         );
         assert_eq!(resized(Some(512), None), (4, 2));
+    }
+
+    #[test]
+    fn test_resize_within_source_averages_large_downscales_without_overflow() {
+        // Shrinking 2048 x 1024 to 2 x 1 in one step sums 1024 x 1024 pixels of 65,535 each,
+        // which overflows a `u32`.
+        let white = || {
+            image::DynamicImage::ImageLuma16(image::ImageBuffer::from_pixel(
+                2048,
+                1024,
+                image::Luma([u16::MAX]),
+            ))
+        };
+        for (width, height) in [(Some(2), Some(1)), (Some(2), None)] {
+            let resized = super::resize_within_source(white(), width, height).into_luma16();
+            assert_eq!(resized.dimensions(), (2, 1));
+            assert!(
+                resized.pixels().all(|pixel| pixel.0 == [u16::MAX]),
+                "{width:?} x {height:?} gave {:?}",
+                resized.as_raw()
+            );
+        }
     }
 }
