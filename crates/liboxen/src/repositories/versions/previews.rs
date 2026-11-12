@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 use bytes::Bytes;
 use futures::StreamExt;
 use image::imageops::FilterType;
-use image::{DynamicImage, ImageFormat};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 #[cfg(feature = "ffmpeg")]
 use image::{ImageBuffer, Rgb};
 use tokio_stream::Stream;
@@ -24,6 +24,9 @@ use crate::model::metadata::metadata_image::ImgResize;
 use crate::model::metadata::metadata_video::VideoThumbnail;
 use crate::storage::version_store::VersionStore;
 use crate::tasks;
+
+/// The most memory decoding an image for a resize may allocate: 1 GiB.
+const MAX_RESIZE_DECODE_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
@@ -138,7 +141,11 @@ async fn resize_cache_image_version_store(
     let image_data = version_store.get_version(img_hash).await?;
 
     let buf = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
-        let img = image::load_from_memory(&image_data)?;
+        let mut reader = ImageReader::new(Cursor::new(&image_data)).with_guessed_format()?;
+        let mut limits = Limits::default();
+        limits.max_alloc = Some(MAX_RESIZE_DECODE_BYTES);
+        reader.limits(limits);
+        let img = reader.decode()?;
         let mut buf = Vec::new();
         resize_within_source(img, resize.width, resize.height)
             .write_to(&mut Cursor::new(&mut buf), output_format)?;
