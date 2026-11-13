@@ -95,6 +95,8 @@ pub struct StagedData {
     pub untracked_files: Vec<PathBuf>,
     pub unsynced_dirs: Vec<(PathBuf, usize)>,
     pub unsynced_files: Vec<PathBuf>,
+    /// Tracked files whose working copy differs from what is staged for them, or from HEAD. A
+    /// remote-mode repository compares only the files with nothing staged.
     pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,

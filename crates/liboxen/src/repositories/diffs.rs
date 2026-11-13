@@ -13,8 +13,9 @@ use crate::constants::{
     RIGHT_COMPARE_COMMIT,
 };
 use crate::core::merge::entry_merge_conflict_reader::EntryMergeConflictReader;
+use crate::core::staged::get_staged_db_manager;
 use crate::model::entry::commit_entry::CommitPath;
-use crate::model::merkle_tree::node::FileNode;
+use crate::model::merkle_tree::node::{FileNode, StagedMerkleTreeNode};
 use crate::tasks;
 
 use crate::core::df::tabular;
@@ -140,10 +141,8 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
         //     // diff_uncommitted(&repo, rev_1, &opts.path_1.clone(), path_2, &opts)
         // }
 
-        // Compare HEAD with current changes
-        (None, Some(rev_1), None) => {
-            diff_uncommitted(&repo, rev_1, &opts.path_1.clone(), &opts).await
-        }
+        // Compare rev_1, or without it what is staged and else HEAD, with current changes
+        (None, rev_1, None) => diff_uncommitted(&repo, rev_1.as_deref(), &opts.path_1, &opts).await,
 
         (Some(path_2), None, None) => {
             // Direct file comparison mode
@@ -166,9 +165,12 @@ pub async fn diff(opts: DiffOpts) -> Result<Vec<DiffResult>, OxenError> {
     }
 }
 
+/// Diff each file under `path_1` whose working copy has changes against `rev_1`'s version of it.
+/// Without `rev_1`, a file is diffed against the version staged for it, or HEAD's where none is,
+/// as `git diff` compares the working tree with the index.
 pub async fn diff_uncommitted(
     repo: &LocalRepository,
-    rev_1: &str,
+    rev_1: Option<&str>,
     path_1: &Path,
     opts: &DiffOpts,
 ) -> Result<Vec<DiffResult>, OxenError> {
@@ -176,24 +178,55 @@ pub async fn diff_uncommitted(
     let status = repositories::status::status_from_opts(repo, &status_opts).await?;
     let unstaged_files = status.unstaged_files();
     log::debug!("unstaged_files: {unstaged_files:?}");
-    let commit_1 = repositories::revisions::get(repo, rev_1)?
-        .ok_or_else(|| OxenError::RevisionNotFound(rev_1.into()))?;
-    log::debug!("commit_1: {commit_1:?}");
+    let baselines = {
+        let repo = repo.clone();
+        let rev_1 = rev_1.map(str::to_string);
+        // A non-empty staged set means the staged db exists, so reading it creates nothing
+        let compare_staged = rev_1.is_none() && !status.staged_files.is_empty();
+        tasks::spawn_blocking(move || -> Result<Vec<_>, OxenError> {
+            let commit_1 = match &rev_1 {
+                Some(rev_1) => Some(
+                    repositories::revisions::get(&repo, rev_1)?
+                        .ok_or_else(|| OxenError::RevisionNotFound(rev_1.as_str().into()))?,
+                ),
+                None => repositories::commits::head_commit_maybe(&repo)?,
+            };
+            log::debug!("commit_1: {commit_1:?}");
+            let staged_db_manager = compare_staged
+                .then(|| get_staged_db_manager(&repo))
+                .transpose()?;
+            unstaged_files
+                .into_iter()
+                .map(|file| {
+                    let staged_node = match &staged_db_manager {
+                        Some(manager) => manager
+                            .read_staged_entry(&file)?
+                            .and_then(StagedMerkleTreeNode::into_staged_file),
+                        None => None,
+                    };
+                    let node_1 = staged_node.or_else(|| {
+                        let commit_1 = commit_1.as_ref()?;
+                        repositories::entries::get_file(&repo, commit_1, &file)
+                            .inspect_err(|err| {
+                                tracing::error!(
+                                    oxen.file_path = %file.display(),
+                                    exception.message = ?err,
+                                    "Failed to get file for diff baseline"
+                                )
+                            })
+                            .ok()
+                            .flatten()
+                    });
+                    Ok((file, node_1))
+                })
+                .collect()
+        })
+        .await??
+    };
+
     let mut diff_result = Vec::new();
-    log::debug!("diff_result: {diff_result:?}");
-
-    for file in unstaged_files {
-        log::debug!("file: {file:?}");
-
-        let node_1 = match repositories::entries::get_file(repo, &commit_1, file.as_path()) {
-            Ok(node) => node,
-            Err(err) => {
-                log::error!("Failed to get file {file:?}: {err}");
-                None
-            }
-        };
-
-        log::debug!("node_1: {node_1:?}");
+    for (file, node_1) in baselines {
+        log::debug!("file: {file:?}, node_1: {node_1:?}");
         diff_result.push(
             diff_file_and_node(
                 repo,
@@ -458,6 +491,7 @@ pub async fn diff_files(
 }
 
 // TODO: merge this and diff_file_and_node
+/// Diffs the working copy at a path relative to `repo`'s root against `file_node`.
 pub async fn diff_file_and_node(
     repo: &LocalRepository,
     file_node: Option<FileNode>,
@@ -503,7 +537,7 @@ pub async fn diff_file_and_node(
         None => {
             //we didn't get the file node, so we are comparing to a new file
 
-            let file_type = util::fs::file_data_type(file_path.as_ref());
+            let file_type = util::fs::file_data_type(&repo.path.join(file_path.as_ref()));
             match file_type {
                 EntryDataType::Tabular => {
                     let result = diff_tabular_file_and_file_node(
@@ -617,6 +651,7 @@ pub async fn diff_file_nodes(
     }
 }
 
+/// Diffs the working copy at a path relative to `repo`'s root against `file_node`.
 pub async fn diff_tabular_file_and_file_node(
     repo: &LocalRepository,
     file_node: Option<&FileNode>,
@@ -636,12 +671,12 @@ pub async fn diff_tabular_file_and_file_node(
                 &DFOpts::empty(),
             )
             .await?;
-            let df_2 = tabular::read_df(file_1_path, DFOpts::empty()).await?;
+            let df_2 = tabular::read_df(repo.path.join(file_1_path), DFOpts::empty()).await?;
             (df_1, df_2)
         }
         None => {
             let df_1 = tabular::new_df(); //TODO: should we create a new df with the schema of the file?
-            let df_2 = tabular::read_df(file_1_path, DFOpts::empty()).await?;
+            let df_2 = tabular::read_df(repo.path.join(file_1_path), DFOpts::empty()).await?;
             (df_1, df_2)
         }
     };
@@ -723,6 +758,7 @@ pub async fn diff_tabular_file_nodes(
     }
 }
 
+/// Diffs the working copy at a path relative to `repo`'s root against `file_node`.
 pub async fn diff_text_file_and_node(
     repo: &LocalRepository,
     file_node: Option<&FileNode>,
@@ -736,7 +772,7 @@ pub async fn diff_text_file_and_node(
         None
     };
 
-    let file_path_content = util::fs::read_file(Some(&file_path))?;
+    let file_path_content = util::fs::read_file(Some(repo.path.join(file_path.as_ref())))?;
     let result = utf8_diff::diff(
         file_node_content,
         Some(file_path.as_ref().to_path_buf()), // The display path for the file node is the same as the locally-changed file

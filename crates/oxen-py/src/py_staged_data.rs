@@ -73,7 +73,7 @@ impl PyStagedData {
             .collect())
     }
 
-    /// Tracked paths edited on disk with nothing staged for them.
+    /// Tracked paths whose working copy differs from what is staged for them, or from HEAD.
     pub fn unstaged_modified_files(&self) -> PyResult<Vec<String>> {
         Ok(self
             .data

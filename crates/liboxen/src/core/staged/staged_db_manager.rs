@@ -11,7 +11,7 @@ use std::thread::sleep;
 use indicatif::ProgressBar;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use rmp_serde::Serializer;
-use rocksdb::{DB, Direction, IteratorMode, WriteBatch};
+use rocksdb::{DB, DBPinnableSlice, Direction, IteratorMode, WriteBatch};
 use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
@@ -339,6 +339,24 @@ impl StagedWriteBatch {
     }
 }
 
+/// The value staged at `path`, or `None` when nothing is. The CLI's `oxen add` and `oxen rm` key
+/// an entry by the platform's path string and `StagedDBManager` by `normalize_key`'s form, which
+/// differ on Windows below the repository root, so an entry under either key is found.
+pub(crate) fn get_staged_value<'a>(
+    db: &'a DB,
+    path: &Path,
+) -> Result<Option<DBPinnableSlice<'a>>, OxenError> {
+    let platform_key = path.to_string_lossy();
+    if let Some(value) = db.get_pinned(platform_key.as_bytes())? {
+        return Ok(Some(value));
+    }
+    let normalized_key = normalize_key(path);
+    if normalized_key == platform_key {
+        return Ok(None);
+    }
+    Ok(db.get_pinned(normalized_key.as_bytes())?)
+}
+
 impl StagedDBManager {
     /// Take the staged db's write lock, for a read-plan-write sequence that other writers must not
     /// interleave with. Read under it with [`staged_entries_under`] and [`read_from_db`], and write
@@ -602,6 +620,19 @@ impl StagedDBManager {
         path: &Path,
     ) -> Result<Vec<(PathBuf, StagedMerkleTreeNode)>, OxenError> {
         staged_entries_under(path, &self.staged_db.read())
+    }
+
+    /// The entry staged at `path`, wherever the writer keyed it (see `get_staged_value`), where
+    /// `read_from_staged_db` finds only the entries this manager wrote.
+    pub(crate) fn read_staged_entry(
+        &self,
+        path: &Path,
+    ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
+        let db = self.staged_db.read();
+        let Some(value) = get_staged_value(&db, path)? else {
+            return Ok(None);
+        };
+        Ok(Some(rmp_serde::from_slice(&value)?))
     }
 
     /// Read all entries below a path from the staged db
