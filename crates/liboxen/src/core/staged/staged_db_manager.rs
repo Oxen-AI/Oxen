@@ -207,6 +207,8 @@ fn serialize_staged_node(node: &StagedMerkleTreeNode) -> Result<Vec<u8>, OxenErr
     Ok(buf)
 }
 
+/// The entry staged at `path` under `normalize_key`'s form, the key `StagedDBManager` writes. An
+/// entry the CLI's `oxen add` or `oxen rm` wrote is found only through [`get_staged_value`].
 pub(crate) fn read_from_db(
     db: &DB,
     path: &Path,
@@ -215,15 +217,14 @@ pub(crate) fn read_from_db(
     let Some(data) = db.get(key.as_bytes())? else {
         return Ok(None);
     };
-    match rmp_serde::from_slice(&data) {
-        Ok(val) => Ok(Some(val)),
-        Err(e) => {
-            log::error!("Failed to deserialize data for key {key}: {e}");
-            Err(OxenError::basic_str(format!(
-                "Failed to deserialize staged data: {e}"
-            )))
-        }
-    }
+    decode_staged_node(&key, &data).map(Some)
+}
+
+fn decode_staged_node(key: &str, data: &[u8]) -> Result<StagedMerkleTreeNode, OxenError> {
+    rmp_serde::from_slice(data).map_err(|e| {
+        log::error!("Failed to deserialize data for key {key}: {e}");
+        OxenError::basic_str(format!("Failed to deserialize staged data: {e}"))
+    })
 }
 
 /// The staged entries at and under `path`, which is relative to the repository.
@@ -350,11 +351,11 @@ pub(crate) fn get_staged_value<'a>(
     if let Some(value) = db.get_pinned(platform_key.as_bytes())? {
         return Ok(Some(value));
     }
-    let normalized_key = normalize_key(path);
-    if normalized_key == platform_key {
+    // The two forms differ only where the platform's form has a backslash
+    if !platform_key.contains('\\') {
         return Ok(None);
     }
-    Ok(db.get_pinned(normalized_key.as_bytes())?)
+    Ok(db.get_pinned(normalize_key(path).as_bytes())?)
 }
 
 impl StagedDBManager {
@@ -632,7 +633,7 @@ impl StagedDBManager {
         let Some(value) = get_staged_value(&db, path)? else {
             return Ok(None);
         };
-        Ok(Some(rmp_serde::from_slice(&value)?))
+        decode_staged_node(&path.to_string_lossy(), &value).map(Some)
     }
 
     /// Read all entries below a path from the staged db

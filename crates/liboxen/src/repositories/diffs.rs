@@ -660,26 +660,21 @@ pub async fn diff_tabular_file_and_file_node(
     targets: Vec<String>,
     display: Vec<String>,
 ) -> Result<TabularDiff, OxenError> {
-    let (df_1, df_2) = match file_node {
+    let df_1 = match file_node {
         Some(file_node) => {
             let version_store = repo.version_store();
-            let df_1 = tabular::read_version_df(
+            tabular::read_version_df(
                 &version_store,
                 *file_node.hash(),
                 file_node.num_bytes(),
                 file_node.extension(),
                 &DFOpts::empty(),
             )
-            .await?;
-            let df_2 = tabular::read_df(repo.path.join(file_1_path), DFOpts::empty()).await?;
-            (df_1, df_2)
+            .await?
         }
-        None => {
-            let df_1 = tabular::new_df(); //TODO: should we create a new df with the schema of the file?
-            let df_2 = tabular::read_df(repo.path.join(file_1_path), DFOpts::empty()).await?;
-            (df_1, df_2)
-        }
+        None => tabular::new_df(), //TODO: should we create a new df with the schema of the file?
     };
+    let df_2 = tabular::read_df(repo.path.join(file_1_path), DFOpts::empty()).await?;
 
     let schema_1 = Schema::from_polars(df_1.schema());
     let schema_2 = Schema::from_polars(df_2.schema());
