@@ -159,6 +159,22 @@ impl RefManager {
         }
     }
 
+    /// How many branches the repo has, without building a [`Branch`] for each one.
+    ///
+    /// Prefer this over `list_branches().len()`: that allocates a name and a commit id per branch
+    /// only to drop them.
+    pub fn count_branches(&self) -> Result<usize, OxenError> {
+        let db = self.refs_db.read();
+        let mut count = 0;
+        // Counted in a loop rather than with `Iterator::count` so a read failure surfaces instead
+        // of being tallied as a branch.
+        for item in db.iterator(IteratorMode::Start) {
+            item?;
+            count += 1;
+        }
+        Ok(count)
+    }
+
     pub fn list_branches(&self) -> Result<Vec<Branch>, OxenError> {
         let db = self.refs_db.read();
         let mut branches = vec![];
