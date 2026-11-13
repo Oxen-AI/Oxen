@@ -55,6 +55,7 @@ mod tests {
 
     use crate::constants::OXEN_HIDDEN_DIR;
     use crate::error::OxenError;
+    use crate::model::LocalRepository;
     use crate::model::NewCommitBody;
     use crate::model::StagedEntryStatus;
     use crate::opts::RestoreOpts;
@@ -63,68 +64,129 @@ mod tests {
 
     use crate::util;
 
+    // One repository removes files of its README, train, and annotations data, first while none
+    // of it is committed and then once all of it is, in an order where no case counts what an
+    // earlier one left staged or modified
+    #[tokio::test]
+    async fn test_rm_select_data() -> Result<(), OxenError> {
+        test::run_select_data_repo_test_no_commits_async(
+            "README train annotations",
+            |repo| async move {
+                case_rm_dir_without_recursive_flag_should_be_error(&repo).await?;
+                case_rm_dir_that_is_not_committed_should_throw_error(&repo).await?;
+                case_rm_staged_train_dir(&repo).await?;
+                case_rm_staged_dir_with_slash(&repo).await?;
+                case_rm_staged_annotations_train_dir(&repo).await?;
+                case_rm_staged_file(&repo).await?;
+                // Makes the first commit, of one file outside the data
+                case_add_and_rm_file_in_dir(&repo).await?;
+
+                // Commit all the data, with a copy of train for each case that removes a train
+                // directory of its own
+                for copy in ["staged_train", "changed_train"] {
+                    util::fs::copy_dir_all(repo.path.join("train"), repo.path.join(copy))?;
+                }
+                repositories::add(&repo, &repo.path).await?;
+                repositories::commit(&repo, "Adding all data")?;
+
+                case_staged_rm_file(&repo).await?;
+                case_rm_dir_with_slash(&repo).await?;
+                case_rm_train_dir(&repo).await?;
+                case_rm_subdir(&repo).await?;
+                // skip on windows, not sure why it's failing...
+                if std::env::consts::OS != "windows" {
+                    case_rm_dir_with_modifications_should_throw_error(&repo).await?;
+                }
+
+                Ok(())
+            },
+        )
+        .await
+    }
+
+    // One empty repository removes files in a directory of its own for each case. The cases that
+    // count every file and directory in the tree run first, while it holds only their own.
+    #[tokio::test]
+    async fn test_rm_local_repo() -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            case_rm_sub_directory(&repo).await?;
+            case_rm_multi_level_directory(&repo).await?;
+            case_rm_one_file_in_dir(&repo).await?;
+            case_rm_directory_restore_directory(&repo).await?;
+            case_rm_r_already_deleted_nested_dir(&repo).await?;
+            case_add_dot_stages_deleted_nested_dir(&repo).await?;
+            case_add_dot_stages_deleted_file_in_nested_dir(&repo).await?;
+            case_wildcard_rm_deleted_and_present(&repo).await?;
+            // Removes every file the cases before it left in the tree
+            case_rm_dot_excludes_oxen_hidden_dir(&repo).await?;
+            case_rm_wildcard_multi_level(&repo).await?;
+            if std::env::consts::OS != "windows" {
+                case_rm_dir_with_deep_modifications_should_throw_error(&repo).await?;
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
     /// Should be able to use `oxen rm -r` then restore to get files back
     ///
     /// $ oxen rm -r train/
     /// $ oxen restore --staged train/
     /// $ oxen restore train/
-    #[tokio::test]
-    async fn test_rm_directory_restore_directory() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let rm_dir = PathBuf::from("train");
-            let full_path = repo.path.join(&rm_dir);
-            test::populate_dir_with_txt_files(&full_path, "file", 3)?;
-            repositories::add(&repo, &full_path).await?;
-            repositories::commit(&repo, "Adding train dir")?;
+    async fn case_rm_directory_restore_directory(repo: &LocalRepository) -> Result<(), OxenError> {
+        let rm_dir = PathBuf::from("train");
+        let full_path = repo.path.join(&rm_dir);
+        test::populate_dir_with_txt_files(&full_path, "file", 3)?;
+        repositories::add(repo, &full_path).await?;
+        repositories::commit(repo, "Adding train dir")?;
 
-            let num_files = util::fs::rcount_files_in_dir(&full_path);
+        let num_files = util::fs::rcount_files_in_dir(&full_path);
 
-            // Remove directory
-            let opts = RmOpts {
-                paths: vec![rm_dir.to_owned()],
-                recursive: true,
-                staged: false,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
+        // Remove directory
+        let opts = RmOpts {
+            paths: vec![rm_dir.to_owned()],
+            recursive: true,
+            staged: false,
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
 
-            // Make sure we staged these removals
-            let status = repositories::status(&repo).await?;
-            status.print();
-            assert_eq!(num_files, status.staged_files.len());
-            for (path, entry) in status.staged_files.iter() {
-                // The root path will be added as staged
-                if path != Path::new("") {
-                    assert_eq!(entry.status, StagedEntryStatus::Removed);
-                }
+        // Make sure we staged these removals
+        let status = repositories::status(repo).await?;
+        status.print();
+        assert_eq!(num_files, status.staged_files.len());
+        for (path, entry) in status.staged_files.iter() {
+            // The root path will be added as staged
+            if path != Path::new("") {
+                assert_eq!(entry.status, StagedEntryStatus::Removed);
             }
-            // Make sure directory is no longer on disk
-            assert!(!full_path.exists());
+        }
+        // Make sure directory is no longer on disk
+        assert!(!full_path.exists());
 
-            // Restore the content from staging area
-            let opts = RestoreOpts::from_staged_path(&rm_dir);
-            repositories::restore::restore(&repo, opts).await?;
+        // Restore the content from staging area
+        let opts = RestoreOpts::from_staged_path(&rm_dir);
+        repositories::restore::restore(repo, opts).await?;
 
-            // This should have removed all the staged files, but not restored from disk yet.
-            let status = repositories::status(&repo).await?;
-            status.print();
-            assert_eq!(0, status.staged_files.len());
-            // One removed dir (rolled up)
-            assert_eq!(1, status.removed_files.len());
+        // This should have removed all the staged files, but not restored from disk yet.
+        let status = repositories::status(repo).await?;
+        status.print();
+        assert_eq!(0, status.staged_files.len());
+        // One removed dir (rolled up)
+        assert_eq!(1, status.removed_files.len());
 
-            // This should restore all the files from the HEAD commit
-            let opts = RestoreOpts::from_path(&rm_dir);
-            repositories::restore::restore(&repo, opts).await?;
+        // This should restore all the files from the HEAD commit
+        let opts = RestoreOpts::from_path(&rm_dir);
+        repositories::restore::restore(repo, opts).await?;
 
-            let status = repositories::status(&repo).await?;
-            status.print();
+        let status = repositories::status(repo).await?;
+        status.print();
 
-            let num_restored = util::fs::rcount_files_in_dir(&full_path);
-            assert_eq!(num_restored, num_files);
+        let num_restored = util::fs::rcount_files_in_dir(&full_path);
+        assert_eq!(num_restored, num_files);
 
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
     /*
@@ -272,757 +334,674 @@ mod tests {
         .await
     }
 
-    #[tokio::test]
-    async fn test_rm_sub_directory() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // create the images directory
-            let images_dir = repo.path.join("images").join("cats");
-            util::fs::create_dir_all(&images_dir)?;
-
-            // Add and commit the cats
-            for i in 1..=3 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("cat_{i}.jpg")),
-                    format!("cat {i}"),
-                )?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial cat images")?;
-
-            // Create branch
-            let branch_name = "remove-data";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            // Remove all the cat images
-            for i in 1..=3 {
-                let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
-                util::fs::remove_file(&repo_filepath)?;
-            }
-
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images")],
-                recursive: true,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
-            let commit = repositories::commit(&repo, "Removing cat images")?;
-
-            for i in 1..=3 {
-                let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
-                assert!(!repo_filepath.exists())
-            }
-
-            let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
-            let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
-            assert_eq!(files.len(), 0);
-            for dir in dirs.iter() {
-                println!("dir: {dir:?}");
-            }
-
-            // Should be 0, as list_files_and_dirs explicitly excludes the root dir
-            assert_eq!(dirs.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_multi_level_directory() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // create the images directory
-            let images_dir = repo.path.join("images").join("cats");
-            util::fs::create_dir_all(&images_dir)?;
-
-            // create several levels of subdirectories
-            for i in 1..=3 {
-                let sub_dir = images_dir.join(format!("subdir{i}_level_1"));
-                util::fs::create_dir_all(&sub_dir)?;
-            }
-
-            for i in 1..=2 {
-                let sub_dir = images_dir
-                    .join(format!("subdir{i}_level_1"))
-                    .join(format!("subdir{i}_level_2"));
-                util::fs::create_dir_all(&sub_dir)?;
-            }
-
-            // Third level
-            for i in 1..=1 {
-                let sub_dir = images_dir
-                    .join(format!("subdir{i}_level_1"))
-                    .join(format!("subdir{i}_level_2"))
-                    .join(format!("subdir{i}_level_3"));
-                util::fs::create_dir_all(&sub_dir)?;
-            }
-
-            // Add and commit the cats to every subdirectory
-            for i in 1..=3 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("cat_{i}.jpg")),
-                    format!("cat {i}"),
-                )?;
-            }
-
-            for j in 1..=3 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("cat_{i}.jpg"));
-                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
-                }
-            }
-
-            for j in 1..=2 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("subdir{j}_level_2"))
-                        .join(format!("cat_{i}.jpg"));
-                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
-                }
-            }
-
-            for j in 1..=1 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("subdir{j}_level_2"))
-                        .join(format!("subdir{j}_level_3"))
-                        .join(format!("cat_{i}.jpg"));
-                    util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
-                }
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_dirs.len(), 7);
-
-            // 3 * (cats + level 1 * 3 + level 2 * 2 + level 3 * 1)
-            assert_eq!(status.staged_files.len(), 21);
-
-            repositories::commit(&repo, "Adding initial cat images")?;
-
-            // Create branch
-            let branch_name = "remove-data";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            // Remove all the cat images and subdirectories
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images")],
-                recursive: true,
-                ..Default::default()
-            };
-
-            repositories::rm(&repo, &rm_opts).await?;
-            let commit = repositories::commit(&repo, "Removing cat images and sub_directories")?;
-
-            // None of these files should exist after rm -r
-            for i in 1..=3 {
-                let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
-                assert!(!repo_filepath.exists())
-            }
-
-            for j in 1..=3 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("cat_{i}.jpg"));
-                    assert!(!repo_filepath.exists())
-                }
-            }
-
-            for j in 1..=2 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("subdir{j}_level_2"))
-                        .join(format!("cat_{i}.jpg"));
-                    assert!(!repo_filepath.exists())
-                }
-            }
-
-            for j in 1..=1 {
-                for i in 1..=3 {
-                    let repo_filepath = images_dir
-                        .join(format!("subdir{j}_level_1"))
-                        .join(format!("subdir{j}_level_2"))
-                        .join(format!("subdir{j}_level_3"))
-                        .join(format!("cat_{i}.jpg"));
-                    assert!(!repo_filepath.exists())
-                }
-            }
-
-            let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
-            let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
-            assert_eq!(files.len(), 0);
-            assert_eq!(dirs.len(), 0);
-
-            let dirs = tree.list_dir_paths()?;
-            println!("list_dir_paths got {} dirs", dirs.len());
-            for dir in dirs.iter() {
-                println!("dir: {dir:?}");
-            }
-
-            // Should be 1, as list_dir_paths explicitly includes the root dir
-            assert_eq!(dirs.len(), 1);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_one_file_in_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // create the images directory
-            let images_dir = repo.path.join("images");
-            util::fs::create_dir_all(&images_dir)?;
-
-            // Add and commit the cats
-            for i in 1..=3 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("cat_{i}.jpg")),
-                    format!("cat {i}"),
-                )?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial cat images")?;
-
-            // Add and commit the dogs
-            for i in 1..=4 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("dog_{i}.jpg")),
-                    format!("dog {i}"),
-                )?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial dog images")?;
-
-            // Create branch
-            let branch_name = "modify-data";
-            repositories::branches::create_checkout(&repo, branch_name)?;
-
-            // Modify all the cat images
-            for i in 1..=3 {
-                let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
-                test::modify_txt_file(&repo_filepath, &format!("modified cat {i}"))?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Modified all the cats")?;
-
-            // Remove one of the dogs
-            let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
-
-            let rm_opts = RmOpts::from_path(repo_filepath);
-            repositories::rm(&repo, &rm_opts).await?;
-            let _commit = repositories::commit(&repo, "Removing dog")?;
-
-            // Add dwight howard and vince carter
-            util::fs::write_to_path(images_dir.join("dwight_vince.jpeg"), "dwight and vince")?;
-            repositories::add(&repo, &images_dir).await?;
-            let commit = repositories::commit(&repo, "Adding dwight and vince")?;
-
-            // Should have 3 cats, 3 dogs, and one dwight/vince
-            let tree = repositories::tree::get_root_with_children(&repo, &commit)?.unwrap();
-            let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
-
-            for dir in dirs.iter() {
-                log::debug!("dir: {dir:?}");
-            }
-
-            for file in files.iter() {
-                log::debug!("file: {file:?}");
-            }
-
-            assert_eq!(files.len(), 7);
-            assert_eq!(dirs.len(), 1);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_wildcard_rm_deleted_and_present() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // create the images directory
-            let images_dir = repo.path.join("images");
-            util::fs::create_dir_all(&images_dir)?;
-
-            // Add and commit the cats
-            for i in 1..=3 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("cat_{i}.jpg")),
-                    format!("cat {i}"),
-                )?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial cat images")?;
-
-            // Add and commit the dogs
-            for i in 1..=4 {
-                util::fs::write_to_path(
-                    images_dir.join(format!("dog_{i}.jpg")),
-                    format!("dog {i}"),
-                )?;
-            }
-
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial dog images")?;
-
-            // Pre-remove two cats and one dog to ensure deleted images get staged as removed as well as non-deleted images
-            std::fs::remove_file(repo.path.join("images").join("cat_1.jpg"))?;
-            std::fs::remove_file(repo.path.join("images").join("cat_2.jpg"))?;
-            std::fs::remove_file(repo.path.join("images").join("dog_1.jpg"))?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            assert_eq!(status.removed_files.len(), 3);
-            assert_eq!(status.staged_files.len(), 0);
-
-            // Remove with wildcard
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images/*")],
-                ..Default::default()
-            };
-
-            repositories::rm(&repo, &rm_opts).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            // Should now have 7 staged for removal
-            assert_eq!(status.staged_files.len(), 7);
-            assert_eq!(status.removed_files.len(), 0);
-
-            // A staged rm by glob stages the matches whose removal is not staged yet
-            let cat_3 = Path::new("images").join("cat_3.jpg");
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(&cat_3)).await?;
-            let rm_opts = RmOpts {
-                paths: vec![cat_3.clone(), Path::new("images").join("dog_2.jpg")],
-                staged: true,
-                ..Default::default()
-            };
-            let result = repositories::rm(&repo, &rm_opts).await;
-            assert!(
-                matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
-                "dog_2.jpg's removal is already staged: {result:?}"
-            );
-            let status = repositories::status(&repo).await?;
-            assert!(
-                !status.staged_files.contains_key(&cat_3),
-                "a refused path leaves the paths given with it untouched"
-            );
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images/*")],
-                staged: true,
-                ..Default::default()
-            };
-
-            repositories::rm(&repo, &rm_opts).await?;
-            let status = repositories::status(&repo).await?;
-            assert_eq!(
-                status
-                    .staged_files
-                    .get(&cat_3)
-                    .map(|entry| entry.status.clone()),
-                Some(StagedEntryStatus::Removed),
-                "the glob skips the six already staged and stages cat_3.jpg's removal"
-            );
-            assert_eq!(
-                status.paths_with_status(StagedEntryStatus::Removed).count(),
-                7
-            );
-            assert_eq!(status.removed_files.len(), 0);
-
-            let glob = Path::new("images").join("*").display().to_string();
-            let result = repositories::rm(&repo, &rm_opts).await;
-            assert!(
-                matches!(&result, Err(err @ OxenError::RemovalAlreadyStaged(_))
-                    if err.to_string().contains(&glob)),
-                "a staged glob whose every match already has its removal staged fails: {result:?}"
-            );
-
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(&cat_3)).await?;
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images/*"), cat_3.clone()],
-                staged: true,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
-            let status = repositories::status(&repo).await?;
-            assert_eq!(
-                status.paths_with_status(StagedEntryStatus::Removed).count(),
-                7,
-                "a glob also matching a path given outright has that path left to remove"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_add_and_rm_file_in_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
-            // add a new file in a directory
-            let path = Path::new("dir").join("new_file.txt");
-
-            util::fs::write_to_path(repo.path.join(&path), "this is a new file")?;
-            repositories::add(&repo, &path).await?;
-            repositories::commit(&repo, "first_commit")?;
-
-            let added = Path::new("dir").join("added.txt");
-            util::fs::write_to_path(repo.path.join(&added), "staged, never committed")?;
-            repositories::add(&repo, &added).await?;
-            let result = repositories::rm(&repo, &RmOpts::from_path(&added)).await;
-            assert!(
-                matches!(&result, Err(err) if err.to_string().contains("must be committed")),
-                "a file only ever staged is refused as uncommitted, not as a lost change: {result:?}"
-            );
-
-            // Remove the file and commit
-            let opts = RmOpts::from_path(&path);
-            repositories::rm(&repo, &opts).await?;
-            repositories::commit(&repo, "commit_message")?;
-
-            // Add the file again. This should err, but not panic
-            let result = repositories::add(&repo, &path).await;
-            assert!(result.is_err());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_staged_file() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("README", |repo| async move {
-            // Stage a file in a directory
-            let path = Path::new("README.md");
-            repositories::add(&repo, repo.path.join(path)).await?;
-
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 1);
-            assert!(status.staged_files.contains_key(path));
-            let opts = RmOpts::from_staged_path(path);
-            let staged_content = util::fs::read_from_path(repo.path.join(path))?;
-            test::modify_txt_file(repo.path.join(path), "edited after staging")?;
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(
-                matches!(result, Err(OxenError::RmWouldLoseStagedContent(_))),
-                "--staged refuses to unstage content found only in the staged db: {result:?}"
-            );
-            test::modify_txt_file(repo.path.join(path), &staged_content)?;
-            repositories::rm(&repo, &opts).await?;
-
-            let status = repositories::status(&repo).await?;
-            log::debug!("status: {status:?}");
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_staged_dir_without_recursive_flag_should_be_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // Stage the data
-            let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path)).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            // 2: train
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: false, // This should be an error
-                ..Default::default()
-            };
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(result.is_err());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_staged_annotations_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("annotations", |repo| async move {
-            // Stage the data
-            let path = Path::new("annotations").join("train");
-            repositories::add(&repo, repo.path.join(&path)).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            // 1: annotations/train
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: true, // make sure to pass in recursive
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_dirs.len(), 0);
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_staged_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // Stage the data
-            let path = Path::new("train");
-            repositories::add(&repo, repo.path.join(path)).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-            // 1: train
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: true, // make sure to pass in recursive
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_dirs.len(), 0);
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_staged_dir_with_slash() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // Stage the data
-            let path = Path::new("train/");
-            repositories::add(&repo, repo.path.join(path)).await?;
-
-            let status = repositories::status(&repo).await?;
-            // 1: train dir
-            assert_eq!(status.staged_dirs.len(), 1);
-
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: true, // make sure to pass in recursive
-                ..Default::default()
-            };
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(result.is_ok());
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            assert_eq!(status.staged_dirs.len(), 0);
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_staged_rm_file() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("README", |repo| async move {
-            // Remove the readme
-            let path = Path::new("README.md");
-
-            // A staged rm of a committed file with a staged edit stages the removal in place of
-            // the edit and leaves the edited file on disk
-            test::modify_txt_file(repo.path.join(path), "edited readme")?;
-            repositories::add(&repo, repo.path.join(path)).await?;
-            let result = repositories::rm(&repo, &RmOpts::from_path(path)).await;
-            assert!(
-                matches!(result, Err(OxenError::RmWouldLoseChanges(_))),
-                "rm refuses to delete a staged edit: {result:?}"
-            );
-            test::modify_txt_file(repo.path.join(path), "edited again")?;
-            let result = repositories::rm(&repo, &RmOpts::from_staged_path(path)).await;
-            assert!(
-                matches!(result, Err(OxenError::RmWouldLoseStagedContent(_))),
-                "--staged refuses to drop a staged edit no longer on disk: {result:?}"
-            );
-            test::modify_txt_file(repo.path.join(path), "edited readme")?;
-            repositories::rm(&repo, &RmOpts::from_staged_path(path)).await?;
-            let status = repositories::status(&repo).await?;
-            assert_eq!(
-                status.staged_files.get(path).map(|entry| &entry.status),
-                Some(&StagedEntryStatus::Removed)
-            );
-            assert_eq!(
-                util::fs::read_from_path(repo.path.join(path))?,
-                "edited readme",
-                "--staged keeps the edited working copy"
-            );
-            assert_eq!(status.untracked_files, vec![path.to_path_buf()]);
-
-            let result = repositories::rm(&repo, &RmOpts::from_path(path)).await;
-            assert!(
-                matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
-                "rm refuses a file whose removal is staged, which is untracked: {result:?}"
-            );
-            assert_eq!(
-                util::fs::read_from_path(repo.path.join(path))?,
-                "edited readme",
-                "rm leaves the untracked file on disk"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_dir_without_recursive_flag_should_be_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // Remove the train dir
-            let path = Path::new("train");
-
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: false,
-                recursive: false, // This should be an error
-                ..Default::default()
-            };
-
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(result.is_err());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_dir_that_is_not_committed_should_throw_error() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_no_commits_async("train", |repo| async move {
-            // The train dir is not committed, so should get an error trying to remove
-            let train_dir = Path::new("train");
-
-            let opts = RmOpts {
-                paths: vec![train_dir.to_path_buf()],
-                staged: false,
-                recursive: true, // Need to specify recursive
-                ..Default::default()
-            };
-
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(result.is_err());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_dir_with_modifications_should_throw_error() -> Result<(), OxenError> {
-        // skip on windows, not sure why it's failing...
-        if std::env::consts::OS == "windows" {
-            return Ok(());
+    async fn case_rm_sub_directory(repo: &LocalRepository) -> Result<(), OxenError> {
+        // create the images directory
+        let images_dir = repo.path.join("images").join("cats");
+        util::fs::create_dir_all(&images_dir)?;
+
+        // Add and commit the cats
+        for i in 1..=3 {
+            util::fs::write_to_path(images_dir.join(format!("cat_{i}.jpg")), format!("cat {i}"))?;
         }
 
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
-            // Remove the train dir
-            let train_dir = Path::new("train");
+        repositories::add(repo, &images_dir).await?;
+        repositories::commit(repo, "Adding initial cat images")?;
 
-            let opts = RmOpts {
-                paths: vec![train_dir.to_path_buf()],
-                staged: false,
-                recursive: true, // Need to specify recursive
-                ..Default::default()
-            };
+        // Create branch
+        let branch_name = "remove-data";
+        repositories::branches::create_checkout(repo, branch_name)?;
 
-            let added = train_dir.join("new.txt");
-            util::fs::write_to_path(repo.path.join(&added), "added since HEAD")?;
-            repositories::add(&repo, repo.path.join(&added)).await?;
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(
-                matches!(result, Err(OxenError::RmWouldLoseChanges(_))),
-                "rm -r refuses a file added under the directory: {result:?}"
-            );
+        // Remove all the cat images
+        for i in 1..=3 {
+            let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
+            util::fs::remove_file(&repo_filepath)?;
+        }
 
-            // copy a cat into the dog image
-            util::fs::copy(
-                test::REPO_ROOT
-                    .join("data")
-                    .join("test")
-                    .join("images")
-                    .join("cat_1.jpg"),
-                repo.path.join(train_dir.join("dog_1.jpg")),
-            )?;
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("images")],
+            recursive: true,
+            ..Default::default()
+        };
+        repositories::rm(repo, &rm_opts).await?;
+        let commit = repositories::commit(repo, "Removing cat images")?;
 
-            // There should be one modified file
-            let status = repositories::status(&repo).await?;
-            status.print();
-            assert_eq!(
-                status.modified_files.len(),
-                1,
-                "Expected 1 modified file but found: {:?}",
-                status.modified_files
-            );
+        for i in 1..=3 {
+            let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
+            assert!(!repo_filepath.exists())
+        }
 
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(
-                matches!(
-                    &result,
-                    Err(OxenError::RmWouldLoseChanges(path))
-                        if path.to_string().ends_with("dog_1.jpg")
-                ),
-                "rm -r refuses the unsaved edit to dog_1.jpg: {result:?}"
-            );
+        let tree = repositories::tree::get_root_with_children(repo, &commit)?.unwrap();
+        let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
+        assert_eq!(files.len(), 0);
+        for dir in dirs.iter() {
+            println!("dir: {dir:?}");
+        }
 
-            repositories::rm(
-                &repo,
-                &RmOpts {
-                    force: true,
-                    ..opts
-                },
-            )
-            .await?;
-            assert!(
-                !repo.path.join(train_dir).exists(),
-                "-f deletes the directory"
-            );
-            let status = repositories::status(&repo).await?;
-            assert!(
-                !status.staged_files.contains_key(&added),
-                "-f unstages the file added under the directory"
-            );
+        // Should be 0, as list_files_and_dirs explicitly excludes the root dir
+        assert_eq!(dirs.len(), 0);
 
-            Ok(())
-        })
-        .await
+        Ok(())
+    }
+
+    async fn case_rm_multi_level_directory(repo: &LocalRepository) -> Result<(), OxenError> {
+        // create the images directory
+        let images_dir = repo.path.join("images").join("cats");
+        util::fs::create_dir_all(&images_dir)?;
+
+        // create several levels of subdirectories
+        for i in 1..=3 {
+            let sub_dir = images_dir.join(format!("subdir{i}_level_1"));
+            util::fs::create_dir_all(&sub_dir)?;
+        }
+
+        for i in 1..=2 {
+            let sub_dir = images_dir
+                .join(format!("subdir{i}_level_1"))
+                .join(format!("subdir{i}_level_2"));
+            util::fs::create_dir_all(&sub_dir)?;
+        }
+
+        // Third level
+        for i in 1..=1 {
+            let sub_dir = images_dir
+                .join(format!("subdir{i}_level_1"))
+                .join(format!("subdir{i}_level_2"))
+                .join(format!("subdir{i}_level_3"));
+            util::fs::create_dir_all(&sub_dir)?;
+        }
+
+        // Add and commit the cats to every subdirectory
+        for i in 1..=3 {
+            util::fs::write_to_path(images_dir.join(format!("cat_{i}.jpg")), format!("cat {i}"))?;
+        }
+
+        for j in 1..=3 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("cat_{i}.jpg"));
+                util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
+            }
+        }
+
+        for j in 1..=2 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("subdir{j}_level_2"))
+                    .join(format!("cat_{i}.jpg"));
+                util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
+            }
+        }
+
+        for j in 1..=1 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("subdir{j}_level_2"))
+                    .join(format!("subdir{j}_level_3"))
+                    .join(format!("cat_{i}.jpg"));
+                util::fs::write_to_path(repo_filepath, format!("cat {i}"))?;
+            }
+        }
+
+        repositories::add(repo, &images_dir).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        assert_eq!(status.staged_dirs.len(), 7);
+
+        // 3 * (cats + level 1 * 3 + level 2 * 2 + level 3 * 1)
+        assert_eq!(status.staged_files.len(), 21);
+
+        repositories::commit(repo, "Adding initial cat images")?;
+
+        // Create branch
+        let branch_name = "remove-nested-data";
+        repositories::branches::create_checkout(repo, branch_name)?;
+
+        // Remove all the cat images and subdirectories
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("images")],
+            recursive: true,
+            ..Default::default()
+        };
+
+        repositories::rm(repo, &rm_opts).await?;
+        let commit = repositories::commit(repo, "Removing cat images and sub_directories")?;
+
+        // None of these files should exist after rm -r
+        for i in 1..=3 {
+            let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
+            assert!(!repo_filepath.exists())
+        }
+
+        for j in 1..=3 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("cat_{i}.jpg"));
+                assert!(!repo_filepath.exists())
+            }
+        }
+
+        for j in 1..=2 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("subdir{j}_level_2"))
+                    .join(format!("cat_{i}.jpg"));
+                assert!(!repo_filepath.exists())
+            }
+        }
+
+        for j in 1..=1 {
+            for i in 1..=3 {
+                let repo_filepath = images_dir
+                    .join(format!("subdir{j}_level_1"))
+                    .join(format!("subdir{j}_level_2"))
+                    .join(format!("subdir{j}_level_3"))
+                    .join(format!("cat_{i}.jpg"));
+                assert!(!repo_filepath.exists())
+            }
+        }
+
+        let tree = repositories::tree::get_root_with_children(repo, &commit)?.unwrap();
+        let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
+        assert_eq!(files.len(), 0);
+        assert_eq!(dirs.len(), 0);
+
+        let dirs = tree.list_dir_paths()?;
+        println!("list_dir_paths got {} dirs", dirs.len());
+        for dir in dirs.iter() {
+            println!("dir: {dir:?}");
+        }
+
+        // Should be 1, as list_dir_paths explicitly includes the root dir
+        assert_eq!(dirs.len(), 1);
+
+        Ok(())
+    }
+
+    async fn case_rm_one_file_in_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // create the images directory
+        let images_dir = repo.path.join("images");
+        util::fs::create_dir_all(&images_dir)?;
+
+        // Add and commit the cats
+        for i in 1..=3 {
+            util::fs::write_to_path(images_dir.join(format!("cat_{i}.jpg")), format!("cat {i}"))?;
+        }
+
+        repositories::add(repo, &images_dir).await?;
+        repositories::commit(repo, "Adding initial cat images")?;
+
+        // Add and commit the dogs
+        for i in 1..=4 {
+            util::fs::write_to_path(images_dir.join(format!("dog_{i}.jpg")), format!("dog {i}"))?;
+        }
+
+        repositories::add(repo, &images_dir).await?;
+        repositories::commit(repo, "Adding initial dog images")?;
+
+        // Create branch
+        let branch_name = "modify-data";
+        repositories::branches::create_checkout(repo, branch_name)?;
+
+        // Modify all the cat images
+        for i in 1..=3 {
+            let repo_filepath = images_dir.join(format!("cat_{i}.jpg"));
+            test::modify_txt_file(&repo_filepath, &format!("modified cat {i}"))?;
+        }
+
+        repositories::add(repo, &images_dir).await?;
+        repositories::commit(repo, "Modified all the cats")?;
+
+        // Remove one of the dogs
+        let repo_filepath = PathBuf::from("images").join("dog_1.jpg");
+
+        let rm_opts = RmOpts::from_path(repo_filepath);
+        repositories::rm(repo, &rm_opts).await?;
+        let _commit = repositories::commit(repo, "Removing dog")?;
+
+        // Add dwight howard and vince carter
+        util::fs::write_to_path(images_dir.join("dwight_vince.jpeg"), "dwight and vince")?;
+        repositories::add(repo, &images_dir).await?;
+        let commit = repositories::commit(repo, "Adding dwight and vince")?;
+
+        // Should have 3 cats, 3 dogs, and one dwight/vince
+        let tree = repositories::tree::get_root_with_children(repo, &commit)?.unwrap();
+        let (files, dirs) = repositories::tree::list_files_and_dirs(&tree)?;
+
+        for dir in dirs.iter() {
+            log::debug!("dir: {dir:?}");
+        }
+
+        for file in files.iter() {
+            log::debug!("file: {file:?}");
+        }
+
+        assert_eq!(files.len(), 7);
+        assert_eq!(dirs.len(), 1);
+
+        Ok(())
+    }
+
+    async fn case_wildcard_rm_deleted_and_present(repo: &LocalRepository) -> Result<(), OxenError> {
+        // create the photos directory
+        let photos_dir = repo.path.join("photos");
+        util::fs::create_dir_all(&photos_dir)?;
+
+        // Add and commit the cats
+        for i in 1..=3 {
+            util::fs::write_to_path(photos_dir.join(format!("cat_{i}.jpg")), format!("cat {i}"))?;
+        }
+
+        repositories::add(repo, &photos_dir).await?;
+        repositories::commit(repo, "Adding initial cat photos")?;
+
+        // Add and commit the dogs
+        for i in 1..=4 {
+            util::fs::write_to_path(photos_dir.join(format!("dog_{i}.jpg")), format!("dog {i}"))?;
+        }
+
+        repositories::add(repo, &photos_dir).await?;
+        repositories::commit(repo, "Adding initial dog photos")?;
+
+        // Pre-remove two cats and one dog to ensure deleted photos get staged as removed as well
+        // as non-deleted photos
+        std::fs::remove_file(photos_dir.join("cat_1.jpg"))?;
+        std::fs::remove_file(photos_dir.join("cat_2.jpg"))?;
+        std::fs::remove_file(photos_dir.join("dog_1.jpg"))?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+        assert_eq!(status.removed_files.len(), 3);
+        assert_eq!(status.staged_files.len(), 0);
+
+        // Remove with wildcard
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("photos/*")],
+            ..Default::default()
+        };
+
+        repositories::rm(repo, &rm_opts).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+        // Should now have 7 staged for removal
+        assert_eq!(status.staged_files.len(), 7);
+        assert_eq!(status.removed_files.len(), 0);
+
+        // A staged rm by glob stages the matches whose removal is not staged yet
+        let cat_3 = Path::new("photos").join("cat_3.jpg");
+        repositories::restore::restore(repo, RestoreOpts::from_staged_path(&cat_3)).await?;
+        let rm_opts = RmOpts {
+            paths: vec![cat_3.clone(), Path::new("photos").join("dog_2.jpg")],
+            staged: true,
+            ..Default::default()
+        };
+        let result = repositories::rm(repo, &rm_opts).await;
+        assert!(
+            matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
+            "dog_2.jpg's removal is already staged: {result:?}"
+        );
+        let status = repositories::status(repo).await?;
+        assert!(
+            !status.staged_files.contains_key(&cat_3),
+            "a refused path leaves the paths given with it untouched"
+        );
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("photos/*")],
+            staged: true,
+            ..Default::default()
+        };
+
+        repositories::rm(repo, &rm_opts).await?;
+        let status = repositories::status(repo).await?;
+        assert_eq!(
+            status
+                .staged_files
+                .get(&cat_3)
+                .map(|entry| entry.status.clone()),
+            Some(StagedEntryStatus::Removed),
+            "the glob skips the six already staged and stages cat_3.jpg's removal"
+        );
+        assert_eq!(
+            status.paths_with_status(StagedEntryStatus::Removed).count(),
+            7
+        );
+        assert_eq!(status.removed_files.len(), 0);
+
+        let glob = Path::new("photos").join("*").display().to_string();
+        let result = repositories::rm(repo, &rm_opts).await;
+        assert!(
+            matches!(&result, Err(err @ OxenError::RemovalAlreadyStaged(_))
+                if err.to_string().contains(&glob)),
+            "a staged glob whose every match already has its removal staged fails: {result:?}"
+        );
+
+        repositories::restore::restore(repo, RestoreOpts::from_staged_path(&cat_3)).await?;
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("photos/*"), cat_3.clone()],
+            staged: true,
+            ..Default::default()
+        };
+        repositories::rm(repo, &rm_opts).await?;
+        let status = repositories::status(repo).await?;
+        assert_eq!(
+            status.paths_with_status(StagedEntryStatus::Removed).count(),
+            7,
+            "a glob also matching a path given outright has that path left to remove"
+        );
+
+        Ok(())
+    }
+
+    async fn case_add_and_rm_file_in_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // add a new file in a directory
+        let path = Path::new("dir").join("new_file.txt");
+
+        util::fs::write_to_path(repo.path.join(&path), "this is a new file")?;
+        repositories::add(repo, &path).await?;
+        repositories::commit(repo, "first_commit")?;
+
+        let added = Path::new("dir").join("added.txt");
+        util::fs::write_to_path(repo.path.join(&added), "staged, never committed")?;
+        repositories::add(repo, &added).await?;
+        let result = repositories::rm(repo, &RmOpts::from_path(&added)).await;
+        assert!(
+            matches!(&result, Err(err) if err.to_string().contains("must be committed")),
+            "a file only ever staged is refused as uncommitted, not as a lost change: {result:?}"
+        );
+
+        // Remove the file and commit
+        let opts = RmOpts::from_path(&path);
+        repositories::rm(repo, &opts).await?;
+        repositories::commit(repo, "commit_message")?;
+
+        // Add the file again. This should err, but not panic
+        let result = repositories::add(repo, &path).await;
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    async fn case_rm_staged_file(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Stage a file in a directory
+        let path = Path::new("README.md");
+        repositories::add(repo, repo.path.join(path)).await?;
+
+        let status = repositories::status(repo).await?;
+        assert_eq!(status.staged_files.len(), 1);
+        assert!(status.staged_files.contains_key(path));
+        let opts = RmOpts::from_staged_path(path);
+        let staged_content = util::fs::read_from_path(repo.path.join(path))?;
+        test::modify_txt_file(repo.path.join(path), "edited after staging")?;
+        let result = repositories::rm(repo, &opts).await;
+        assert!(
+            matches!(result, Err(OxenError::RmWouldLoseStagedContent(_))),
+            "--staged refuses to unstage content found only in the staged db: {result:?}"
+        );
+        test::modify_txt_file(repo.path.join(path), &staged_content)?;
+        repositories::rm(repo, &opts).await?;
+
+        let status = repositories::status(repo).await?;
+        log::debug!("status: {status:?}");
+        assert_eq!(status.staged_files.len(), 0);
+
+        Ok(())
+    }
+
+    /// Staging the train dir and then removing it from the staged area needs -r
+    async fn case_rm_staged_train_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Stage the data
+        let path = Path::new("train");
+        repositories::add(repo, repo.path.join(path)).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+        // 1: train
+        assert_eq!(status.staged_dirs.len(), 1);
+
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: true,
+            recursive: false, // This should be an error
+            ..Default::default()
+        };
+        let result = repositories::rm(repo, &opts).await;
+        assert!(result.is_err());
+
+        let opts = RmOpts {
+            recursive: true, // make sure to pass in recursive
+            ..opts
+        };
+        repositories::rm(repo, &opts).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        assert_eq!(status.staged_dirs.len(), 0);
+        assert_eq!(status.staged_files.len(), 0);
+
+        Ok(())
+    }
+
+    async fn case_rm_staged_annotations_train_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Stage the data
+        let path = Path::new("annotations").join("train");
+        repositories::add(repo, repo.path.join(&path)).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+        // 1: annotations/train
+        assert_eq!(status.staged_dirs.len(), 1);
+
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: true,
+            recursive: true, // make sure to pass in recursive
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
+
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        assert_eq!(status.staged_dirs.len(), 0);
+        assert_eq!(status.staged_files.len(), 0);
+
+        Ok(())
+    }
+
+    async fn case_rm_staged_dir_with_slash(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Stage the data
+        let path = Path::new("train/");
+        repositories::add(repo, repo.path.join(path)).await?;
+
+        let status = repositories::status(repo).await?;
+        // 1: train dir
+        assert_eq!(status.staged_dirs.len(), 1);
+
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: true,
+            recursive: true, // make sure to pass in recursive
+            ..Default::default()
+        };
+        let result = repositories::rm(repo, &opts).await;
+        assert!(result.is_ok());
+
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        assert_eq!(status.staged_dirs.len(), 0);
+        assert_eq!(status.staged_files.len(), 0);
+
+        Ok(())
+    }
+
+    async fn case_staged_rm_file(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Remove the readme
+        let path = Path::new("README.md");
+
+        // A staged rm of a committed file with a staged edit stages the removal in place of the
+        // edit and leaves the edited file on disk
+        test::modify_txt_file(repo.path.join(path), "edited readme")?;
+        repositories::add(repo, repo.path.join(path)).await?;
+        let result = repositories::rm(repo, &RmOpts::from_path(path)).await;
+        assert!(
+            matches!(result, Err(OxenError::RmWouldLoseChanges(_))),
+            "rm refuses to delete a staged edit: {result:?}"
+        );
+        test::modify_txt_file(repo.path.join(path), "edited again")?;
+        let result = repositories::rm(repo, &RmOpts::from_staged_path(path)).await;
+        assert!(
+            matches!(result, Err(OxenError::RmWouldLoseStagedContent(_))),
+            "--staged refuses to drop a staged edit no longer on disk: {result:?}"
+        );
+        test::modify_txt_file(repo.path.join(path), "edited readme")?;
+        repositories::rm(repo, &RmOpts::from_staged_path(path)).await?;
+        let status = repositories::status(repo).await?;
+        assert_eq!(
+            status.staged_files.get(path).map(|entry| &entry.status),
+            Some(&StagedEntryStatus::Removed)
+        );
+        assert_eq!(
+            util::fs::read_from_path(repo.path.join(path))?,
+            "edited readme",
+            "--staged keeps the edited working copy"
+        );
+        assert_eq!(status.untracked_files, vec![path.to_path_buf()]);
+
+        let result = repositories::rm(repo, &RmOpts::from_path(path)).await;
+        assert!(
+            matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
+            "rm refuses a file whose removal is staged, which is untracked: {result:?}"
+        );
+        assert_eq!(
+            util::fs::read_from_path(repo.path.join(path))?,
+            "edited readme",
+            "rm leaves the untracked file on disk"
+        );
+
+        // Commit the removal, so the cases after this one count only their own staged files
+        repositories::commit(repo, "removed readme")?;
+
+        Ok(())
+    }
+
+    async fn case_rm_dir_without_recursive_flag_should_be_error(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Remove the train dir
+        let path = Path::new("train");
+
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: false,
+            recursive: false, // This should be an error
+            ..Default::default()
+        };
+
+        let result = repositories::rm(repo, &opts).await;
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    async fn case_rm_dir_that_is_not_committed_should_throw_error(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // The train dir is not committed, so should get an error trying to remove
+        let train_dir = Path::new("train");
+
+        let opts = RmOpts {
+            paths: vec![train_dir.to_path_buf()],
+            staged: false,
+            recursive: true, // Need to specify recursive
+            ..Default::default()
+        };
+
+        let result = repositories::rm(repo, &opts).await;
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    async fn case_rm_dir_with_modifications_should_throw_error(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Remove a committed copy of the train dir
+        let train_dir = Path::new("changed_train");
+
+        let opts = RmOpts {
+            paths: vec![train_dir.to_path_buf()],
+            staged: false,
+            recursive: true, // Need to specify recursive
+            ..Default::default()
+        };
+
+        let added = train_dir.join("new.txt");
+        util::fs::write_to_path(repo.path.join(&added), "added since HEAD")?;
+        repositories::add(repo, repo.path.join(&added)).await?;
+        let result = repositories::rm(repo, &opts).await;
+        assert!(
+            matches!(result, Err(OxenError::RmWouldLoseChanges(_))),
+            "rm -r refuses a file added under the directory: {result:?}"
+        );
+
+        // copy a cat into the dog image
+        util::fs::copy(
+            test::REPO_ROOT
+                .join("data")
+                .join("test")
+                .join("images")
+                .join("cat_1.jpg"),
+            repo.path.join(train_dir.join("dog_1.jpg")),
+        )?;
+
+        // There should be one modified file
+        let status = repositories::status(repo).await?;
+        status.print();
+        assert_eq!(
+            status.modified_files.len(),
+            1,
+            "Expected 1 modified file but found: {:?}",
+            status.modified_files
+        );
+
+        let result = repositories::rm(repo, &opts).await;
+        assert!(
+            matches!(
+                &result,
+                Err(OxenError::RmWouldLoseChanges(path))
+                    if path.to_string().ends_with("dog_1.jpg")
+            ),
+            "rm -r refuses the unsaved edit to dog_1.jpg: {result:?}"
+        );
+
+        repositories::rm(
+            repo,
+            &RmOpts {
+                force: true,
+                ..opts
+            },
+        )
+        .await?;
+        assert!(
+            !repo.path.join(train_dir).exists(),
+            "-f deletes the directory"
+        );
+        let status = repositories::status(repo).await?;
+        assert!(
+            !status.staged_files.contains_key(&added),
+            "-f unstages the file added under the directory"
+        );
+
+        Ok(())
     }
 
     /// Regression: `oxen rm`'s "modified files" safety check used to filter
@@ -1031,338 +1010,316 @@ mod tests {
     /// down was silently dropped, so `oxen rm -r <dir>` proceeded and destroyed the
     /// user's edits. The filter now uses `path.starts_with(p)` so any descendant depth
     /// is caught.
-    #[tokio::test]
-    async fn test_rm_dir_with_deep_modifications_should_throw_error() -> Result<(), OxenError> {
-        if std::env::consts::OS == "windows" {
-            return Ok(());
+    async fn case_rm_dir_with_deep_modifications_should_throw_error(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // `annotations/train/one_shot.csv` is two levels deep under `annotations/`.
+        let nested_modified = Path::new("annotations/train/one_shot.csv");
+        util::fs::write_to_path(
+            repo.path.join(nested_modified),
+            "file,label\ntrain/dog_1.jpg,1\n",
+        )?;
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "Adding one shot")?;
+
+        test::modify_txt_file(repo.path.join(nested_modified), "modified at depth 2")?;
+
+        // Sanity: status sees the deep modification.
+        let status = repositories::status(repo).await?;
+        assert!(
+            status
+                .modified_files
+                .contains(&nested_modified.to_path_buf()),
+            "expected status to see {nested_modified:?} as modified, got: {:?}",
+            status.modified_files
+        );
+
+        // `oxen rm -r annotations/` must refuse — there's a modified file under it.
+        let opts = RmOpts {
+            paths: vec![PathBuf::from("annotations")],
+            staged: false,
+            recursive: true,
+            ..Default::default()
+        };
+        let result = repositories::rm(repo, &opts).await;
+        assert!(
+            matches!(
+                &result,
+                Err(OxenError::RmWouldLoseChanges(path))
+                    if path.to_string().ends_with("one_shot.csv")
+            ),
+            "rm -r of a dir with a deeply-nested modified file should fail, got: {result:?}"
+        );
+
+        Ok(())
+    }
+
+    async fn case_rm_train_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Remove the train dir
+        let path = Path::new("train");
+
+        let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(path));
+        let untracked = repo.path.join(path).join("untracked.txt");
+        util::fs::write_to_path(&untracked, "never added")?;
+        let unstaged = path.join("dog_1.jpg");
+        repositories::rm(repo, &RmOpts::from_staged_path(&unstaged)).await?;
+        test::modify_txt_file(repo.path.join(&unstaged), "edited once untracked")?;
+
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: false,
+            recursive: true, // Must pass in recursive = true
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
+        assert_eq!(
+            util::fs::rcount_files_in_dir(&repo.path.join(path)),
+            2,
+            "rm -r deletes the tracked files and leaves the untracked ones, a file whose \
+             removal was staged with --staged among them"
+        );
+
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        assert_eq!(status.staged_files.len(), og_num_files);
+        for staged_entry in status.staged_files.values() {
+            assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
         }
 
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // `annotations/train/one_shot.csv` is two levels deep under `annotations/`.
-            let nested_modified = Path::new("annotations/train/one_shot.csv");
-            util::fs::write_to_path(
-                repo.path.join(nested_modified),
-                "file,label\ntrain/dog_1.jpg,1\n",
-            )?;
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Adding one shot")?;
+        let staged_opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: true,
+            recursive: true,
+            ..Default::default()
+        };
+        let result = repositories::rm(repo, &staged_opts).await;
+        assert!(
+            matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
+            "a staged rm refuses a directory whose every file is already staged for removal"
+        );
+        let staged_opts = RmOpts {
+            recursive: false,
+            ..staged_opts
+        };
+        let result = repositories::rm(repo, &staged_opts).await;
+        assert!(
+            result.is_err_and(|err| err.to_string().contains("requires -r")),
+            "a directory without -r is refused for that before its staged removal is checked"
+        );
 
-            test::modify_txt_file(repo.path.join(nested_modified), "modified at depth 2")?;
+        // commit the removal
+        let commit = repositories::commit(repo, "removed train dir")?;
 
-            // Sanity: status sees the deep modification.
-            let status = repositories::status(&repo).await?;
-            assert!(
-                status
-                    .modified_files
-                    .contains(&nested_modified.to_path_buf()),
-                "expected status to see {nested_modified:?} as modified, got: {:?}",
-                status.modified_files
-            );
+        // make sure the train dir is deleted from the commits db
+        let has_dir = repositories::tree::has_dir(repo, &commit, path)?;
+        assert!(!has_dir);
 
-            // `oxen rm -r annotations/` must refuse — there's a modified file under it.
-            let opts = RmOpts {
-                paths: vec![PathBuf::from("annotations")],
-                staged: false,
-                recursive: true,
-                ..Default::default()
-            };
-            let result = repositories::rm(&repo, &opts).await;
-            assert!(
-                result.is_err(),
-                "rm -r of a dir with a deeply-nested modified file should fail, got: {result:?}"
-            );
-
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_rm_train_dir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
-            // Remove the train dir
-            let path = Path::new("train");
+    async fn case_rm_dir_with_slash(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Remove a committed copy of the train dir, keeping it on disk
+        let path = Path::new("staged_train/");
 
-            let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(path));
-            let untracked = repo.path.join(path).join("untracked.txt");
-            util::fs::write_to_path(&untracked, "never added")?;
-            let unstaged = path.join("dog_1.jpg");
-            repositories::rm(&repo, &RmOpts::from_staged_path(&unstaged)).await?;
-            test::modify_txt_file(repo.path.join(&unstaged), "edited once untracked")?;
+        let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(path));
+        let new_file = Path::new("staged_train").join("new.txt");
+        util::fs::write_to_path(repo.path.join(&new_file), "new")?;
+        repositories::add(repo, repo.path.join(&new_file)).await?;
 
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: false,
-                recursive: true, // Must pass in recursive = true
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
-            assert_eq!(
-                util::fs::rcount_files_in_dir(&repo.path.join(path)),
-                2,
-                "rm -r deletes the tracked files and leaves the untracked ones, a file whose \
-                 removal was staged with --staged among them"
-            );
+        let opts = RmOpts {
+            paths: vec![path.to_path_buf()],
+            staged: true,
+            recursive: true, // Must pass in recursive = true
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
 
-            let status = repositories::status(&repo).await?;
-            status.print();
+        let status = repositories::status(repo).await?;
+        status.print();
 
-            assert_eq!(status.staged_files.len(), og_num_files);
-            for staged_entry in status.staged_files.values() {
-                assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
-            }
+        assert_eq!(
+            status.staged_files.len(),
+            og_num_files,
+            "the committed files are staged for removal and the added file is unstaged"
+        );
+        for staged_entry in status.staged_files.values() {
+            assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
+        }
+        assert_eq!(
+            util::fs::rcount_files_in_dir(&repo.path.join(path)),
+            og_num_files + 1,
+            "--staged keeps the directory on disk"
+        );
 
-            let staged_opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: true,
-                ..Default::default()
-            };
-            let result = repositories::rm(&repo, &staged_opts).await;
-            assert!(
-                matches!(result, Err(OxenError::RemovalAlreadyStaged(_))),
-                "a staged rm refuses a directory whose every file is already staged for removal"
-            );
-            let staged_opts = RmOpts {
-                recursive: false,
-                ..staged_opts
-            };
-            let result = repositories::rm(&repo, &staged_opts).await;
-            assert!(
-                result.is_err_and(|err| err.to_string().contains("requires -r")),
-                "a directory without -r is refused for that before its staged removal is checked"
-            );
+        let commit = repositories::commit(repo, "removed staged_train dir")?;
+        assert!(!repositories::tree::has_dir(repo, &commit, path)?);
 
-            // commit the removal
-            let commit = repositories::commit(&repo, "removed train dir")?;
-
-            // make sure the train dir is deleted from the commits db
-            let has_dir = repositories::tree::has_dir(&repo, &commit, path)?;
-            assert!(!has_dir);
-
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_rm_dir_with_slash() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("train", |repo| async move {
-            // Remove the train dir, keeping it on disk
-            let path = Path::new("train/");
+    async fn case_rm_subdir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Remove the annotations/train subdir
+        let path = Path::new("annotations").join("train");
+        let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(&path));
 
-            let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(path));
-            let new_file = Path::new("train").join("new.txt");
-            util::fs::write_to_path(repo.path.join(&new_file), "new")?;
-            repositories::add(&repo, repo.path.join(&new_file)).await?;
+        let opts = RmOpts {
+            paths: vec![path],
+            staged: false,
+            recursive: true, // Must pass in recursive = true
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
 
-            let opts = RmOpts {
-                paths: vec![path.to_path_buf()],
-                staged: true,
-                recursive: true, // Must pass in recursive = true
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
+        let status = repositories::status(repo).await?;
+        status.print();
 
-            let status = repositories::status(&repo).await?;
-            status.print();
+        assert_eq!(status.staged_files.len(), og_num_files);
+        for staged_entry in status.staged_files.values() {
+            assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
+        }
 
-            assert_eq!(
-                status.staged_files.len(),
-                og_num_files,
-                "the committed files are staged for removal and the added file is unstaged"
-            );
-            for staged_entry in status.staged_files.values() {
-                assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
-            }
-            assert_eq!(
-                util::fs::rcount_files_in_dir(&repo.path.join(path)),
-                og_num_files + 1,
-                "--staged keeps the directory on disk"
-            );
-
-            let commit = repositories::commit(&repo, "removed train dir")?;
-            assert!(!repositories::tree::has_dir(&repo, &commit, path)?);
-
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_rm_subdir() -> Result<(), OxenError> {
-        test::run_select_data_repo_test_committed_async("annotations", |repo| async move {
-            // Remove the annotations/train subdir
-            let path = Path::new("annotations").join("train");
-            let og_num_files = util::fs::rcount_files_in_dir(&repo.path.join(&path));
+    async fn case_rm_dot_excludes_oxen_hidden_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Create some test files in the repo root
+        let test_file1 = repo.path.join("test1.txt");
+        let test_file2 = repo.path.join("test2.txt");
+        util::fs::write_to_path(&test_file1, "test content 1")?;
+        util::fs::write_to_path(&test_file2, "test content 2")?;
 
-            let opts = RmOpts {
-                paths: vec![path],
-                staged: false,
-                recursive: true, // Must pass in recursive = true
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
+        // Create a test directory
+        let test_dir = repo.path.join("test_dir");
+        util::fs::create_dir_all(&test_dir)?;
+        let test_file_in_dir = test_dir.join("file_in_dir.txt");
+        util::fs::write_to_path(&test_file_in_dir, "file in directory")?;
+        let empty_dir = repo.path.join("empty_dir");
+        util::fs::create_dir_all(&empty_dir)?;
+        let linked = repo.path.join("linked");
+        util::fs::create_dir_all(&linked)?;
+        util::fs::write_to_path(linked.join("inner.txt"), "behind a symlink")?;
 
-            let status = repositories::status(&repo).await?;
-            status.print();
+        // Add and commit all files
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "Initial commit with test files")?;
+        let untracked = test_dir.join("untracked.txt");
+        util::fs::write_to_path(&untracked, "never added")?;
+        // A tracked directory replaced by a symlink to an untracked one
+        #[cfg(unix)]
+        let behind_link = {
+            let target = repo.path.join("link_target");
+            util::fs::rename(&linked, &target)?;
+            symlink(&target, &linked)?;
+            target.join("inner.txt")
+        };
 
-            assert_eq!(status.staged_files.len(), og_num_files);
-            for staged_entry in status.staged_files.values() {
-                assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
-            }
+        // Verify .oxen directory exists
+        let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
+        assert!(oxen_dir.exists(), "OXEN_HIDDEN_DIR should exist");
 
-            Ok(())
-        })
-        .await
+        // Use rm with "." pattern (this should exclude .oxen directory)
+        let opts = RmOpts {
+            paths: vec![PathBuf::from(".")],
+            staged: false,
+            recursive: true,
+            ..Default::default()
+        };
+        repositories::rm(repo, &opts).await?;
+
+        // Verify that .oxen directory still exists after rm operation
+        assert!(
+            oxen_dir.exists(),
+            "OXEN_HIDDEN_DIR should not be removed by 'oxen rm .'"
+        );
+        for tracked in [&test_file1, &test_file2, &test_file_in_dir, &empty_dir] {
+            assert!(!tracked.exists(), "rm -r . deletes the tracked {tracked:?}");
+        }
+        assert!(
+            untracked.is_file(),
+            "rm -r leaves an untracked file, and the directory holding it, in place"
+        );
+        #[cfg(unix)]
+        assert!(
+            behind_link.is_file() && linked.is_symlink(),
+            "rm -r . deletes nothing through a symlinked directory, nor the link itself"
+        );
+
+        // Verify that the test files were staged for removal
+        let status = repositories::status(repo).await?;
+        status.print();
+
+        // Should have staged the test files for removal but not .oxen
+        assert!(
+            !status.staged_files.is_empty(),
+            "Some files should be staged for removal"
+        );
+
+        // Verify that none of the staged files are the .oxen directory
+        for (path, staged_entry) in status.staged_files.iter() {
+            assert_ne!(
+                path.to_str().unwrap_or(""),
+                OXEN_HIDDEN_DIR,
+                "OXEN_HIDDEN_DIR should not be staged for removal"
+            );
+            assert!(
+                !path.starts_with(OXEN_HIDDEN_DIR),
+                "No files within OXEN_HIDDEN_DIR should be staged for removal"
+            );
+            assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
+        }
+
+        // Also test direct attempt to remove .oxen directory
+        let direct_oxen_opts = RmOpts {
+            paths: vec![PathBuf::from(OXEN_HIDDEN_DIR)],
+            staged: false,
+            recursive: true,
+            ..Default::default()
+        };
+        let err = repositories::rm(repo, &direct_oxen_opts).await;
+
+        assert!(err.is_err());
+
+        // Verify .oxen directory still exists after direct removal attempt
+        assert!(
+            oxen_dir.exists(),
+            "OXEN_HIDDEN_DIR should not be removed by direct 'oxen rm .oxen'"
+        );
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_rm_dot_excludes_oxen_hidden_dir() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // Create some test files in the repo root
-            let test_file1 = repo.path.join("test1.txt");
-            let test_file2 = repo.path.join("test2.txt");
-            util::fs::write_to_path(&test_file1, "test content 1")?;
-            util::fs::write_to_path(&test_file2, "test content 2")?;
+    async fn case_rm_wildcard_multi_level(repo: &LocalRepository) -> Result<(), OxenError> {
+        // annotations/train/bounding_box.csv
+        // annotations/test/annotations.csv
+        let annotations_dir = repo.path.join("annotations");
+        util::fs::write_to_path(
+            annotations_dir.join("train").join("bounding_box.csv"),
+            "file,label\ntrain/dog_1.jpg,dog\n",
+        )?;
+        util::fs::write_to_path(
+            annotations_dir.join("test").join("annotations.csv"),
+            "file,label\ntest/1.jpg,dog\n",
+        )?;
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "Adding annotations")?;
 
-            // Create a test directory
-            let test_dir = repo.path.join("test_dir");
-            util::fs::create_dir_all(&test_dir)?;
-            let test_file_in_dir = test_dir.join("file_in_dir.txt");
-            util::fs::write_to_path(&test_file_in_dir, "file in directory")?;
-            let empty_dir = repo.path.join("empty_dir");
-            util::fs::create_dir_all(&empty_dir)?;
-            let linked = repo.path.join("linked");
-            util::fs::create_dir_all(&linked)?;
-            util::fs::write_to_path(linked.join("inner.txt"), "behind a symlink")?;
+        // Remove only the files in annotations/test/
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("annotations/test/*")],
+            ..Default::default()
+        };
+        repositories::rm(repo, &rm_opts).await?;
 
-            // Add and commit all files
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Initial commit with test files")?;
-            let untracked = test_dir.join("untracked.txt");
-            util::fs::write_to_path(&untracked, "never added")?;
-            // A tracked directory replaced by a symlink to an untracked one
-            #[cfg(unix)]
-            let behind_link = {
-                let target = repo.path.join("link_target");
-                util::fs::rename(&linked, &target)?;
-                symlink(&target, &linked)?;
-                target.join("inner.txt")
-            };
+        let status = repositories::status(repo).await?;
 
-            // Verify .oxen directory exists
-            let oxen_dir = repo.path.join(OXEN_HIDDEN_DIR);
-            assert!(oxen_dir.exists(), "OXEN_HIDDEN_DIR should exist");
+        assert_eq!(status.staged_files.len(), 1);
+        assert_eq!(
+            status.staged_files.keys().next().unwrap(),
+            &PathBuf::from("annotations/test/annotations.csv")
+        );
 
-            // Use rm with "." pattern (this should exclude .oxen directory)
-            let opts = RmOpts {
-                paths: vec![PathBuf::from(".")],
-                staged: false,
-                recursive: true,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &opts).await?;
-
-            // Verify that .oxen directory still exists after rm operation
-            assert!(
-                oxen_dir.exists(),
-                "OXEN_HIDDEN_DIR should not be removed by 'oxen rm .'"
-            );
-            for tracked in [&test_file1, &test_file2, &test_file_in_dir, &empty_dir] {
-                assert!(!tracked.exists(), "rm -r . deletes the tracked {tracked:?}");
-            }
-            assert!(
-                untracked.is_file(),
-                "rm -r leaves an untracked file, and the directory holding it, in place"
-            );
-            #[cfg(unix)]
-            assert!(
-                behind_link.is_file() && linked.is_symlink(),
-                "rm -r . deletes nothing through a symlinked directory, nor the link itself"
-            );
-
-            // Verify that the test files were staged for removal
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Should have staged the test files for removal but not .oxen
-            assert!(
-                !status.staged_files.is_empty(),
-                "Some files should be staged for removal"
-            );
-
-            // Verify that none of the staged files are the .oxen directory
-            for (path, staged_entry) in status.staged_files.iter() {
-                assert_ne!(
-                    path.to_str().unwrap_or(""),
-                    OXEN_HIDDEN_DIR,
-                    "OXEN_HIDDEN_DIR should not be staged for removal"
-                );
-                assert!(
-                    !path.starts_with(OXEN_HIDDEN_DIR),
-                    "No files within OXEN_HIDDEN_DIR should be staged for removal"
-                );
-                assert_eq!(staged_entry.status, StagedEntryStatus::Removed);
-            }
-
-            // Also test direct attempt to remove .oxen directory
-            let direct_oxen_opts = RmOpts {
-                paths: vec![PathBuf::from(OXEN_HIDDEN_DIR)],
-                staged: false,
-                recursive: true,
-                ..Default::default()
-            };
-            let err = repositories::rm(&repo, &direct_oxen_opts).await;
-
-            assert!(err.is_err());
-
-            // Verify .oxen directory still exists after direct removal attempt
-            assert!(
-                oxen_dir.exists(),
-                "OXEN_HIDDEN_DIR should not be removed by direct 'oxen rm .oxen'"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_rm_wildcard_multi_level() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // annotations/train/bounding_box.csv
-            // annotations/test/annotations.csv
-            let annotations_dir = repo.path.join("annotations");
-            util::fs::write_to_path(
-                annotations_dir.join("train").join("bounding_box.csv"),
-                "file,label\ntrain/dog_1.jpg,dog\n",
-            )?;
-            util::fs::write_to_path(
-                annotations_dir.join("test").join("annotations.csv"),
-                "file,label\ntest/1.jpg,dog\n",
-            )?;
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "Adding annotations")?;
-
-            // Remove only the files in annotations/test/
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("annotations/test/*")],
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
-
-            let status = repositories::status(&repo).await?;
-
-            assert_eq!(status.staged_files.len(), 1);
-            assert_eq!(
-                status.staged_files.keys().next().unwrap(),
-                &PathBuf::from("annotations/test/annotations.csv")
-            );
-
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
     /// Regression: `oxen rm -r` on a nested directory that was already deleted
@@ -1374,212 +1331,196 @@ mod tests {
     /// oxen rm -r 1/2/3
     /// oxen commit -m "remove dir"
     /// oxen status   # should be clean
-    #[tokio::test]
-    async fn test_rm_r_already_deleted_nested_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Create nested directory with a file
-            let nested_dir = repo.path.join("1/2/3");
-            std::fs::create_dir_all(&nested_dir)?;
-            let file_path = nested_dir.join("file.txt");
-            util::fs::write(&file_path, "content")?;
+    async fn case_rm_r_already_deleted_nested_dir(repo: &LocalRepository) -> Result<(), OxenError> {
+        // Create nested directory with a file
+        let nested_dir = repo.path.join("1/2/3");
+        std::fs::create_dir_all(&nested_dir)?;
+        let file_path = nested_dir.join("file.txt");
+        util::fs::write(&file_path, "content")?;
 
-            // Add and commit
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "init")?;
+        // Add and commit
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "init")?;
 
-            // Physically delete the directory (simulating `rm -rf 1/2/3`)
-            util::fs::remove_dir_all(&nested_dir)?;
-            assert!(!nested_dir.exists());
+        // Physically delete the directory (simulating `rm -rf 1/2/3`)
+        util::fs::remove_dir_all(&nested_dir)?;
+        assert!(!nested_dir.exists());
 
-            // oxen rm -r 1/2/3 — stage the removal
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("1/2/3")],
-                recursive: true,
-                staged: false,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
+        // oxen rm -r 1/2/3 — stage the removal
+        let rm_opts = RmOpts {
+            paths: vec![PathBuf::from("1/2/3")],
+            recursive: true,
+            staged: false,
+            ..Default::default()
+        };
+        repositories::rm(repo, &rm_opts).await?;
 
-            // Should have staged the file for removal
-            let status = repositories::status(&repo).await?;
-            let has_staged_removal = status
-                .paths_with_status(StagedEntryStatus::Removed)
-                .next()
-                .is_some();
-            assert!(has_staged_removal, "file should be staged for removal");
+        // Should have staged the file for removal
+        let status = repositories::status(repo).await?;
+        let has_staged_removal = status
+            .paths_with_status(StagedEntryStatus::Removed)
+            .next()
+            .is_some();
+        assert!(has_staged_removal, "file should be staged for removal");
 
-            // Commit the removal
-            repositories::commit(&repo, "remove dir")?;
+        // Commit the removal
+        repositories::commit(repo, "remove dir")?;
 
-            // Status should be clean — no removed files
-            let status = repositories::status(&repo).await?;
-            assert!(
-                status.removed_files.is_empty(),
-                "status should be clean after committing removal, but got removed_files: {:?}",
-                status.removed_files
-            );
-            assert!(
-                status.staged_files.is_empty(),
-                "no staged files should remain"
-            );
+        // Status should be clean — no removed files
+        let status = repositories::status(repo).await?;
+        assert!(
+            status.removed_files.is_empty(),
+            "status should be clean after committing removal, but got removed_files: {:?}",
+            status.removed_files
+        );
+        assert!(
+            status.staged_files.is_empty(),
+            "no staged files should remain"
+        );
 
-            // Verify the directory is gone from the committed tree
-            let head = repositories::commits::head_commit(&repo)?;
-            let dir_node = repositories::tree::get_dir_without_children(
-                &repo,
-                &head,
-                Path::new("1/2/3"),
-                None,
-            )?;
-            assert!(
-                dir_node.is_none(),
-                "directory 1/2/3 should not exist in the committed tree"
-            );
+        // Verify the directory is gone from the committed tree
+        let head = repositories::commits::head_commit(repo)?;
+        let dir_node =
+            repositories::tree::get_dir_without_children(repo, &head, Path::new("1/2/3"), None)?;
+        assert!(
+            dir_node.is_none(),
+            "directory 1/2/3 should not exist in the committed tree"
+        );
 
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
     /// Regression: `oxen add .` should detect and stage a nested directory
     /// that was physically deleted from disk.
     ///
-    /// mkdir -p 1/2/3 && echo content > 1/2/3/file.txt
+    /// mkdir -p 4/5/6 && echo content > 4/5/6/file.txt
     /// oxen add . && oxen commit -m "init"
-    /// rm -rf 1/2/3
+    /// rm -rf 4/5/6
     /// oxen add .
     /// oxen commit -m "remove dir"
     /// oxen status   # should be clean
-    #[tokio::test]
-    async fn test_add_dot_stages_deleted_nested_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Create nested directory with a file
-            let nested_dir = repo.path.join("1/2/3");
-            std::fs::create_dir_all(&nested_dir)?;
-            let file_path = nested_dir.join("file.txt");
-            util::fs::write(&file_path, "content")?;
+    async fn case_add_dot_stages_deleted_nested_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Create nested directory with a file
+        let nested_dir = repo.path.join("4/5/6");
+        std::fs::create_dir_all(&nested_dir)?;
+        let file_path = nested_dir.join("file.txt");
+        util::fs::write(&file_path, "content")?;
 
-            // Add and commit
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "init")?;
+        // Add and commit
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "init")?;
 
-            // Physically delete only the leaf directory (1/ and 1/2/ remain)
-            util::fs::remove_dir_all(&nested_dir)?;
-            assert!(!nested_dir.exists());
-            assert!(repo.path.join("1/2").exists());
+        // Physically delete only the leaf directory (4/ and 4/5/ remain)
+        util::fs::remove_dir_all(&nested_dir)?;
+        assert!(!nested_dir.exists());
+        assert!(repo.path.join("4/5").exists());
 
-            // oxen add . — should detect and stage the removal
-            repositories::add(&repo, &repo.path).await?;
+        // oxen add . — should detect and stage the removal
+        repositories::add(repo, &repo.path).await?;
 
-            // Should have staged the file for removal
-            let status = repositories::status(&repo).await?;
-            let has_staged_removal = status
-                .paths_with_status(StagedEntryStatus::Removed)
-                .next()
-                .is_some();
-            assert!(
-                has_staged_removal,
-                "file should be staged for removal after `oxen add .`"
-            );
+        // Should have staged the file for removal
+        let status = repositories::status(repo).await?;
+        let has_staged_removal = status
+            .paths_with_status(StagedEntryStatus::Removed)
+            .next()
+            .is_some();
+        assert!(
+            has_staged_removal,
+            "file should be staged for removal after `oxen add .`"
+        );
 
-            // Commit the removal
-            repositories::commit(&repo, "remove dir")?;
+        // Commit the removal
+        repositories::commit(repo, "remove dir")?;
 
-            // Status should be clean
-            let status = repositories::status(&repo).await?;
-            assert!(
-                status.removed_files.is_empty(),
-                "status should be clean after committing removal, but got removed_files: {:?}",
-                status.removed_files
-            );
+        // Status should be clean
+        let status = repositories::status(repo).await?;
+        assert!(
+            status.removed_files.is_empty(),
+            "status should be clean after committing removal, but got removed_files: {:?}",
+            status.removed_files
+        );
 
-            // Verify the directory and file are gone from the committed tree
-            let head = repositories::commits::head_commit(&repo)?;
-            let dir_node = repositories::tree::get_dir_without_children(
-                &repo,
-                &head,
-                Path::new("1/2/3"),
-                None,
-            )?;
-            assert!(
-                dir_node.is_none(),
-                "directory 1/2/3 should not exist in the committed tree"
-            );
-            let file_node =
-                repositories::tree::get_file_by_path(&repo, &head, Path::new("1/2/3/file.txt"))?;
-            assert!(
-                file_node.is_none(),
-                "file 1/2/3/file.txt should not exist in the committed tree"
-            );
+        // Verify the directory and file are gone from the committed tree
+        let head = repositories::commits::head_commit(repo)?;
+        let dir_node =
+            repositories::tree::get_dir_without_children(repo, &head, Path::new("4/5/6"), None)?;
+        assert!(
+            dir_node.is_none(),
+            "directory 4/5/6 should not exist in the committed tree"
+        );
+        let file_node =
+            repositories::tree::get_file_by_path(repo, &head, Path::new("4/5/6/file.txt"))?;
+        assert!(
+            file_node.is_none(),
+            "file 4/5/6/file.txt should not exist in the committed tree"
+        );
 
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
     /// Regression: `oxen add .` should detect a single deleted file inside a
     /// nested directory that still exists on disk.
     ///
-    /// mkdir -p 1/2/3 && echo content > 1/2/3/file.txt
+    /// mkdir -p 7/8/9 && echo content > 7/8/9/file.txt
     /// oxen add . && oxen commit -m "init"
-    /// rm 1/2/3/file.txt
+    /// rm 7/8/9/file.txt
     /// oxen add .
     /// oxen commit -m "remove file"
     /// oxen status   # should be clean
-    #[tokio::test]
-    async fn test_add_dot_stages_deleted_file_in_nested_dir() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Create nested directory with a file
-            let nested_dir = repo.path.join("1/2/3");
-            std::fs::create_dir_all(&nested_dir)?;
-            let file_path = nested_dir.join("file.txt");
-            util::fs::write(&file_path, "content")?;
+    async fn case_add_dot_stages_deleted_file_in_nested_dir(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        // Create nested directory with a file
+        let nested_dir = repo.path.join("7/8/9");
+        std::fs::create_dir_all(&nested_dir)?;
+        let file_path = nested_dir.join("file.txt");
+        util::fs::write(&file_path, "content")?;
 
-            // Add and commit
-            repositories::add(&repo, &repo.path).await?;
-            repositories::commit(&repo, "init")?;
+        // Add and commit
+        repositories::add(repo, &repo.path).await?;
+        repositories::commit(repo, "init")?;
 
-            // Delete just the file (directory 1/2/3 still exists)
-            util::fs::remove_file(&file_path)?;
-            assert!(!file_path.exists());
-            assert!(nested_dir.exists());
+        // Delete just the file (directory 7/8/9 still exists)
+        util::fs::remove_file(&file_path)?;
+        assert!(!file_path.exists());
+        assert!(nested_dir.exists());
 
-            // oxen add . — should detect and stage the file removal
-            repositories::add(&repo, &repo.path).await?;
+        // oxen add . — should detect and stage the file removal
+        repositories::add(repo, &repo.path).await?;
 
-            // Should have staged the file for removal
-            let status = repositories::status(&repo).await?;
-            let has_staged_removal = status
-                .paths_with_status(StagedEntryStatus::Removed)
-                .next()
-                .is_some();
-            assert!(
-                has_staged_removal,
-                "file should be staged for removal after `oxen add .`"
-            );
+        // Should have staged the file for removal
+        let status = repositories::status(repo).await?;
+        let has_staged_removal = status
+            .paths_with_status(StagedEntryStatus::Removed)
+            .next()
+            .is_some();
+        assert!(
+            has_staged_removal,
+            "file should be staged for removal after `oxen add .`"
+        );
 
-            // Commit the removal
-            repositories::commit(&repo, "remove file")?;
+        // Commit the removal
+        repositories::commit(repo, "remove file")?;
 
-            // Status should be clean
-            let status = repositories::status(&repo).await?;
-            assert!(
-                status.removed_files.is_empty(),
-                "status should be clean after committing removal, but got removed_files: {:?}",
-                status.removed_files
-            );
+        // Status should be clean
+        let status = repositories::status(repo).await?;
+        assert!(
+            status.removed_files.is_empty(),
+            "status should be clean after committing removal, but got removed_files: {:?}",
+            status.removed_files
+        );
 
-            // Verify the file is gone from the committed tree
-            let head = repositories::commits::head_commit(&repo)?;
-            let file_node =
-                repositories::tree::get_file_by_path(&repo, &head, Path::new("1/2/3/file.txt"))?;
-            assert!(
-                file_node.is_none(),
-                "file 1/2/3/file.txt should not exist in the committed tree"
-            );
+        // Verify the file is gone from the committed tree
+        let head = repositories::commits::head_commit(repo)?;
+        let file_node =
+            repositories::tree::get_file_by_path(repo, &head, Path::new("7/8/9/file.txt"))?;
+        assert!(
+            file_node.is_none(),
+            "file 7/8/9/file.txt should not exist in the committed tree"
+        );
 
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 }
