@@ -1305,6 +1305,12 @@ pub(crate) fn pin_commit_timestamp(repo_path: &Path, timestamp: OffsetDateTime) 
         .insert(repo_path.to_path_buf(), timestamp);
 }
 
+/// Lets commits in the repository at `repo_path` carry the current time again.
+#[cfg(test)]
+pub(crate) fn unpin_commit_timestamp(repo_path: &Path) {
+    PINNED_COMMIT_TIMESTAMPS.lock().remove(repo_path);
+}
+
 /// The time a commit `commit_dir_entries` makes in the repository at `repo_path` records.
 #[cfg(not(test))]
 fn commit_timestamp(_repo_path: &Path) -> OffsetDateTime {
