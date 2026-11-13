@@ -19,7 +19,10 @@ use liboxen::storage::VersionStore;
 use liboxen::util;
 use liboxen::util::hasher::hash_buffer_128bit;
 use liboxen::view::workspaces::RenameRequest;
-use liboxen::view::{FilePathsResponse, StatusMessage, StatusMessageDescription};
+use liboxen::view::{
+    ErrorFileInfo, FilePathsResponse, FilesNotStagedResponse, StatusMessage,
+    StatusMessageDescription,
+};
 
 use actix_multipart::Multipart;
 use actix_web::web::Bytes;
@@ -187,7 +190,7 @@ pub async fn get(
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/files/{path}",
-    description = "Upload and stage files to a workspace. Accept a multipart with either gzipped or uncompressed file parts, each holding a file of at most 10 MiB. Use the filename from the file part and compute the file hash from the content. Send a larger file through an upload session (`POST /api/repos/{namespace}/{repo_name}/versions/uploads`).",
+    description = "Upload and stage files to a workspace. Accept a multipart with either gzipped or uncompressed file parts, each holding a file of at most 10 MiB. Use the filename from the file part and compute the file hash from the content. Send a larger file through an upload session (`POST /api/repos/{namespace}/{repo_name}/versions/uploads`). Answer an error status when any file does not stage, listing each such file in `err_files`. When a file fails before staging begins, stage none of the request's files.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
@@ -201,10 +204,11 @@ pub async fn get(
         content = FileUpload,
     ),
     responses(
-        (status = 200, description = "File successfully uploaded to workspace", body = FilePathsResponse),
+        (status = 200, description = "Every file staged", body = FilePathsResponse),
         (status = 404, description = "Workspace not found"),
-        (status = 400, description = "Invalid upload request"),
-        (status = 413, description = "A file part is larger than 10 MiB")
+        (status = 400, description = "A part labeled gzip is not gzip data, so no file staged", body = FilesNotStagedResponse),
+        (status = 413, description = "A file part is larger than 10 MiB"),
+        (status = 500, description = "A file failed to store or stage. `paths` lists the files that staged", body = FilesNotStagedResponse)
     )
 )]
 pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, OxenHttpError> {
@@ -221,17 +225,43 @@ pub async fn add(req: HttpRequest, payload: Multipart) -> Result<HttpResponse, O
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    let received = save_parts(payload, &workspace, &directory).await?;
-    log::debug!("Stored {} files", received.len());
+    let ReceivedParts {
+        files,
+        refused,
+        failed,
+    } = save_parts(payload, &workspace, &directory).await?;
+    // A file that fails before staging leaves every file in the request unstaged, so this error
+    // answer means the workspace is unchanged.
+    if !failed.is_empty() || !refused.is_empty() {
+        let (mut response, status) = if failed.is_empty() {
+            (HttpResponse::BadRequest(), StatusMessage::bad_request())
+        } else {
+            (
+                HttpResponse::InternalServerError(),
+                StatusMessage::internal_server_error(),
+            )
+        };
+        return Ok(response.json(FilesNotStagedResponse {
+            status,
+            paths: vec![],
+            err_files: failed.into_iter().chain(refused).collect(),
+        }));
+    }
 
-    let (ret_files, stage_err_files) = add_version_files(&workspace, received).await?;
-    for err in &stage_err_files {
-        log::error!("Error staging file {:?}: {}", err.path, err.error);
+    let (paths, err_files) = add_version_files(&workspace, files).await?;
+    if !err_files.is_empty() {
+        return Ok(
+            HttpResponse::InternalServerError().json(FilesNotStagedResponse {
+                status: StatusMessage::internal_server_error(),
+                paths,
+                err_files,
+            }),
+        );
     }
 
     Ok(HttpResponse::Ok().json(FilePathsResponse {
         status: StatusMessage::resource_created(),
-        paths: ret_files,
+        paths,
     }))
 }
 
@@ -404,6 +434,16 @@ pub async fn copy(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHt
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
 
+/// The file parts of a multipart upload, split by whether each is ready to stage.
+struct ReceivedParts {
+    /// The files to stage, in the order their parts arrived.
+    files: Vec<VersionFileToStage>,
+    /// Parts labeled gzip that are not gzip data.
+    refused: Vec<ErrorFileInfo>,
+    /// Files that failed to store or to be inspected.
+    failed: Vec<ErrorFileInfo>,
+}
+
 /// A file received in a multipart upload and prepared for staging.
 struct ReceivedFile {
     file: VersionFileToStage,
@@ -416,19 +456,20 @@ struct ReceivedFile {
 /// relative to `directory`, and a part whose content `workspace`'s commit has at that path is
 /// neither stored nor inspected, unless the store has lost the commit's copy.
 ///
-/// Returns the files to stage, in the order their parts arrived. A part holding a file of more than
-/// `stream_segment_size()` bytes fails the whole upload with 413. A part that is not gzip data
-/// though labeled so, or that fails to store or to be inspected, is logged and left out.
+/// A part holding a file of more than `stream_segment_size()` bytes fails the whole upload with
+/// 413. Every other part comes back in [`ReceivedParts`], and each that is not ready to stage is
+/// logged.
 async fn save_parts(
     mut payload: Multipart,
     workspace: &Workspace,
     directory: &str,
-) -> Result<Vec<VersionFileToStage>, OxenHttpError> {
+) -> Result<ReceivedParts, OxenHttpError> {
     let version_store = workspace.base_repo.version_store();
     let committed = CommittedFiles::load(workspace).await?;
     let max_in_flight = util::concurrency::default_num_threads() * 4;
-    let mut in_flight: JoinSet<Option<ReceivedFile>> = JoinSet::new();
-    let mut received = vec![];
+    let mut in_flight: JoinSet<Result<ReceivedFile, ErrorFileInfo>> = JoinSet::new();
+    let mut stored = vec![];
+    let mut refused = vec![];
     let mut part_count = 0;
 
     while let Some(field) = payload.try_next().await.map_err(actix_web::Error::from)? {
@@ -473,11 +514,16 @@ async fn save_parts(
         let part = match decoded {
             Ok(part) => part,
             Err(e) => {
-                tracing::error!(
+                tracing::warn!(
                     oxen.file_path = %dst_path.display(),
                     exception.message = %e,
-                    "Failed to receive an uploaded file"
+                    "Refused an uploaded file part that is not gzip data"
                 );
+                refused.push(ErrorFileInfo {
+                    hash: String::new(),
+                    path: Some(dst_path),
+                    error: e.to_string(),
+                });
                 continue;
             }
         };
@@ -485,7 +531,7 @@ async fn save_parts(
         // Bound the stores in flight before dispatching the next one.
         while in_flight.len() >= max_in_flight {
             if let Some(result) = in_flight.join_next().await {
-                received.extend(store_task_result(result)?);
+                stored.push(store_task_result(result)?);
             }
         }
 
@@ -494,7 +540,7 @@ async fn save_parts(
             let hash = part.hash;
             let stored = |dst_path| store_and_inspect(version_store, part, dst_path);
             match VersionFileToStage::prepare(&committed, dst_path.clone(), hash, stored).await {
-                Ok(file) => Some(ReceivedFile { file, part_index }),
+                Ok(file) => Ok(ReceivedFile { file, part_index }),
                 Err(e) => {
                     tracing::error!(
                         oxen.file_path = %dst_path.display(),
@@ -502,20 +548,37 @@ async fn save_parts(
                         exception.message = %e,
                         "Failed to store an uploaded file"
                     );
-                    None
+                    Err(ErrorFileInfo {
+                        hash: hash.to_string(),
+                        path: Some(dst_path),
+                        error: "Failed to store the file".to_string(),
+                    })
                 }
             }
         }));
     }
 
     while let Some(result) = in_flight.join_next().await {
-        received.extend(store_task_result(result)?);
+        stored.push(store_task_result(result)?);
+    }
+
+    let mut received = vec![];
+    let mut failed = vec![];
+    for result in stored {
+        match result {
+            Ok(file) => received.push(file),
+            Err(err) => failed.push(err),
+        }
     }
     // Stores finish in any order, and staging in arrival order keeps the last of two parts with
     // one path.
     received.sort_by_key(|received| received.part_index);
 
-    Ok(received.into_iter().map(|received| received.file).collect())
+    Ok(ReceivedParts {
+        files: received.into_iter().map(|received| received.file).collect(),
+        refused,
+        failed,
+    })
 }
 
 /// A file part's bytes, after any gunzipping, and their hash.
@@ -544,11 +607,11 @@ async fn store_and_inspect(
     file?
 }
 
-/// A finished store task's file, or `None` for a file it failed to store. A task that panicked
+/// A finished store task's file, or the error for a file it failed to store. A task that panicked
 /// fails the whole upload with a 500.
 fn store_task_result(
-    result: Result<Option<ReceivedFile>, JoinError>,
-) -> Result<Option<ReceivedFile>, OxenHttpError> {
+    result: Result<Result<ReceivedFile, ErrorFileInfo>, JoinError>,
+) -> Result<Result<ReceivedFile, ErrorFileInfo>, OxenHttpError> {
     result
         .map_err(|e| OxenError::internal_error(format!("version store task panicked: {e}")).into())
 }
@@ -576,7 +639,7 @@ mod tests {
         VersionUploadPartResponse, VersionUploadResponse, VersionUploadStart, WorkspaceDestination,
     };
     use liboxen::view::workspaces::RenameRequest;
-    use liboxen::view::{FilePathsResponse, StatusMessageDescription};
+    use liboxen::view::{FilePathsResponse, FilesNotStagedResponse, StatusMessageDescription};
     use std::path::{Path, PathBuf};
 
     use crate::test::gzip;
@@ -1065,10 +1128,10 @@ mod tests {
             status.staged_files.keys()
         );
 
-        // A part labeled gzip that is not gzip data, then two valid gzipped parts for one path,
-        // check that a part left out leaves the rest, and that the later of two parts for one path
-        // is the one staged. A committed file uploaded with new content and then with its committed
-        // content leaves its directory staged for a later file in it.
+        // A part labeled gzip that is not gzip data fails the whole upload with 400 and stages none
+        // of its files. Without that part, two valid gzipped parts for one path check that the
+        // later one is staged. A committed file uploaded with new content and then with its
+        // committed content leaves its directory staged for a later file in it.
         let after = gzip(b"after the corrupt part", Compression::default())?;
         let later = gzip(b"later for the same path", Compression::default())?;
         let changed_rows = gzip(b"id,label\n9,z\n", Compression::default())?;
@@ -1081,46 +1144,78 @@ mod tests {
             .collect();
         let large_gzipped = gzip(&large, Compression::none())?;
         let boundary = "test-gzip-boundary";
-        let mut body: Vec<u8> = Vec::new();
-        for (filename, part) in [
-            ("data/corrupt.bin", &b"not gzip data".to_vec()),
+        let gzip_body = |parts: &[(&str, &[u8])]| {
+            let mut body: Vec<u8> = Vec::new();
+            for (filename, part) in parts {
+                body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+                body.extend_from_slice(
+                    format!(
+                        "Content-Disposition: form-data; name=\"file[]\"; filename=\"{filename}\"\r\n"
+                    )
+                    .as_bytes(),
+                );
+                body.extend_from_slice(b"Content-Type: application/gzip\r\n\r\n");
+                body.extend_from_slice(part);
+                body.extend_from_slice(b"\r\n");
+            }
+            body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+            body
+        };
+        let valid_parts: [(&str, &[u8]); 6] = [
             ("data/after.txt", &after),
             ("data/after.txt", &later),
             ("data/large.bin", &large_gzipped),
             ("tables/rows.csv", &changed_rows),
             ("tables/rows.csv", &committed_rows),
             ("tables/more.txt", &more),
-        ] {
-            body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
-            body.extend_from_slice(
-                format!(
-                    "Content-Disposition: form-data; name=\"file[]\"; filename=\"{filename}\"\r\n"
-                )
-                .as_bytes(),
+        ];
+        let with_corrupt: Vec<(&str, &[u8])> = [("data/corrupt.bin", b"not gzip data".as_slice())]
+            .into_iter()
+            .chain(valid_parts)
+            .collect();
+        let gzip_request = |body: Vec<u8>| {
+            TestRequest::post()
+                .uri(&root_uri)
+                .insert_header((
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                ))
+                .set_payload(body)
+                .to_request()
+        };
+
+        let resp = call_service(&app, gzip_request(gzip_body(&with_corrupt))).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let response: FilesNotStagedResponse = serde_json::from_slice(&read_body(resp).await)?;
+        assert!(
+            response.paths.is_empty(),
+            "nothing stages beside a refused part"
+        );
+        assert_eq!(
+            response
+                .err_files
+                .iter()
+                .map(|err| err.path.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(PathBuf::from("data/corrupt.bin"))],
+            "the refusal lists the part that is not gzip data"
+        );
+        {
+            let workspace =
+                repositories::workspaces::get(&repo, &workspace_id)?.expect("the workspace exists");
+            let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
+            assert!(
+                staged_db_manager
+                    .read_from_staged_db("tables/more.txt")?
+                    .is_none(),
+                "a file sent beside a refused part is not staged"
             );
-            body.extend_from_slice(b"Content-Type: application/gzip\r\n\r\n");
-            body.extend_from_slice(part);
-            body.extend_from_slice(b"\r\n");
         }
-        body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
 
-        let req = actix_web::test::TestRequest::post()
-            .uri(&root_uri)
-            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
-            .insert_header((
-                header::CONTENT_TYPE,
-                format!("multipart/form-data; boundary={boundary}"),
-            ))
-            .set_payload(body.clone())
-            .to_request();
-
-        let resp = actix_web::test::call_service(&app, req).await;
-        // The endpoint drops the offending part rather than failing the whole request, so the
-        // response is still 200 and only the valid parts are staged.
-        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
-
-        let bytes = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
-        let response: FilePathsResponse = serde_json::from_slice(&bytes)?;
+        let body = gzip_body(&valid_parts);
+        let resp = call_service(&app, gzip_request(body.clone())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let response: FilePathsResponse = serde_json::from_slice(&read_body(resp).await)?;
         assert_eq!(
             response.paths,
             [
@@ -1132,7 +1227,6 @@ mod tests {
                 "tables/more.txt",
             ]
             .map(PathBuf::from),
-            "the part that is not gzip data is left out"
         );
         assert!(
             repo.version_store()

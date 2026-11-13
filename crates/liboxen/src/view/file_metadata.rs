@@ -20,6 +20,17 @@ pub struct ErrorFilesResponse {
     pub err_files: Vec<ErrorFileInfo>,
 }
 
+/// The workspace files endpoint's error answer when a file it received did not stage: the paths
+/// that staged, and why each of the other files did not.
+#[derive(Deserialize, Serialize, Debug, ToSchema)]
+pub struct FilesNotStagedResponse {
+    #[serde(flatten)]
+    pub status: StatusMessage,
+    #[schema(value_type = Vec<String>)]
+    pub paths: Vec<PathBuf>,
+    pub err_files: Vec<ErrorFileInfo>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct ErrorFileInfo {
     pub hash: String,
