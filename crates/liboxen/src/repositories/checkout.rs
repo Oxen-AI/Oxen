@@ -202,6 +202,8 @@ pub async fn checkout_combine<P: AsRef<Path>>(
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use filetime::{FileTime, set_file_mtime};
+
     use crate::api;
     use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::core::v_latest::branches::OnConflict;
@@ -846,6 +848,19 @@ mod tests {
             let data_b = datadir.join("b.txt");
             util::fs::write_to_path(&data_a, "data a")?;
             util::fs::write_to_path(&data_b, "data b")?;
+            // A new directory whose only child is a directory
+            let inner_file = repo.path.join("outer").join("inner").join("value.txt");
+            util::fs::write_to_path(&inner_file, "feature value")?;
+            // Two directories whose contents and mtimes the rival branch swaps, so each one's vnode
+            // on feature holds what the other's holds on the rival branch
+            let first_mtime = FileTime::from_unix_time(1_000_000_000, 0);
+            let second_mtime = FileTime::from_unix_time(1_000_000_100, 0);
+            let swap_x = repo.path.join("swap_x").join("a.txt");
+            let swap_y = repo.path.join("swap_y").join("a.txt");
+            for (file, content, mtime) in [(&swap_x, "1", first_mtime), (&swap_y, "2", second_mtime)] {
+                util::fs::write_to_path(file, content)?;
+                set_file_mtime(file, mtime)?;
+            }
             repositories::add(&repo, &repo.path).await?;
             repositories::commit(&repo, "Add extra files")?;
 
@@ -896,6 +911,40 @@ mod tests {
             assert!(
                 !datadir.exists(),
                 "datadir/ should be removed again on main"
+            );
+
+            // A second branch from main adds the same new paths with different contents, puts the
+            // bytes of feature's datadir/a.txt and datadir/b.txt under other names, and swaps the
+            // contents and mtimes of swap_x and swap_y. Committing it must leave the feature
+            // branch's tree as it was, and checking feature out must restore both swapped files.
+            repositories::branches::create_checkout(&repo, "feature/rival")?;
+            util::fs::write_to_path(&inner_file, "rival value")?;
+            util::fs::write_to_path(datadir.join("c.txt"), "data a")?;
+            util::fs::write_to_path(datadir.join("d.txt"), "data b")?;
+            for (file, content, mtime) in [(&swap_x, "2", second_mtime), (&swap_y, "1", first_mtime)] {
+                util::fs::write_to_path(file, content)?;
+                set_file_mtime(file, mtime)?;
+            }
+            repositories::add(&repo, &repo.path).await?;
+            repositories::commit(&repo, "Add feature's new paths with other contents and names")?;
+
+            repositories::checkout(&repo, branch_name).await?;
+            assert_eq!(
+                util::fs::read_from_path(&inner_file)?,
+                "feature value",
+                "outer/inner/value.txt on feature should keep feature's contents after another branch committed the same new paths"
+            );
+            assert!(
+                data_a.exists() && data_b.exists() && !datadir.join("c.txt").exists(),
+                "datadir on feature should keep a.txt and b.txt after another branch committed their bytes under other names"
+            );
+            assert_eq!(
+                (
+                    util::fs::read_from_path(&swap_x)?,
+                    util::fs::read_from_path(&swap_y)?
+                ),
+                ("1".to_string(), "2".to_string()),
+                "checking out feature from the branch that swapped them should restore swap_x and swap_y"
             );
 
             Ok(())
