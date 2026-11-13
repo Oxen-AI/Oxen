@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -608,8 +609,8 @@ fn get_node_dir_children(
     Ok(children)
 }
 
-// This should return the directory to vnode mapping that we need to update
-// It also maps directories to removed files to update their metadata
+/// Splits each staged directory's children into vnodes with their ids, and maps each directory to
+/// its removed children.
 #[allow(clippy::type_complexity)]
 fn split_into_vnodes(
     repo: &LocalRepository,
@@ -629,8 +630,13 @@ fn split_into_vnodes(
         );
     }
 
+    // Deepest directories first, so a directory's id is known before its parent's vnodes hash it
+    let mut directories: Vec<_> = entries.iter().collect();
+    directories.sort_by_key(|(directory, _)| Reverse(directory.components().count()));
+    let mut dir_ids = HashMap::new();
+
     // Create the VNode buckets per directory
-    for (directory, new_children) in entries {
+    for (directory, new_children) in directories {
         let mut children = HashSet::new();
         let mut removed_children = HashSet::new();
 
@@ -752,52 +758,22 @@ fn split_into_vnodes(
             vnode_children[bucket as usize].entries.push(child.clone());
         }
 
-        // Compute hashes and sort entries
+        // Sort the entries in the vnode by path to make searching for entries faster
         for vnode in vnode_children.iter_mut() {
-            // Sort the entries in the vnode by path
-            // to make searching for entries faster
             vnode.entries.sort_by(|a, b| {
                 a.node
                     .maybe_path()
                     .unwrap()
                     .cmp(&b.node.maybe_path().unwrap())
             });
-
-            // Compute hash for the vnode
-            let mut vnode_hasher = xxhash_rust::xxh3::Xxh3::new();
-            vnode_hasher.update(b"vnode");
-            // add the dir name to the vnode hash
-            vnode_hasher.update(directory.to_str().unwrap().as_bytes());
-
-            let mut has_new_entries = false;
-            for entry in vnode.entries.iter() {
-                if let EMerkleTreeNode::File(file_node) = &entry.node.node {
-                    vnode_hasher.update(&file_node.combined_hash().to_le_bytes());
-                } else {
-                    vnode_hasher.update(&entry.node.hash.to_le_bytes());
-                }
-                if entry.status != StagedEntryStatus::Unmodified {
-                    has_new_entries = true;
-                }
-            }
-
-            // If the vnode has new entries, we need to update the uuid to make a new vnode
-            if existing_nodes.contains_key(directory) && has_new_entries {
-                let uuid = uuid::Uuid::new_v4();
-                vnode_hasher.update(uuid.as_bytes());
-            }
-
-            vnode.id = MerkleHash::new(vnode_hasher.digest128());
+            vnode.id = vnode_id(directory, &vnode.entries, &dir_ids)?;
         }
+        dir_ids.insert(directory.to_owned(), dir_id(directory, &vnode_children));
 
-        // Sort before we hash
         let removed_children = removed_children.iter().cloned().collect();
         results.insert(directory.to_owned(), (vnode_children, removed_children));
     }
 
-    // Make sure to update all the vnode ids based on all their children
-
-    // TODO: We have to start from the bottom vnodes in the tree and update all the vnode ids above it
     log::debug!(
         "split_into_vnodes results: {:?} for commit {}",
         results.len(),
@@ -822,6 +798,71 @@ fn split_into_vnodes(
     }
 
     Ok(results)
+}
+
+/// Leads every vnode id's hash input, which then never matches an input the earlier rule hashed
+/// (those start with `vnode`).
+const VNODE_ID_TAG: &[u8] = b"oxen vnode id v2";
+/// Leads every directory id's hash input, which then never matches an input the earlier rule hashed
+/// (those start with `dir`).
+const DIR_ID_TAG: &[u8] = b"oxen dir id v2";
+
+/// A vnode's id, a hash of its directory's path and each entry's type, name, and contents: a file's
+/// combined hash and modification time, or a directory's id, taken from `dir_ids` when the
+/// directory is staged.
+fn vnode_id(
+    directory: &Path,
+    entries: &[StagedMerkleTreeNode],
+    dir_ids: &HashMap<PathBuf, MerkleHash>,
+) -> Result<MerkleHash, OxenError> {
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    hasher.update(VNODE_ID_TAG);
+    update_with_len(&mut hasher, util::fs::to_unix_str(directory).as_bytes());
+    hasher.update(&(entries.len() as u64).to_le_bytes());
+    for entry in entries {
+        let path = entry.node.maybe_path()?;
+        hasher.update(&[entry.node.node.node_type().to_u8()]);
+        update_with_len(
+            &mut hasher,
+            path.file_name().unwrap_or_default().as_encoded_bytes(),
+        );
+        match &entry.node.node {
+            EMerkleTreeNode::File(file_node) => {
+                hasher.update(&file_node.combined_hash().to_le_bytes());
+                hasher.update(&file_node.last_modified_seconds().to_le_bytes());
+                hasher.update(&file_node.last_modified_nanoseconds().to_le_bytes());
+            }
+            EMerkleTreeNode::Directory(_) => {
+                let id = dir_ids.get(&path).copied().unwrap_or(entry.node.hash);
+                hasher.update(&id.to_le_bytes());
+            }
+            node => {
+                return Err(OxenError::internal_error(format!(
+                    "A vnode cannot hold a {:?} node",
+                    node.node_type()
+                )));
+            }
+        }
+    }
+    Ok(MerkleHash::new(hasher.digest128()))
+}
+
+/// A directory's id, a hash of its path and its vnodes' ids in bucket order.
+fn dir_id(directory: &Path, vnodes: &[EntryVNode]) -> MerkleHash {
+    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
+    hasher.update(DIR_ID_TAG);
+    update_with_len(&mut hasher, util::fs::to_unix_str(directory).as_bytes());
+    hasher.update(&(vnodes.len() as u64).to_le_bytes());
+    for vnode in vnodes {
+        hasher.update(&vnode.id.to_le_bytes());
+    }
+    MerkleHash::new(hasher.digest128())
+}
+
+/// Feeds `bytes` to `hasher` after their length, so no two sequences of fields hash the same bytes.
+fn update_with_len(hasher: &mut xxhash_rust::xxh3::Xxh3, bytes: &[u8]) {
+    hasher.update(&(bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
 }
 
 pub fn compute_commit_id(new_commit: &NewCommit) -> Result<MerkleHash, OxenError> {
@@ -1073,9 +1114,12 @@ fn compute_dir_node(
     path: impl AsRef<Path>,
 ) -> Result<DirNode, OxenError> {
     let path = path.as_ref().to_path_buf();
-    let mut hasher = xxhash_rust::xxh3::Xxh3::new();
-    hasher.update(b"dir");
-    hasher.update(path.to_str().unwrap().as_bytes());
+    let Some((vnodes, _)) = entries.get(&path) else {
+        return Err(OxenError::internal_error(format!(
+            "No staged entries for directory {path:?}"
+        )));
+    };
+    let hash = dir_id(&path, vnodes);
 
     let mut num_bytes = 0;
     // Counted from the entries this directory actually ends up holding, rather than carried
@@ -1106,42 +1150,13 @@ fn compute_dir_node(
             return Err(OxenError::basic_str(err_msg));
         };
         for vnode in vnodes.iter() {
-            // Include VNode hashes in the directory hash so that when a VNode
-            // gets a new UUID-based hash (because it has modified entries), the
-            // parent directory hash changes too. Without this, two commits can
-            // produce the same directory hash even though their VNode children
-            // differ, causing stale node data to be read from shared storage.
-            hasher.update(&vnode.id.to_le_bytes());
             for entry in vnode.entries.iter() {
-                // log::debug!("Aggregating entry {}", entry.node);
+                if path == *child {
+                    num_entries += 1;
+                }
                 match &entry.node.node {
-                    EMerkleTreeNode::Directory(dir_node) => {
-                        if path == *child {
-                            num_entries += 1;
-                        }
-                        // log::debug!(
-                        //     "Updating hash for dir {} -> hash {} status {:?}",
-                        //     dir_node.name(),
-                        //     dir_node.hash(),
-                        //     entry.status
-                        // );
-                        hasher.update(dir_node.name().as_bytes());
-                        hasher.update(&dir_node.hash().to_le_bytes());
-                    }
+                    EMerkleTreeNode::Directory(_) => {}
                     EMerkleTreeNode::File(file_node) => {
-                        // log::debug!(
-                        //     "Updating hash for file {} -> hash {} status {:?}",
-                        //     file_node.name(),
-                        //     file_node.hash(),
-                        //     entry.status
-                        // );
-                        hasher.update(file_node.name().as_bytes());
-                        hasher.update(&file_node.combined_hash().to_le_bytes());
-
-                        if path == *child {
-                            num_entries += 1;
-                        }
-
                         match entry.status {
                             StagedEntryStatus::Added => {
                                 num_bytes += file_node.num_bytes();
@@ -1217,7 +1232,6 @@ fn compute_dir_node(
         }
     }
 
-    let hash = MerkleHash::new(hasher.digest128());
     let file_name = path.file_name().unwrap_or_default().to_str().unwrap();
     log::debug!(
         "Aggregated dir {path:?} [{hash}] num_bytes {num_bytes:?} num_entries {num_entries:?} data_type_counts {data_type_counts:?}"
