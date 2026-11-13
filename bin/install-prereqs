@@ -5,7 +5,19 @@
 # Installs all development prerequisites for the Oxen project.
 # Works on macOS and Linux. Idempotent: safe to run multiple times.
 #
+# Usage: bin/install-prereqs [--ci]
+#   --ci  Of the cargo tools, install only cargo-sort, the one CI's Lint job runs (through
+#         pre-commit). bacon, cargo-machete, and cargo-llvm-cov are for local development.
+#
 set -euo pipefail
+
+CI_ONLY=false
+for arg in "$@"; do
+    case "$arg" in
+        --ci) CI_ONLY=true ;;
+        *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+    esac
+done
 
 ###############################################################################
 # Helpers
@@ -202,9 +214,11 @@ install_cargo_tool() {
     fi
 }
 
-install_cargo_tool bacon          bacon          "$BACON_VERSION" "--locked"
-install_cargo_tool cargo-machete  cargo-machete  "$CARGO_MACHETE_VERSION" "--locked"
-install_cargo_tool cargo-llvm-cov cargo-llvm-cov "$CARGO_LLVM_COV_VERSION" "--locked"
+if ! $CI_ONLY; then
+    install_cargo_tool bacon          bacon          "$BACON_VERSION" "--locked"
+    install_cargo_tool cargo-machete  cargo-machete  "$CARGO_MACHETE_VERSION" "--locked"
+    install_cargo_tool cargo-llvm-cov cargo-llvm-cov "$CARGO_LLVM_COV_VERSION" "--locked"
+fi
 install_cargo_tool cargo-sort     cargo-sort     "$CARGO_SORT_VERSION" "--locked"
 
 ###############################################################################
