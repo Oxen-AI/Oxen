@@ -616,11 +616,20 @@ mod tests {
             let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 1);
             assert_eq!(status.staged_files.len(), 2); // Staged files still operates on the addition + removal
+            assert!(
+                status.modified_files.is_empty(),
+                "a staged move matching its working copy is not modified"
+            );
 
             // Edit the move's destination after staging it
             util::fs::write_to_path(&new_file, "readme, edited after staging")?;
             let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 1);
+            assert_eq!(
+                status.modified_files,
+                HashSet::from([PathBuf::from("README2.md")]),
+                "a moved file edited after staging is modified"
+            );
             assert_eq!(
                 status.unstaged_files(),
                 [PathBuf::from("README2.md")],
