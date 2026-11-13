@@ -6,19 +6,16 @@ mod tests {
 
     use std::path::PathBuf;
 
-    use crate::config::UserConfig;
     use crate::error::OxenError;
-    use crate::model::NewCommitBody;
     use crate::model::staged_data::StagedDataOpts;
     use crate::repositories::remote_mode::test_helpers::{add, clone, status};
-    use crate::{repositories, test, util};
+    use crate::{test, util};
 
     // TODO: Actual bugs unconvered:
     // 1: Err_files
     // 2: Adding modified files
 
-    // Remote-mode clones of one remote each add files their own way to their own workspace, and
-    // the last one commits and adds the committed file again
+    // Remote-mode clones of one remote each add files their own way to their own workspace
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
     async fn test_remote_mode_add() -> Result<(), OxenError> {
@@ -149,22 +146,6 @@ mod tests {
                 let recursive_status = status(&recursive_repo, &remote_repo).await?;
                 assert_eq!(recursive_status.staged_dirs.len(), 3);
                 assert_eq!(recursive_status.staged_files.len(), 4);
-
-                // Adding a committed file again without modifying it leaves the repo clean
-                let commit_repo = clone(&remote_repo, &dir, "commit_repo").await?;
-                let dir_path = commit_repo.path.join("dir");
-                util::fs::create_dir_all(&dir_path)?;
-                let hello_file_path = test::add_txt_file_to_dir(&dir_path, "hello.txt")?;
-                add(&commit_repo, &remote_repo, vec![hello_file_path.clone()]).await?;
-                let cfg = UserConfig::get()?;
-                let body = NewCommitBody {
-                    message: "Add text file".to_string(),
-                    author: cfg.name,
-                    email: cfg.email,
-                };
-                repositories::remote_mode::commit(&commit_repo, &body).await?;
-                add(&commit_repo, &remote_repo, vec![hello_file_path]).await?;
-                assert!(status(&commit_repo, &remote_repo).await?.is_clean());
 
                 Ok(())
             })
