@@ -259,10 +259,13 @@ impl StagedData {
         let mut files: Vec<PathBuf> = Vec::new();
         // files.extend(self.untracked_files.clone());
         files.extend(self.modified_files.clone());
+        // A move's destination edited after staging is in `modified_files` too
         files.extend(
             self.moved_files
                 .iter()
-                .map(|(path, _removed_path, _hash)| path.clone()),
+                .map(|(path, _removed_path, _hash)| path)
+                .filter(|path| !self.modified_files.contains(*path))
+                .cloned(),
         );
         // files.extend(self.removed_files.clone());
 

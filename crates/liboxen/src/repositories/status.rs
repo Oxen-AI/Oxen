@@ -617,6 +617,16 @@ mod tests {
             assert_eq!(status.moved_files.len(), 1);
             assert_eq!(status.staged_files.len(), 2); // Staged files still operates on the addition + removal
 
+            // Edit the move's destination after staging it
+            util::fs::write_to_path(&new_file, "readme, edited after staging")?;
+            let status = repositories::status(&repo).await?;
+            assert_eq!(status.moved_files.len(), 1);
+            assert_eq!(
+                status.unstaged_files(),
+                [PathBuf::from("README2.md")],
+                "a moved file edited after staging is listed once"
+            );
+
             // Restore one file and break the pair
             repositories::restore(&repo, RestoreOpts::from_staged_path(og_basename)).await?;
 
