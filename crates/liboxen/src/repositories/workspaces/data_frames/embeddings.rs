@@ -149,7 +149,14 @@ pub fn index(
         // Spawn background thread for VSS setup
         std::thread::spawn(move || {
             if let Err(e) = perform_indexing(&workspace, &path, &column, vector_length) {
-                log::error!("Error in background indexing thread: {e}");
+                tracing::error!(
+                    oxen.repository_path = %workspace.base_repo.path.display(),
+                    oxen.workspace_id = %workspace.id,
+                    oxen.file_path = %path.display(),
+                    oxen.column_name = %column,
+                    exception.message = ?e,
+                    "Could not index a data frame column's embeddings"
+                );
             }
         });
     } else {
