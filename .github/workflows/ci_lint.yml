@@ -59,11 +59,24 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
+      # The rust-cache step above leaves ~/.cargo/bin out (cache-bin in .github/actions/rust-cache),
+      # so without this every run builds cargo-sort from source. install-prereqs reads the installed
+      # version from .crates.toml, and reinstalls without it.
+      - name: Cache cargo-sort
+        if: steps.changes.outputs.code == 'true'
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/cargo-sort
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: cargo-sort-${{ runner.os }}-${{ runner.arch }}-${{ env.CARGO_SORT_VERSION }}
+
       - name: Install dependencies and development tools
         if: steps.changes.outputs.code == 'true'
         run: |
           cd ${{ github.workspace }}
-          ./bin/install-prereqs
+          ./bin/install-prereqs --ci
 
       - name: Run Pre-Commit Hooks
         if: steps.changes.outputs.code == 'true'
