@@ -95,6 +95,8 @@ pub struct StagedData {
     pub untracked_files: Vec<PathBuf>,
     pub unsynced_dirs: Vec<(PathBuf, usize)>,
     pub unsynced_files: Vec<PathBuf>,
+    /// Tracked files whose working copy differs from what is staged for them, or from HEAD. A
+    /// remote-mode repository compares only the files with nothing staged.
     pub modified_files: HashSet<PathBuf>,
     pub moved_files: Vec<(PathBuf, PathBuf, String)>,
     pub removed_files: HashSet<PathBuf>,
@@ -257,10 +259,13 @@ impl StagedData {
         let mut files: Vec<PathBuf> = Vec::new();
         // files.extend(self.untracked_files.clone());
         files.extend(self.modified_files.clone());
+        // A move's destination edited after staging is in `modified_files` too
         files.extend(
             self.moved_files
                 .iter()
-                .map(|(path, _removed_path, _hash)| path.clone()),
+                .map(|(path, _removed_path, _hash)| path)
+                .filter(|path| !self.modified_files.contains(*path))
+                .cloned(),
         );
         // files.extend(self.removed_files.clone());
 

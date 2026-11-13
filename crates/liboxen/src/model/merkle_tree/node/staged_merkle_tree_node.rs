@@ -1,4 +1,5 @@
-use crate::model::{StagedEntryStatus, merkle_tree::node::MerkleTreeNode};
+use crate::model::StagedEntryStatus;
+use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode, MerkleTreeNode};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Display;
@@ -8,6 +9,19 @@ use std::hash::{Hash, Hasher};
 pub struct StagedMerkleTreeNode {
     pub status: StagedEntryStatus,
     pub node: MerkleTreeNode,
+}
+
+impl StagedMerkleTreeNode {
+    /// The file node staged for a file's addition or edit, or `None` for any other entry.
+    pub(crate) fn into_staged_file(self) -> Option<FileNode> {
+        match (self.status, self.node.node) {
+            (
+                StagedEntryStatus::Added | StagedEntryStatus::Modified,
+                EMerkleTreeNode::File(file_node),
+            ) => Some(file_node),
+            _ => None,
+        }
+    }
 }
 
 impl Default for StagedMerkleTreeNode {

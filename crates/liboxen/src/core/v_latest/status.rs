@@ -1,7 +1,7 @@
 use crate::constants::STAGED_DIR;
 use crate::core::db;
 use crate::core::oxenignore;
-use crate::core::staged::staged_db_manager::get_staged_db_manager;
+use crate::core::staged::staged_db_manager::{get_staged_db_manager, get_staged_value};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::FileNode;
 use crate::model::merkle_tree::node::StagedMerkleTreeNode;
@@ -219,24 +219,15 @@ pub fn status_from_dir_entries(
                     // TODO: It's not always added. It could be modified.
                     log::debug!("dir_entries file_node: {entry}");
                     let file_path = PathBuf::from(node.name());
-                    if entry.status == StagedEntryStatus::Modified {
-                        staged_data.modified_files.insert(file_path.clone());
-                    }
                     let staged_entry = StagedEntry {
                         hash: node.hash().to_string(),
                         status: entry.status.clone(),
                     };
 
-                    staged_data
-                        .staged_files
-                        .insert(file_path.clone(), staged_entry);
-                    maybe_add_schemas(node, staged_data)?;
-
                     // Cannot be removed if it's staged
-                    if staged_data.staged_files.contains_key(&file_path) {
-                        staged_data.removed_files.remove(&file_path);
-                        staged_data.modified_files.remove(&file_path);
-                    }
+                    staged_data.removed_files.remove(&file_path);
+                    staged_data.staged_files.insert(file_path, staged_entry);
+                    maybe_add_schemas(node, staged_data)?;
 
                     if entry.status == StagedEntryStatus::Removed {
                         removed_stats.num_files_staged += 1;
@@ -444,7 +435,7 @@ impl StagedSource<'_> {
     /// True when a removal is staged for the file `path`. A file staged with any other
     /// status does not count.
     fn is_removal_staged(&self, path: &Path) -> Result<bool, OxenError> {
-        Ok(self.change_at(path)? == Some(StagedChange::Removal))
+        Ok(matches!(self.change_at(path)?, Some(StagedChange::Removal)))
     }
 
     /// What is staged at the file or directory `path`, or `None` when nothing is.
@@ -452,15 +443,17 @@ impl StagedSource<'_> {
         match self {
             Self::Db(None) => Ok(None),
             Self::Db(Some(db)) => {
-                // Keyed by the platform path string, which is the key `rm` writes a removal under.
-                let Some(value) = db.get_pinned(path.to_string_lossy().as_bytes())? else {
+                let Some(value) = get_staged_value(db, path)? else {
                     return Ok(None);
                 };
                 match rmp_serde::from_slice::<StagedMerkleTreeNode>(&value) {
                     Ok(entry) if entry.status == StagedEntryStatus::Removed => {
                         Ok(Some(StagedChange::Removal))
                     }
-                    Ok(_) => Ok(Some(StagedChange::Other)),
+                    Ok(entry) => Ok(Some(match entry.into_staged_file() {
+                        Some(file_node) => StagedChange::File(Box::new(file_node)),
+                        None => StagedChange::Other,
+                    })),
                     Err(err) => {
                         log::error!("change_at error decoding {path:?}: {err}");
                         Ok(Some(StagedChange::Other))
@@ -495,11 +488,13 @@ impl StagedSource<'_> {
 }
 
 /// What is staged at a path.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug)]
 enum StagedChange {
     /// A removal.
     Removal,
-    /// Any other staged entry, or one that does not decode.
+    /// A file's addition or edit, with the content staged for it.
+    File(Box<FileNode>),
+    /// Any other staged entry, one that does not decode, or any entry read from a `StagedData`.
     Other,
 }
 
@@ -716,26 +711,40 @@ async fn walk_status(
                         .last_mut()
                         .expect("path stack non-empty: just pushed this dir's state");
 
-                    let staged_change = if is_entry_dir {
-                        None
-                    } else {
-                        staged.change_at(&relative_path)?
-                    };
                     if is_entry_dir {
                         log::debug!("walk_status entry is a directory {path:?}");
                         subdirs_to_recurse.push(relative_path);
-                    } else if staged_change == Some(StagedChange::Removal) {
-                        log::debug!("walk_status entry has a staged removal {path:?}");
-                        // The staged removal already accounts for the committed entry, so
-                        // what sits on disk is a new file that nothing tracks.
-                        current.untracked.add_file(relative_path.clone());
-                        current.untracked_count += 1;
-                    } else if staged_change.is_some() {
-                        log::debug!("walk_status entry is staged {path:?}");
-                        // Check this after handling directories, because we still need
-                        // to recurse into staged directories.
-                        current.untracked.all_untracked = false;
-                    } else if let Some(node) = maybe_get_child_node(&node_path, &dir_children)? {
+                        continue;
+                    }
+                    if let Some(change) = staged.change_at(&relative_path)? {
+                        match change {
+                            StagedChange::Removal => {
+                                log::debug!("walk_status entry has a staged removal {path:?}");
+                                // The staged removal already accounts for the committed entry, so
+                                // what sits on disk is a new file that nothing tracks.
+                                current.untracked.add_file(relative_path.clone());
+                                current.untracked_count += 1;
+                            }
+                            StagedChange::File(file_node) => {
+                                log::debug!("walk_status entry is a staged file {path:?}");
+                                current.untracked.all_untracked = false;
+                                if repo
+                                    .is_modified_from_node_with_metadata(
+                                        &path, &file_node, &metadata,
+                                    )
+                                    .await?
+                                {
+                                    current.modified.insert(relative_path.clone());
+                                }
+                            }
+                            StagedChange::Other => {
+                                log::debug!("walk_status entry is staged {path:?}");
+                                current.untracked.all_untracked = false;
+                            }
+                        }
+                        continue;
+                    }
+                    if let Some(node) = maybe_get_child_node(&node_path, &dir_children)? {
                         log::debug!("walk_status entry is a child node {path:?}");
                         // If we have a dir node, it's either tracked (clean) or modified —
                         // either way, this directory is not all_untracked.

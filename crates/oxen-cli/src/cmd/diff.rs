@@ -110,13 +110,13 @@ impl DiffCmd {
         // Parse the different forms of diff commands
         let (file1, file2, revision1, revision2) = match commits_or_files.len() {
             0 => {
-                // oxen diff [--] [<path>…​] - compare working tree with HEAD
+                // oxen diff [--] [<path>…​] - compare working tree with what is staged, or HEAD
                 let path = if !paths.is_empty() {
                     PathBuf::from(&paths[0])
                 } else {
                     PathBuf::from("")
                 };
-                (path, None, Some("HEAD".to_string()), None)
+                (path, None, None, None)
             }
             1 => {
                 let arg = &commits_or_files[0];

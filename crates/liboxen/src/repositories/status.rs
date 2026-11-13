@@ -64,7 +64,9 @@ pub use crate::core::v_latest::status::status_from_dir;
 mod tests {
     use crate::error::OxenError;
     use crate::model::StagedEntryStatus;
+    use crate::model::diff::{ChangeType, DiffResult};
     use crate::model::staged_data::StagedDataOpts;
+    use crate::opts::DiffOpts;
     use crate::opts::RestoreOpts;
     use crate::opts::RmOpts;
     use crate::repositories;
@@ -614,6 +616,25 @@ mod tests {
             let status = repositories::status(&repo).await?;
             assert_eq!(status.moved_files.len(), 1);
             assert_eq!(status.staged_files.len(), 2); // Staged files still operates on the addition + removal
+            assert!(
+                status.modified_files.is_empty(),
+                "a staged move matching its working copy is not modified"
+            );
+
+            // Edit the move's destination after staging it
+            util::fs::write_to_path(&new_file, "readme, edited after staging")?;
+            let status = repositories::status(&repo).await?;
+            assert_eq!(status.moved_files.len(), 1);
+            assert_eq!(
+                status.modified_files,
+                HashSet::from([PathBuf::from("README2.md")]),
+                "a moved file edited after staging is modified"
+            );
+            assert_eq!(
+                status.unstaged_files(),
+                [PathBuf::from("README2.md")],
+                "a moved file edited after staging is listed once"
+            );
 
             // Restore one file and break the pair
             repositories::restore(&repo, RestoreOpts::from_staged_path(og_basename)).await?;
@@ -949,8 +970,85 @@ mod tests {
             status.print();
             let mod_files = status.modified_files;
             assert_eq!(mod_files.len(), 1);
-            let relative_path = util::fs::path_relative_to_dir(hello_file, repo_path)?;
+            let relative_path = util::fs::path_relative_to_dir(&hello_file, repo_path)?;
             assert!(mod_files.contains(&relative_path));
+
+            let changed_lines = async |path: &Path, revision: Option<&str>| {
+                let opts = DiffOpts {
+                    repo_dir: Some(repo.path.clone()),
+                    path_1: path.to_path_buf(),
+                    revision_1: revision.map(str::to_string),
+                    ..Default::default()
+                };
+                let diff = repositories::diffs::diff(opts)
+                    .await
+                    .expect("diff of a changed file succeeds");
+                let [DiffResult::Text(text)] = diff.as_slice() else {
+                    panic!("expected one text diff: {diff:?}");
+                };
+                text.lines
+                    .iter()
+                    .filter(|line| line.modification != ChangeType::Unchanged)
+                    .map(|line| (line.modification, line.text.clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                changed_lines(&hello_file, None).await,
+                [
+                    (ChangeType::Removed, "Hello 1".to_string()),
+                    (ChangeType::Added, "Hello 2".to_string()),
+                ],
+                "with nothing staged, HEAD is the baseline"
+            );
+
+            // Stage the edit and a new file below the root, then edit both again
+            let sub_dir = repo_path.join("sub");
+            util::fs::create_dir_all(&sub_dir)?;
+            let new_file = test::add_txt_file_to_dir(&sub_dir, "New")?;
+            repositories::add(&repo, &hello_file).await?;
+            repositories::add(&repo, &new_file).await?;
+            let status = repositories::status(&repo).await?;
+            assert!(
+                status.modified_files.is_empty(),
+                "a staged file matching its working copy is not modified"
+            );
+            test::modify_txt_file(&hello_file, "Hello 3, edited after staging")?;
+            test::modify_txt_file(&new_file, "New, edited after staging")?;
+            let status = repositories::status(&repo).await?;
+            let new_path = util::fs::path_relative_to_dir(&new_file, repo_path)?;
+            assert_eq!(
+                status.modified_files,
+                HashSet::from([relative_path, new_path]),
+                "a staged edit or addition edited again is modified"
+            );
+
+            // A diff without a revision compares with what was staged, and one with a revision
+            // compares with that revision
+            let edited_again = "Hello 3, edited after staging".to_string();
+            assert_eq!(
+                changed_lines(&hello_file, None).await,
+                [
+                    (ChangeType::Removed, "Hello 2".to_string()),
+                    (ChangeType::Added, edited_again.clone()),
+                ],
+                "a staged edit is the baseline for an edit made after it"
+            );
+            assert_eq!(
+                changed_lines(&hello_file, Some("HEAD")).await,
+                [
+                    (ChangeType::Removed, "Hello 1".to_string()),
+                    (ChangeType::Added, edited_again),
+                ],
+                "a revision is the baseline whatever is staged"
+            );
+            assert_eq!(
+                changed_lines(&new_file, None).await,
+                [
+                    (ChangeType::Removed, "New".to_string()),
+                    (ChangeType::Added, "New, edited after staging".to_string()),
+                ],
+                "a staged addition is the baseline for an edit made after it"
+            );
 
             Ok(())
         })

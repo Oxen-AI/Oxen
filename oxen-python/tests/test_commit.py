@@ -73,6 +73,15 @@ def test_commit_all(celeba_local_repo_no_commits):
     )
     assert status.unstaged_modified_files() == []
 
+    # edit the file again, after staging it
+    with open(labels_path, "a") as f:
+        f.write("scarf\n")
+    status = repo.status()
+    assert status.unstaged_modified_files() == [labels_file], (
+        "an edit made after staging is unstaged"
+    )
+    assert status.modified_files() == [labels_file]
+
     # delete a tracked file, leaving the removal unstaged
     image_file = str(PurePath("images", "1.jpg"))
     os.remove(os.path.join(repo.path, image_file))

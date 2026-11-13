@@ -11,7 +11,7 @@ use std::thread::sleep;
 use indicatif::ProgressBar;
 use parking_lot::{Mutex, RwLock, RwLockWriteGuard};
 use rmp_serde::Serializer;
-use rocksdb::{DB, Direction, IteratorMode, WriteBatch};
+use rocksdb::{DB, DBPinnableSlice, Direction, IteratorMode, WriteBatch};
 use serde::Serialize;
 
 use crate::constants::STAGED_DIR;
@@ -207,6 +207,8 @@ fn serialize_staged_node(node: &StagedMerkleTreeNode) -> Result<Vec<u8>, OxenErr
     Ok(buf)
 }
 
+/// The entry staged at `path` under `normalize_key`'s form, the key `StagedDBManager` writes. An
+/// entry the CLI's `oxen add` or `oxen rm` wrote is found only through [`get_staged_value`].
 pub(crate) fn read_from_db(
     db: &DB,
     path: &Path,
@@ -215,15 +217,14 @@ pub(crate) fn read_from_db(
     let Some(data) = db.get(key.as_bytes())? else {
         return Ok(None);
     };
-    match rmp_serde::from_slice(&data) {
-        Ok(val) => Ok(Some(val)),
-        Err(e) => {
-            log::error!("Failed to deserialize data for key {key}: {e}");
-            Err(OxenError::basic_str(format!(
-                "Failed to deserialize staged data: {e}"
-            )))
-        }
-    }
+    decode_staged_node(&key, &data).map(Some)
+}
+
+fn decode_staged_node(key: &str, data: &[u8]) -> Result<StagedMerkleTreeNode, OxenError> {
+    rmp_serde::from_slice(data).map_err(|e| {
+        log::error!("Failed to deserialize data for key {key}: {e}");
+        OxenError::basic_str(format!("Failed to deserialize staged data: {e}"))
+    })
 }
 
 /// The staged entries at and under `path`, which is relative to the repository.
@@ -337,6 +338,24 @@ impl StagedWriteBatch {
         db.write(write_batch)?;
         Ok(())
     }
+}
+
+/// The value staged at `path`, or `None` when nothing is. The CLI's `oxen add` and `oxen rm` key
+/// an entry by the platform's path string and `StagedDBManager` by `normalize_key`'s form, which
+/// differ on Windows below the repository root, so an entry under either key is found.
+pub(crate) fn get_staged_value<'a>(
+    db: &'a DB,
+    path: &Path,
+) -> Result<Option<DBPinnableSlice<'a>>, OxenError> {
+    let platform_key = path.to_string_lossy();
+    if let Some(value) = db.get_pinned(platform_key.as_bytes())? {
+        return Ok(Some(value));
+    }
+    // The two forms differ only where the platform's form has a backslash
+    if !platform_key.contains('\\') {
+        return Ok(None);
+    }
+    Ok(db.get_pinned(normalize_key(path).as_bytes())?)
 }
 
 impl StagedDBManager {
@@ -602,6 +621,19 @@ impl StagedDBManager {
         path: &Path,
     ) -> Result<Vec<(PathBuf, StagedMerkleTreeNode)>, OxenError> {
         staged_entries_under(path, &self.staged_db.read())
+    }
+
+    /// The entry staged at `path`, wherever the writer keyed it (see `get_staged_value`), where
+    /// `read_from_staged_db` finds only the entries this manager wrote.
+    pub(crate) fn read_staged_entry(
+        &self,
+        path: &Path,
+    ) -> Result<Option<StagedMerkleTreeNode>, OxenError> {
+        let db = self.staged_db.read();
+        let Some(value) = get_staged_value(&db, path)? else {
+            return Ok(None);
+        };
+        decode_staged_node(&path.to_string_lossy(), &value).map(Some)
     }
 
     /// Read all entries below a path from the staged db

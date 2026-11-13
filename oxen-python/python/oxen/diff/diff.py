@@ -62,8 +62,10 @@ def diff(
 
     Args:
         path: `os.PathLike`
-            The path to diff. If `to` is not provided,
-            this will compare the data frame to the previous commit.
+            The path to diff. If neither `to` nor a revision is provided, this
+            compares the working copy with the version staged for it, or with
+            the last commit's version when nothing is staged. With only
+            `revision_left`, it compares the working copy with that revision.
         to: `os.PathLike`
             An optional second path to compare to.
             If provided this will be the right side of the diff.
