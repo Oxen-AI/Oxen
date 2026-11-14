@@ -18,6 +18,9 @@ on:
 
 env:
   MACOSX_DEPLOYMENT_TARGET: 10.13
+  # liblzma-sys links whatever xz pkg-config finds unless this is set, which on the arm64 runner is
+  # Homebrew's, so the released oxen and oxen-server would fail to start on a Mac without it.
+  LZMA_API_STATIC: "1"
 
 defaults:
   run:
