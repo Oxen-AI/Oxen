@@ -753,6 +753,9 @@ struct StageReport {
     staged: Vec<PathBuf>,
     /// The files the server refused as malformed, which are reported rather than sent again.
     refused: Vec<ErrorFileInfo>,
+    /// The paths a 500 lists as not staged. A path can be here and in `staged` when two files in
+    /// the batch share it and only one staged, and every file at such a path is sent again.
+    failed: Vec<PathBuf>,
 }
 
 impl StageReport {
@@ -766,6 +769,7 @@ impl StageReport {
         directory: &str,
     ) -> (Vec<FileToStage>, Vec<ErrorFileInfo>) {
         let staged: HashSet<&PathBuf> = self.staged.iter().collect();
+        let failed: HashSet<&PathBuf> = self.failed.iter().collect();
         let refused: HashMap<&PathBuf, &str> = self
             .refused
             .iter()
@@ -780,7 +784,7 @@ impl StageReport {
                 remaining.push(file);
                 continue;
             };
-            if staged.contains(&expected) {
+            if staged.contains(&expected) && !failed.contains(&expected) {
                 continue;
             }
             match refused.get(&expected) {
@@ -816,14 +820,16 @@ async fn post_workspace_files_batch(
 
     let body = response.text().await?;
     if let Ok(response) = serde_json::from_str::<FilesNotStagedResponse>(&body) {
-        let refused = if status == StatusCode::BAD_REQUEST {
-            response.err_files
+        let (refused, failed) = if status == StatusCode::BAD_REQUEST {
+            (response.err_files, vec![])
         } else {
-            vec![]
+            let failed = response.err_files.into_iter().filter_map(|err| err.path);
+            (vec![], failed.collect())
         };
         return Ok(StageReport {
             staged: response.paths,
             refused,
+            failed,
         });
     }
     // Any other answer is a failure the endpoint did not attribute to particular files, such as a
@@ -1331,6 +1337,7 @@ mod tests {
                 path: Some(PathBuf::from("data/refused.jpg")),
                 error: "not gzip".to_string(),
             }],
+            ..Default::default()
         };
         let (remaining, refused) = report.reconcile(files, "data");
         assert_eq!(remaining.len(), 1);
@@ -1341,6 +1348,38 @@ mod tests {
         assert_eq!(refused.len(), 1, "a refused file is reported, not retried");
         assert_eq!(refused[0].path, Some(PathBuf::from("./refused.jpg")));
         assert_eq!(refused[0].error, "not gzip");
+    }
+
+    #[test]
+    fn test_reconcile_retries_every_file_sharing_a_failed_path() {
+        // Two files in one batch can share a destination. When one stages and the other fails, the
+        // path is in both `staged` and `failed`, and both files go back in their original order so
+        // the last one still wins.
+        let files = vec![
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/a/shared.txt"),
+                staging_path: PathBuf::from("shared.txt"),
+            },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/b/shared.txt"),
+                staging_path: PathBuf::from("shared.txt"),
+            },
+        ];
+        let report = super::StageReport {
+            staged: vec![PathBuf::from("data/shared.txt")],
+            failed: vec![PathBuf::from("data/shared.txt")],
+            ..Default::default()
+        };
+        let (remaining, refused) = report.reconcile(files, "data");
+        let disk_paths: Vec<_> = remaining.iter().map(|f| f.disk_path.clone()).collect();
+        assert_eq!(
+            disk_paths,
+            vec![
+                PathBuf::from("/tmp/a/shared.txt"),
+                PathBuf::from("/tmp/b/shared.txt")
+            ]
+        );
+        assert!(refused.is_empty());
     }
 
     #[tokio::test]
@@ -1394,6 +1433,7 @@ mod tests {
             report.refused.is_empty(),
             "a 500's files are left to retry rather than refused"
         );
+        assert_eq!(report.failed, vec![PathBuf::from("data/bad.bin")]);
 
         let err = post("unattributed")
             .await
