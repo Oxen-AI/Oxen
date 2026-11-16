@@ -27,7 +27,7 @@ linker_messages = "allow"
 
 [workspace.dependencies]
 actix-http = "3.4.0"
-actix-multipart = "0.8"
+actix-multipart = "0.8.8"
 actix-multipart-test = "0.0.3"
 actix-web = { version = "4.17.0", features = ["rustls"] }
 anyhow = "1.0.102"
