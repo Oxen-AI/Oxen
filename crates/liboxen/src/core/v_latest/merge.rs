@@ -5,7 +5,7 @@ use crate::core::db::merkle_node::MerkleNodeDB;
 pub use crate::core::merge::entry_merge_conflict_db_reader::EntryMergeConflictDBReader;
 pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
-use crate::core::merge::{db_path, node_merge_conflict_writer};
+use crate::core::merge::{db_path, node_merge_conflict_writer, write_merge_heads};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::add;
 use crate::core::v_latest::branches::OnConflict;
@@ -25,6 +25,7 @@ use crate::model::{MerkleHash, PartialNode};
 use crate::repositories;
 use crate::repositories::commits::commit_writer;
 use crate::repositories::merge::MergeCommits;
+use crate::tasks;
 use crate::util;
 
 use rocksdb::DB;
@@ -1018,8 +1019,21 @@ async fn create_merge_commit(
     merge_commits: &MergeCommits,
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
-    let base_commit = merge_commits.base.clone();
-    add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
+    let base_commit = Some(merge_commits.base.clone());
+    match add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes).await {
+        Ok(_) => {}
+        Err(OxenError::AddFailed { failures }) => {
+            // Leave the merge unfinished, as a conflicted merge does, so adding the listed files
+            // and committing makes the merge commit with both parents
+            let repo = repo.clone();
+            let merge_commit = merge_commits.merge.clone();
+            let base_commit = merge_commits.base.clone();
+            tasks::spawn_blocking(move || write_merge_heads(&repo, &merge_commit, &base_commit))
+                .await??;
+            return Err(OxenError::MergeAddFailed { failures });
+        }
+        Err(err) => return Err(err),
+    }
 
     let commit_msg = merge_commits.commit_message();
     log::debug!("create_merge_commit {commit_msg}");

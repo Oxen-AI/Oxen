@@ -464,6 +464,17 @@ pub enum OxenError {
         failures: Vec<(PathBufError, Box<OxenError>)>,
     },
 
+    /// A conflict-free `oxen merge` staged every file it could, left out each listed file, at its
+    /// path relative to the repository, whose version file could not be stored, and stopped
+    /// before committing with the merge still in progress. The vector is non-empty.
+    #[error(
+        "The merge was not committed. {}",
+        format_file_failures("add", failures)
+    )]
+    MergeAddFailed {
+        failures: Vec<(PathBufError, Box<OxenError>)>,
+    },
+
     // Entry
     /// A commit entry is not present in the repository.
     #[error("{0}")]
@@ -883,8 +894,9 @@ fn format_versions_missing_on_server(hashes: &[String]) -> String {
     out
 }
 
-/// Multi-line render for [`OxenError::RestoreFailed`] and [`OxenError::AddFailed`]. Each failed
-/// file is listed with its underlying error so users see every problem at once.
+/// Multi-line render for [`OxenError::RestoreFailed`], [`OxenError::AddFailed`], and
+/// [`OxenError::MergeAddFailed`]. Each failed file is listed with its underlying error so users
+/// see every problem at once.
 fn format_file_failures(action: &str, failures: &[(PathBufError, Box<OxenError>)]) -> String {
     let mut out = format!("Failed to {action} {} file(s):", failures.len());
     for (path, err) in failures {
@@ -996,6 +1008,9 @@ impl OxenError {
             }
             AddFailed { .. } => {
                 "The other files were staged. Fix the problem shown for each file listed, then add it again with `oxen add`."
+            }
+            MergeAddFailed { .. } => {
+                "The other files were staged. Fix the problem shown for each file listed, add it again with `oxen add`, then finish the merge with `oxen commit`, or abandon it with `oxen merge --abort`."
             }
             HTTP(req_err) => {
                 if req_err.is_connect() || req_err.is_timeout() {

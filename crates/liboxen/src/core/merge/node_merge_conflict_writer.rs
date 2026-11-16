@@ -1,12 +1,9 @@
 use std::path::Path;
 
-use crate::constants::{MERGE_HEAD_FILE, ORIG_HEAD_FILE};
 use crate::core::db;
 use crate::core::merge;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, merge_conflict::NodeMergeConflict};
-use crate::util;
-use crate::util::fs::AtomicFile;
 
 use rocksdb::DB;
 
@@ -32,12 +29,7 @@ pub fn write_conflicts_to_disk(
     base_commit: &Commit,
     conflicts: &[NodeMergeConflict],
 ) -> Result<(), OxenError> {
-    // Write two files which are the merge commit and head commit so that we can make these parents later
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    let merge_head_path = hidden_dir.join(MERGE_HEAD_FILE);
-    let orig_head_path = hidden_dir.join(ORIG_HEAD_FILE);
-    AtomicFile::new(&merge_head_path).write(merge_commit.id.as_bytes())?;
-    AtomicFile::new(&orig_head_path).write(base_commit.id.as_bytes())?;
+    merge::write_merge_heads(repo, merge_commit, base_commit)?;
 
     for conflict in conflicts.iter() {
         let (_, base_path) = &conflict.base_entry;
