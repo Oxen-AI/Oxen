@@ -373,15 +373,8 @@ impl LocalRepository {
         remote
     }
 
-    pub fn delete_remote(&mut self, name: impl AsRef<str>) {
-        let name = name.as_ref();
-        let mut new_remotes: Vec<Remote> = vec![];
-        for i in 0..self.remotes.len() {
-            if self.remotes[i].name != name {
-                new_remotes.push(self.remotes[i].clone());
-            }
-        }
-        self.remotes = new_remotes;
+    pub fn delete_remote(&mut self, name: &str) {
+        self.remotes.retain(|remote| remote.name != name);
     }
 
     pub fn has_remote(&self, name: impl AsRef<str>) -> bool {

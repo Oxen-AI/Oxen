@@ -10,7 +10,6 @@ license-file = "LICENSE"
 homepage = "https://oxen.ai"
 repository = "https://github.com/Oxen-AI/Oxen"
 readme = "README.md"
-rust-version = "1.97.1"
 
 [workspace.lints.clippy]
 disallowed_methods = "deny"
@@ -35,7 +34,6 @@ approx = "0.5.1"
 arrow = "=58.1.0"
 astral-tokio-tar = "0.7"
 async-compression = { version = "0.4.2", features = ["tokio", "gzip", "futures-io"] }
-async-recursion = "1.1.1"
 async-std = { version = "1.12.0", features = ["unstable"] }
 async-tar = "0.6"
 async-trait = "0.1.80"
@@ -60,7 +58,6 @@ dirs = "7.0"
 dotenvy = "0.15.7"
 duckdb = { package = "duckdb", version = "=1.10506.1", default-features = false, features = ["serde_json"] }
 dunce = "1.0.4"
-env_logger = "0.11.3"
 filetime = "0.2.22"
 flate2 = { version = "1.1.0", default-features = false, features = ["zlib-ng"] }
 fs_extra = "1.3.0"
@@ -164,7 +161,6 @@ tracing = "0.1"
 # failed request itself. See docs/error_handling.md.
 tracing-actix-web = { version = "0.7", default-features = false }
 tracing-appender = "0.2"
-tracing-log = "0.2"
 tracing-opentelemetry = "0.33"
 # "tracing-log" installs the log->tracing bridge, without which none of the `log::*` call sites
 # reach a subscriber layer. It is also a default feature; listed explicitly so turning defaults off
