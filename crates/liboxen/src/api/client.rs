@@ -237,7 +237,17 @@ async fn parse_json_body_with_err_msg(
     let request_id = get_request_id(&res);
     log::debug!("url: {url}\nstatus: {status} request_id: {request_id}");
     let body = res.text().await?;
+    parse_json_text_with_err_msg(url, status, body, response_type, response_msg_override)
+}
 
+/// Parse a response body already read as text, as [`parse_json_body_with_err_msg`] does.
+fn parse_json_text_with_err_msg(
+    url: &str,
+    status: reqwest::StatusCode,
+    body: String,
+    response_type: Option<&str>,
+    response_msg_override: Option<&str>,
+) -> Result<String, OxenError> {
     let response: Result<OxenResponse, serde_json::Error> = serde_json::from_str(&body);
     log::debug!("response: {response:?}");
     match response {

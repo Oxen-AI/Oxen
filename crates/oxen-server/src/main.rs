@@ -58,11 +58,11 @@ use liboxen::view::versions::{
 use liboxen::view::workspaces::{ListWorkspaceResponseView, NewWorkspace, WorkspaceResponse};
 use liboxen::view::{
     CommitEntryVersion, CommitResponse, CommitStatsResponse, DataTypeCount, ErrorFileInfo,
-    ErrorFilesResponse, FilePathsResponse, FileWithHash, ListCommitResponse,
-    ListNamespacesResponse, ListRepositoryResponse, MerkleHashesResponse, NamespaceResponse,
-    NamespaceView, PaginatedCommits, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
-    ParseResourceResponse, PathHistoryPage, RepositoryResponse, RepositoryView, RootCommitResponse,
-    StatusMessage,
+    ErrorFilesResponse, FilePathsResponse, FileWithHash, FilesNotStagedResponse,
+    ListCommitResponse, ListNamespacesResponse, ListRepositoryResponse, MerkleHashesResponse,
+    NamespaceResponse, NamespaceView, PaginatedCommits, PaginatedEntryVersions,
+    PaginatedEntryVersionsResponse, ParseResourceResponse, PathHistoryPage, RepositoryResponse,
+    RepositoryView, RootCommitResponse, StatusMessage,
 };
 
 use sentry::integrations::tracing as sentry_tracing;
@@ -255,7 +255,8 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
             TabularCompareBody, TabularCompareTargetBody,
             // File/Entry Schemas
             CommitEntryVersion, ResourceVersion, PaginatedEntryVersions, PaginatedEntryVersionsResponse,
-            FilePathsResponse, ErrorFilesResponse, ErrorFileInfo, FileWithHash,
+            FilePathsResponse, FilesNotStagedResponse, ErrorFilesResponse, ErrorFileInfo,
+            FileWithHash,
             // Upload & Request Bodies
             crate::controllers::workspaces::files::FileUpload,
             crate::controllers::file::FileUploadBody,

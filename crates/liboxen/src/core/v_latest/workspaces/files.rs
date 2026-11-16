@@ -343,7 +343,8 @@ impl InspectedVersionFile {
 /// Stage a batch of version files into the workspace. The version store must already hold every
 /// file.
 ///
-/// Returns the destination paths that staged, plus a per-file error for each that did not.
+/// Returns the destination paths that staged, plus a per-file error for each that did not. Each
+/// error's message leaves out the cause, which is logged.
 pub async fn add_version_files(
     workspace: &Workspace,
     files: Vec<VersionFileToStage>,
@@ -358,12 +359,16 @@ pub async fn add_version_files(
         match stage_version_file(workspace, file, &staged_db_manager, &seen_dirs).await {
             Ok(_) => staged_paths.push(dst_path),
             Err(e) => {
-                let error = format!("Failed to add file to staged db: {e}");
-                log::error!("{error}");
+                tracing::error!(
+                    oxen.file_path = %dst_path.display(),
+                    oxen.file_hash = %hash,
+                    exception.message = %e,
+                    "Failed to stage a version file"
+                );
                 err_files.push(ErrorFileInfo {
                     hash: hash.to_string(),
                     path: Some(dst_path),
-                    error,
+                    error: "Failed to stage the file".to_string(),
                 });
             }
         }

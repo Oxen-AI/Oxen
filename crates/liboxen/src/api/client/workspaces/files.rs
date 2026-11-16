@@ -9,7 +9,7 @@ use crate::tasks;
 use crate::util::{self, concurrency};
 use crate::view::versions::WorkspaceDestination;
 use crate::view::workspaces::{RenameRequest, ValidateUploadFeasibilityRequest};
-use crate::view::{ErrorFileInfo, FilePathsResponse};
+use crate::view::{ErrorFileInfo, FilePathsResponse, FilesNotStagedResponse};
 use crate::{api, repositories, view};
 
 use futures_util::StreamExt;
@@ -17,7 +17,8 @@ use glob_match::glob_match;
 
 use parking_lot::Mutex;
 use rand::{RngExt, rng};
-use std::collections::HashSet;
+use reqwest::StatusCode;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
@@ -744,46 +745,108 @@ fn build_workspace_files_form(
     Ok(form)
 }
 
-/// POST a multipart form to the workspace files endpoint and return the staging paths the server
-/// reports as staged (each is the full path: `directory` joined with the file's staging path).
+/// What the workspace files endpoint reports for one batch. Each path is the full path: the request
+/// directory joined with the file's staging path.
+#[derive(Debug, Default)]
+struct StageReport {
+    /// The paths that staged.
+    staged: Vec<PathBuf>,
+    /// The files the server refused as malformed, which are reported rather than sent again.
+    refused: Vec<ErrorFileInfo>,
+    /// The paths a 500 lists as not staged. A path can be here and in `staged` when two files in
+    /// the batch share it and only one staged, and every file at such a path is sent again.
+    failed: Vec<PathBuf>,
+}
+
+impl StageReport {
+    /// Split `files` into those still to send and a per-file error for each the server refused,
+    /// leaving out the ones that staged. Compares each file by [`expected_staged_path`] (the same
+    /// normalize-then-join the server applies), so a file that staged under a normalized path isn't
+    /// misread as failed.
+    fn reconcile(
+        &self,
+        files: Vec<FileToStage>,
+        directory: &str,
+    ) -> (Vec<FileToStage>, Vec<ErrorFileInfo>) {
+        let staged: HashSet<&PathBuf> = self.staged.iter().collect();
+        let failed: HashSet<&PathBuf> = self.failed.iter().collect();
+        let refused: HashMap<&PathBuf, &str> = self
+            .refused
+            .iter()
+            .filter_map(|err| Some((err.path.as_ref()?, err.error.as_str())))
+            .collect();
+        let mut remaining = vec![];
+        let mut refused_files = vec![];
+        for file in files {
+            // A staging path that won't normalize has no path the server could have staged it at,
+            // so it stays unstaged.
+            let Ok(expected) = expected_staged_path(directory, &file.staging_path) else {
+                remaining.push(file);
+                continue;
+            };
+            if staged.contains(&expected) && !failed.contains(&expected) {
+                continue;
+            }
+            match refused.get(&expected) {
+                Some(error) => refused_files.push(ErrorFileInfo {
+                    hash: String::new(),
+                    path: Some(file.staging_path),
+                    error: error.to_string(),
+                }),
+                None => remaining.push(file),
+            }
+        }
+        (remaining, refused_files)
+    }
+}
+
+/// POST a multipart form to the workspace files endpoint and return what it reports. A 400 or 500
+/// that lists the files it did not stage is a report, and the files a 500 lists are left to retry.
 async fn post_workspace_files_batch(
     client: &reqwest::Client,
     url: &str,
     form: reqwest::multipart::Form,
-) -> Result<Vec<PathBuf>, OxenError> {
+) -> Result<StageReport, OxenError> {
     let response = client.post(url).multipart(form).send().await?;
-    let body = client::parse_json_body(url, response).await?;
-    let response: FilePathsResponse = serde_json::from_str(&body)?;
-    Ok(response.paths)
-}
+    let status = response.status();
+    if status != StatusCode::BAD_REQUEST && status != StatusCode::INTERNAL_SERVER_ERROR {
+        let body = client::parse_json_body(url, response).await?;
+        let response: FilePathsResponse = serde_json::from_str(&body)?;
+        return Ok(StageReport {
+            staged: response.paths,
+            ..Default::default()
+        });
+    }
 
-/// Return the files the server did NOT stage, comparing each against [`expected_staged_path`]
-/// (the same normalize-then-join the server applies) rather than the raw `directory.join(staging)`,
-/// so a file that staged under a normalized name isn't misread as failed.
-fn unstaged_files(
-    files: Vec<FileToStage>,
-    staged: &[PathBuf],
-    directory: &str,
-) -> Vec<FileToStage> {
-    let staged: HashSet<&PathBuf> = staged.iter().collect();
-    files
-        .into_iter()
-        .filter(
-            |file| match expected_staged_path(directory, &file.staging_path) {
-                Ok(expected) => !staged.contains(&expected),
-                // If the staging path won't normalize, the server would have rejected it too; there is
-                // no path it could have staged at, so treat it as unstaged.
-                Err(_) => true,
-            },
-        )
-        .collect()
+    let body = response.text().await?;
+    if let Ok(response) = serde_json::from_str::<FilesNotStagedResponse>(&body) {
+        let (refused, failed) = if status == StatusCode::BAD_REQUEST {
+            (response.err_files, vec![])
+        } else {
+            let failed = response.err_files.into_iter().filter_map(|err| err.path);
+            (vec![], failed.collect())
+        };
+        return Ok(StageReport {
+            staged: response.paths,
+            refused,
+            failed,
+        });
+    }
+    // Any other answer is a failure the endpoint did not attribute to particular files, such as a
+    // missing filename. Its status is not a success, so parsing its body returns the error.
+    client::parse_json_text_with_err_msg(url, status, body, None, None).and_then(|body| {
+        Err(OxenError::internal_error(format!(
+            "{url} answered {status} with a success body: {body}"
+        )))
+    })
 }
 
 /// Upload and stage a batch of files into a workspace via the multipart files endpoint, which
 /// hashes the content, stores it, and stages it with server-computed metadata. `form` is the
 /// pre-gzipped batch for the first attempt; `files_to_stage` reconciles what staged and rebuilds the
-/// form on retry. Returns per-file errors for anything still unstaged after the request succeeds;
-/// returns Err only on a persistent transport failure (aborting the operation).
+/// form on retry. Returns per-file errors for the files the server refused, and for anything still
+/// unstaged after the retries; returns Err only on a persistent transport failure (aborting the
+/// operation).
 async fn stage_multipart_batch_to_workspace_with_retry(
     remote_repo: &RemoteRepository,
     client: Arc<reqwest::Client>,
@@ -798,8 +861,13 @@ async fn stage_multipart_batch_to_workspace_with_retry(
 
     // First attempt uses the pre-gzipped form built by the producer.
     let mut transport_error = None;
+    let mut err_files = vec![];
     let mut remaining = match post_workspace_files_batch(&client, &url, form).await {
-        Ok(staged) => unstaged_files(files_to_stage, &staged, directory),
+        Ok(report) => {
+            let (remaining, refused) = report.reconcile(files_to_stage, directory);
+            err_files.extend(refused);
+            remaining
+        }
         Err(e) => {
             log::error!("Failed to stage multipart batch to workspace: {e}");
             transport_error = Some(e);
@@ -818,9 +886,11 @@ async fn stage_multipart_batch_to_workspace_with_retry(
         let form =
             tasks::spawn_blocking(move || build_workspace_files_form(&files_for_form)).await??;
         remaining = match post_workspace_files_batch(&client, &url, form).await {
-            Ok(staged) => {
+            Ok(report) => {
                 transport_error = None;
-                unstaged_files(remaining, &staged, directory)
+                let (remaining, refused) = report.reconcile(remaining, directory);
+                err_files.extend(refused);
+                remaining
             }
             Err(e) => {
                 log::error!(
@@ -839,16 +909,14 @@ async fn stage_multipart_batch_to_workspace_with_retry(
         return Err(e);
     }
 
-    // Files the server accepted the request for but did not stage are per-file failures. The server
-    // computes the hash, so it is unknown to the client here; the staging path identifies the file.
-    Ok(remaining
-        .into_iter()
-        .map(|file| ErrorFileInfo {
-            hash: String::new(),
-            path: Some(file.staging_path),
-            error: "File was not staged by the workspace files endpoint".to_string(),
-        })
-        .collect())
+    // Files the server answered for but did not stage are per-file failures. The server computes
+    // the hash, so it is unknown to the client here; the staging path identifies the file.
+    err_files.extend(remaining.into_iter().map(|file| ErrorFileInfo {
+        hash: String::new(),
+        path: Some(file.staging_path),
+        error: "File was not staged by the workspace files endpoint".to_string(),
+    }));
+    Ok(err_files)
 }
 
 // TODO: Merge this with 'rm_files'
@@ -1088,7 +1156,7 @@ pub async fn download(
     } else {
         let status = response.status();
 
-        if status == reqwest::StatusCode::NOT_FOUND {
+        if status == StatusCode::NOT_FOUND {
             return Err(OxenError::path_does_not_exist(path));
         }
 
@@ -1148,7 +1216,7 @@ mod tests {
     use crate::opts::fetch_opts::FetchOpts;
     use crate::repositories;
     use crate::test;
-    use crate::view::RemoteStagedStatus;
+    use crate::view::{ErrorFileInfo, RemoteStagedStatus};
     use std::path::{Path, PathBuf, absolute};
 
     use tempfile::TempDir;
@@ -1194,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unstaged_files_recognizes_server_normalized_paths() {
+    fn test_reconcile_recognizes_server_normalized_paths() {
         let files = vec![
             super::FileToStage {
                 disk_path: PathBuf::from("/tmp/a"),
@@ -1215,7 +1283,11 @@ mod tests {
             PathBuf::from("data/train/img.jpg"),
             PathBuf::from("data/train/nested.jpg"),
         ];
-        let remaining = super::unstaged_files(files, &staged, "data");
+        let report = super::StageReport {
+            staged,
+            ..Default::default()
+        };
+        let (remaining, _) = report.reconcile(files, "data");
         assert!(
             remaining.is_empty(),
             "all staged files should reconcile, got unstaged: {remaining:?}"
@@ -1223,7 +1295,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unstaged_files_reconciles_dot_directory() {
+    fn test_reconcile_dot_directory() {
         // Regression for the "added 0 entries ... failed to upload 1 entries" bug: `oxen workspace
         // add` stages with the default directory ".", the server collapses it and echoes back
         // "logo.png", and the client must reconcile that rather than reporting a false failure.
@@ -1231,8 +1303,11 @@ mod tests {
             disk_path: PathBuf::from("/tmp/logo.png"),
             staging_path: PathBuf::from("logo.png"),
         }];
-        let staged = vec![PathBuf::from("logo.png")];
-        let remaining = super::unstaged_files(files, &staged, ".");
+        let report = super::StageReport {
+            staged: vec![PathBuf::from("logo.png")],
+            ..Default::default()
+        };
+        let (remaining, _) = report.reconcile(files, ".");
         assert!(
             remaining.is_empty(),
             "a file staged under a '.' directory must reconcile, got unstaged: {remaining:?}"
@@ -1240,7 +1315,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unstaged_files_reports_files_the_server_skipped() {
+    fn test_reconcile_reports_files_the_server_skipped_or_refused() {
         let files = vec![
             super::FileToStage {
                 disk_path: PathBuf::from("/tmp/a"),
@@ -1250,15 +1325,128 @@ mod tests {
                 disk_path: PathBuf::from("/tmp/b"),
                 staging_path: PathBuf::from("train/dropped.jpg"),
             },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/c"),
+                staging_path: PathBuf::from("./refused.jpg"),
+            },
         ];
-        // Server staged only the first file.
-        let staged = vec![PathBuf::from("data/kept.jpg")];
-        let remaining = super::unstaged_files(files, &staged, "data");
+        let report = super::StageReport {
+            staged: vec![PathBuf::from("data/kept.jpg")],
+            refused: vec![ErrorFileInfo {
+                hash: String::new(),
+                path: Some(PathBuf::from("data/refused.jpg")),
+                error: "not gzip".to_string(),
+            }],
+            ..Default::default()
+        };
+        let (remaining, refused) = report.reconcile(files, "data");
         assert_eq!(remaining.len(), 1);
         assert_eq!(
             remaining[0].staging_path,
             PathBuf::from("train/dropped.jpg")
         );
+        assert_eq!(refused.len(), 1, "a refused file is reported, not retried");
+        assert_eq!(refused[0].path, Some(PathBuf::from("./refused.jpg")));
+        assert_eq!(refused[0].error, "not gzip");
+    }
+
+    #[test]
+    fn test_reconcile_retries_every_file_sharing_a_failed_path() {
+        // Two files in one batch can share a destination. When one stages and the other fails, the
+        // path is in both `staged` and `failed`, and both files go back in their original order so
+        // the last one still wins.
+        let files = vec![
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/a/shared.txt"),
+                staging_path: PathBuf::from("shared.txt"),
+            },
+            super::FileToStage {
+                disk_path: PathBuf::from("/tmp/b/shared.txt"),
+                staging_path: PathBuf::from("shared.txt"),
+            },
+        ];
+        let report = super::StageReport {
+            staged: vec![PathBuf::from("data/shared.txt")],
+            failed: vec![PathBuf::from("data/shared.txt")],
+            ..Default::default()
+        };
+        let (remaining, refused) = report.reconcile(files, "data");
+        let disk_paths: Vec<_> = remaining.iter().map(|f| f.disk_path.clone()).collect();
+        assert_eq!(
+            disk_paths,
+            vec![
+                PathBuf::from("/tmp/a/shared.txt"),
+                PathBuf::from("/tmp/b/shared.txt")
+            ]
+        );
+        assert!(refused.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_post_workspace_files_batch_reads_files_not_staged() -> Result<(), OxenError> {
+        let mut server = mockito::Server::new_async().await;
+        let not_staged = r#"{"status":"error","status_message":"%s","paths":[%p],
+            "err_files":[{"hash":"","path":"data/bad.bin","error":"not gzip"}]}"#;
+        let refused = server
+            .mock("POST", "/refused")
+            .with_status(400)
+            .with_body(not_staged.replace("%s", "bad_request").replace("%p", ""))
+            .create_async()
+            .await;
+        let failed = server
+            .mock("POST", "/failed")
+            .with_status(500)
+            .with_body(
+                not_staged
+                    .replace("%s", "internal_server_error")
+                    .replace("%p", r#""data/ok.txt""#),
+            )
+            .create_async()
+            .await;
+        let unattributed = server
+            .mock("POST", "/unattributed")
+            .with_status(500)
+            .with_body(r#"{"status":"error","status_message":"internal_server_error"}"#)
+            .create_async()
+            .await;
+        let client = reqwest::Client::new();
+        let post = |route: &str| {
+            let url = format!("{}/{route}", server.url());
+            let client = client.clone();
+            async move {
+                super::post_workspace_files_batch(&client, &url, reqwest::multipart::Form::new())
+                    .await
+            }
+        };
+
+        let report = post("refused").await?;
+        assert!(report.staged.is_empty());
+        assert_eq!(
+            report.refused.len(),
+            1,
+            "a 400's files are refused, so they are not sent again"
+        );
+
+        let report = post("failed").await?;
+        assert_eq!(report.staged, vec![PathBuf::from("data/ok.txt")]);
+        assert!(
+            report.refused.is_empty(),
+            "a 500's files are left to retry rather than refused"
+        );
+        assert_eq!(report.failed, vec![PathBuf::from("data/bad.bin")]);
+
+        let err = post("unattributed")
+            .await
+            .expect_err("a 500 that lists no files is an error");
+        assert!(
+            matches!(err, OxenError::HttpStatusError { status, .. } if status == 500),
+            "the error keeps the status for the retry loop: {err:?}"
+        );
+
+        for mock in [refused, failed, unattributed] {
+            mock.assert_async().await;
+        }
+        Ok(())
     }
 
     fn commit_body(message: &str) -> NewCommitBody {
