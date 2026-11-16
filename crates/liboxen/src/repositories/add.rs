@@ -56,6 +56,7 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
 
+    use crate::constants;
     use crate::error::OxenError;
     use crate::opts::clone_opts::CloneOpts;
     use crate::repositories;
@@ -158,6 +159,38 @@ A: Oxen.ai
             assert_eq!(repo_status.staged_files.len(), 1);
             assert_eq!(repo_status.untracked_files.len(), 0);
             assert_eq!(repo_status.untracked_dirs.len(), 0);
+
+            // A file whose version file cannot be stored fails the add, which still stages the
+            // rest. A regular file where its version directory goes blocks the store.
+            let blocked_file = repo.path.join("blocked.txt");
+            util::fs::write_to_path(&blocked_file, "blocked")?;
+            let staged_file = repo.path.join("staged.txt");
+            util::fs::write_to_path(&staged_file, "staged")?;
+            let blocked_hash = util::hasher::hash_file_contents(&blocked_file)?;
+            let staged_hash = util::hasher::hash_file_contents(&staged_file)?;
+            assert_ne!(
+                blocked_hash[..2],
+                staged_hash[..2],
+                "the two files' version files share no top directory"
+            );
+            let versions_dir = util::fs::oxen_hidden_dir(&repo.path)
+                .join(constants::VERSIONS_DIR)
+                .join(constants::FILES_DIR);
+            util::fs::write_to_path(versions_dir.join(&blocked_hash[..2]), "not a directory")?;
+
+            let result = repositories::add_all(&repo, [&blocked_file, &staged_file]).await;
+            let Err(OxenError::AddFailed { failures }) = result else {
+                panic!("expected AddFailed, got {result:?}");
+            };
+            let failed_paths: Vec<_> = failures.iter().map(|(path, _)| path.to_string()).collect();
+            assert_eq!(failed_paths, ["blocked.txt"]);
+            let repo_status = repositories::status(&repo).await?;
+            let staged: HashSet<_> = repo_status.staged_files.keys().cloned().collect();
+            assert_eq!(
+                staged,
+                HashSet::from([PathBuf::from("hello.txt"), PathBuf::from("staged.txt")]),
+                "the file whose version file was stored is staged beside the earlier one"
+            );
 
             Ok(())
         })

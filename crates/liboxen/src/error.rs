@@ -452,8 +452,15 @@ pub enum OxenError {
 
     /// `oxen restore` finished with one or more file-restore failures. Aggregated rather than
     /// fail-fast so the rest of the files can still be restored. The vector should be non-empty.
-    #[error("{}", format_restore_failures(failures))]
+    #[error("{}", format_file_failures("restore", failures))]
     RestoreFailed {
+        failures: Vec<(PathBufError, Box<OxenError>)>,
+    },
+
+    /// `oxen add` staged every file it could and left out each listed file, at its path relative
+    /// to the repository, whose version file could not be stored. The vector is non-empty.
+    #[error("{}", format_file_failures("add", failures))]
+    AddFailed {
         failures: Vec<(PathBufError, Box<OxenError>)>,
     },
 
@@ -876,10 +883,10 @@ fn format_versions_missing_on_server(hashes: &[String]) -> String {
     out
 }
 
-/// Multi-line render for [`OxenError::RestoreFailed`]. Each failed file is listed with its
-/// underlying error so users debugging a stuck restore see every problem at once.
-fn format_restore_failures(failures: &[(PathBufError, Box<OxenError>)]) -> String {
-    let mut out = format!("Failed to restore {} file(s):", failures.len());
+/// Multi-line render for [`OxenError::RestoreFailed`] and [`OxenError::AddFailed`]. Each failed
+/// file is listed with its underlying error so users see every problem at once.
+fn format_file_failures(action: &str, failures: &[(PathBufError, Box<OxenError>)]) -> String {
+    let mut out = format!("Failed to {action} {} file(s):", failures.len());
     for (path, err) in failures {
         // Indent each entry
         let rendered = err.to_string();
@@ -986,6 +993,9 @@ impl OxenError {
                 } else {
                     "Run with RUST_LOG=debug for per-file details, or check `oxen status`."
                 }
+            }
+            AddFailed { .. } => {
+                "The other files were staged. Fix the problem shown for each file listed, then add it again with `oxen add`."
             }
             HTTP(req_err) => {
                 if req_err.is_connect() || req_err.is_timeout() {
@@ -1598,7 +1608,7 @@ mod tests {
             msg.contains("b30cefc4eb9ad1c6f3f61047cec5c828"),
             "missing file_hash: {msg}"
         );
-        // The inner cause must appear in Display itself — many callers (e.g. format_restore_failures)
+        // The inner cause must appear in Display itself — many callers (e.g. format_file_failures)
         // render errors via to_string() without walking the source chain, so omitting it here would
         // hide why the fetch failed.
         assert!(

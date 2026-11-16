@@ -21,6 +21,8 @@ use crate::core::oxenignore;
 use crate::core::staged::staged_db_manager::{
     StagedDBManager, delete_empty_staged_ancestors, get_staged_db_manager,
 };
+use crate::error::{OxenError, PathBufError};
+use crate::model::LocalRepository;
 use crate::model::merkle_tree::node::file_node::FileNodeOpts;
 use crate::model::metadata::generic_metadata::GenericMetadata;
 use crate::model::workspace::Workspace;
@@ -28,7 +30,6 @@ use crate::model::{Commit, EntryDataType, MerkleHash, StagedEntryStatus};
 use crate::opts::GlobOpts;
 use crate::storage::version_store::VersionStore;
 use crate::tasks;
-use crate::{error::OxenError, model::LocalRepository};
 use crate::{repositories, util};
 use ignore::gitignore::Gitignore;
 use pathdiff::diff_paths;
@@ -109,7 +110,8 @@ impl StagedChanges {
     /// stored, along with its parent directories, and unstage the paths recorded and then the
     /// deleted `removed` paths. On macOS and Linux a crash leaves either none of the staged files
     /// or every one with its version file, and every change is durable when this returns. Returns
-    /// what was staged.
+    /// what was staged, or [`OxenError::AddFailed`] listing each file left unstaged because its
+    /// version file could not be stored, once the rest are staged.
     async fn write(
         &self,
         repo: &LocalRepository,
@@ -137,10 +139,12 @@ impl StagedChanges {
             versions.insert(*node.hash(), source);
             entries.push((path, status, node, resolves_conflict));
         }
-        let failed: HashMap<MerkleHash, OxenError> = version_store
+        // Each error goes to the first file with its hash, and `None` is left for the rest
+        let mut failed: HashMap<MerkleHash, Option<OxenError>> = version_store
             .store_versions_from_paths(versions)
             .await?
             .into_iter()
+            .map(|(hash, err)| (hash, Some(err)))
             .collect();
 
         let (repo, db) = (repo.clone(), Arc::clone(staged_db));
@@ -149,13 +153,15 @@ impl StagedChanges {
             let mut stats = CumulativeStats::default();
             let mut dirs: BTreeSet<PathBuf> = dirs.into_iter().collect();
             let mut resolved = Vec::new();
+            let mut failures = Vec::new();
             for (path, status, node, resolves_conflict) in entries {
-                if let Some(err) = failed.get(node.hash()) {
-                    tracing::error!(
-                        oxen.file_path = %path.display(),
-                        exception.message = %err,
-                        "Not staging a file whose version file could not be stored"
-                    );
+                if let Some(slot) = failed.get_mut(node.hash()) {
+                    let err = slot.take().unwrap_or_else(|| {
+                        OxenError::internal_error(
+                            "its version file could not be stored, as listed for a file with the same contents",
+                        )
+                    });
+                    failures.push((PathBufError::from(path), Box::new(err)));
                     continue;
                 }
                 stats.total_files += 1;
@@ -202,7 +208,11 @@ impl StagedChanges {
             // On Linux the `syncfs` writes the WAL out itself
             db.flush_wal(!cfg!(target_os = "linux"))?;
             sync_filesystem(db.path())?;
-            Ok(stats)
+            if failures.is_empty() {
+                Ok(stats)
+            } else {
+                Err(OxenError::AddFailed { failures })
+            }
         })
         .await?
     }
