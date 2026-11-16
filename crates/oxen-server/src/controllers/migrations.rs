@@ -1,5 +1,6 @@
 use actix_web::{HttpRequest, HttpResponse, web};
 use liboxen::{
+    api::requests::RepoNew,
     command::migrate::{self, Direction, try_apply_migration},
     error::OxenError,
     migrations, repositories,
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     errors::OxenHttpError,
-    helpers::get_repo,
+    helpers::get_repo_async,
     middleware::with_repo_exclusive_for_client,
     params::{app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name},
     tasks,
@@ -107,7 +108,7 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
         OxenHttpError::BadRequest(format!("Unknown migration: {migration_name}").into())
     })?;
 
-    let repo = get_repo(app_data, &namespace, &repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
 
     // Run the migration with the repo to itself: the exclusive lock blocks new writers and drains
     // in-flight ones before `up`/`down` runs, and serializes two concurrent migration POSTs for the
@@ -125,17 +126,36 @@ pub async fn run(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, Oxe
 
     // Recorded outside the exclusive section: a migration writes the whole identity table, and a
     // hint write begins a write the exclusive section would block. Looked up again, since a
-    // migration can move the repository's directory.
+    // migration can move the repository's directory. Spawned, so the hints are still recorded if
+    // the client disconnects once the migration has finished.
     drop(repo);
-    let hinted = get_repo(app_data, &namespace, &repo_name)?;
     let sync_dir = app_data.path.clone();
-    tasks::spawn_blocking(move || {
-        repositories::record_name_hints(
+    let s3_opts = app_data.config.storage.s3().cloned();
+    let (hint_namespace, hint_repo_name) = (namespace.clone(), repo_name.clone());
+    tasks::spawn(async move {
+        let hinted = repositories::get_by_namespace_and_name_async(
             &sync_dir,
-            &hinted,
-            namespace_name.as_deref(),
-            repo_name_hint.as_deref(),
+            &hint_namespace,
+            &hint_repo_name,
+            s3_opts.as_ref(),
         )
+        .await?
+        .ok_or_else(|| {
+            OxenError::RepoNotFound(Box::new(RepoNew::from_namespace_name(
+                &hint_namespace,
+                &hint_repo_name,
+                None,
+            )))
+        })?;
+        tasks::spawn_blocking(move || {
+            repositories::record_name_hints(
+                &sync_dir,
+                &hinted,
+                namespace_name.as_deref(),
+                repo_name_hint.as_deref(),
+            )
+        })
+        .await?
     })
     .await
     .map_err(OxenError::from)??;
@@ -221,8 +241,8 @@ mod tests {
         std::fs::create_dir_all(&workspaces_dir)?;
 
         // Begin a write on the same lock gate the handler targets (gates are keyed by repo path,
-        // so resolve the repo exactly as `get_repo` does), giving the exclusive acquire something
-        // to drain.
+        // so resolve the repo exactly as `get_repo_async` does), giving the exclusive acquire
+        // something to drain.
         let handler_repo = liboxen::repositories::get_by_namespace_and_name(
             &sync_dir, namespace, repo_name, None,
         )?
