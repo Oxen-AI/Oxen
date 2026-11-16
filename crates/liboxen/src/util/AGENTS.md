@@ -23,6 +23,8 @@ The builders are `.with_hash(expected)` and `.with_mtime(t)`; both default to `N
 
 Terminal methods are `.write(bytes)` (in-memory) / `.write_with(|w| ...)` (an encoder that takes ownership of a `Write` — Polars' `ParquetWriter`/`CsvWriter`/`IpcWriter`/`JsonWriter`, `tar`, `zip`) / `.stream(reader)` (sync `Read`) / `.stream_async(reader).await` (async `AsyncRead`, via the Channel hand-off pattern) / `.copy_from(src)` (file → file) / `.move_from(tmp, hash)` (a `NamedTempFile` renamed into place, copied when it is on another filesystem) / `.stream_from_paths(&[path])` (many files → file). Pick by the source-kind you have in hand.
 
+To publish many files with a few filesystem-wide syncs rather than one or two per file, pass each `AtomicFile` to the crate-private `AtomicFileBatch::copy_from`, then call `publish` once. `oxen add` stores its version files this way, through `VersionStore::store_versions_from_paths`.
+
 `AtomicFile` is `#[must_use]` — forgetting a terminal method is a compile-time warning, not a silent no-op. The full contract (including atime behavior, cancel-safety, and the verify-before-publish guarantee) lives on the struct rustdoc. Read it before adding a new caller.
 
 The non-atomic writers `util::fs::write` and `util::fs::write_to_path` are `#[cfg(any(test, feature = "test-utils"))]`-gated for fixture setup only; production code cannot reach them.
