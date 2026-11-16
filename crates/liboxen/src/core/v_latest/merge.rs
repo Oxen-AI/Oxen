@@ -1020,19 +1020,20 @@ async fn create_merge_commit(
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
     let base_commit = Some(merge_commits.base.clone());
-    match add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes).await {
-        Ok(_) => {}
-        Err(OxenError::AddFailed { failures }) => {
-            // Leave the merge unfinished, as a conflicted merge does, so adding the listed files
-            // and committing makes the merge commit with both parents
-            let repo = repo.clone();
-            let merge_commit = merge_commits.merge.clone();
-            let base_commit = merge_commits.base.clone();
-            tasks::spawn_blocking(move || write_merge_heads(&repo, &merge_commit, &base_commit))
-                .await??;
-            return Err(OxenError::MergeAddFailed { failures });
-        }
-        Err(err) => return Err(err),
+    if let Err(err) =
+        add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes).await
+    {
+        // Leave the merge unfinished, as a conflicted merge does, since the working tree already
+        // holds it, so adding the files and committing makes the merge commit with both parents
+        let repo = repo.clone();
+        let merge_commit = merge_commits.merge.clone();
+        let base_commit = merge_commits.base.clone();
+        tasks::spawn_blocking(move || write_merge_heads(&repo, &merge_commit, &base_commit))
+            .await??;
+        return Err(match err {
+            OxenError::AddFailed { failures } => OxenError::MergeAddFailed { failures },
+            err => err,
+        });
     }
 
     let commit_msg = merge_commits.commit_message();
