@@ -867,541 +867,866 @@ fn build_file_status_maps_for_file(
 mod tests {
     use super::*;
     use crate::api;
-    use crate::constants::{DEFAULT_BRANCH_NAME, WORKSPACE_NAME_INDEX_DIR};
-    use crate::model::NewCommitBody;
+    use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::model::{NewCommitBody, RemoteRepository};
     use crate::repositories;
-    use crate::repositories::commits::commit_writer::pin_commit_timestamp;
+    use crate::repositories::commits::commit_writer::{
+        pin_commit_timestamp, unpin_commit_timestamp,
+    };
     use crate::test;
     use crate::util;
     use time::Duration;
 
+    // Each case works in a corner of the repository no other case touches, and a case that commits
+    // through a workspace commits to a branch of its own. The first case adds a directory to the
+    // repository before it has a commit and leaves one for the cases that need a head commit, and
+    // the case that breaks the repository config runs last.
     #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts()
-    -> Result<(), OxenError> {
+    async fn test_workspaces_local_repo() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Write two files, hello.txt and goodbye.txt, and commit them
-            let hello_file = repo.path.join("hello.txt");
-            let goodbye_file = repo.path.join("goodbye.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            util::fs::write_to_path(&goodbye_file, "Goodbye")?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::add(&repo, &goodbye_file).await?;
-            let commit = repositories::commit(&repo, "Adding hello and goodbye files")?;
-
-            {
-                // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the hello file in the temporary workspace
-                let workspace_hello_file = temp_workspace.dir().join("hello.txt");
-                util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
-                // Commit the changes to the "main" branch
-                repositories::workspaces::commit(
-                    &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating hello file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
-                )
+            case_commit_different_files_with_merge_conflicts(&repo).await?;
+            case_commit_different_files_without_merge_conflicts(&repo, Path::new(""), "top-level")
                 .await?;
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            {
-                // Create a new temporary workspace off of the same original commit
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the goodbye file in the temporary workspace
-                let workspace_goodbye_file = temp_workspace.dir().join("goodbye.txt");
-                util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)
-                    .await?;
-                // Commit the changes to the "main" branch
-                repositories::workspaces::commit(
-                    &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating goodbye file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
-                )
-                .await?;
-            } // temp_workspace goes out of scope here and gets cleaned up
-
+            case_commit_different_files_without_merge_conflicts(
+                &repo,
+                Path::new("salutations"),
+                "in-subdirs",
+            )
+            .await?;
+            #[cfg(not(windows))]
+            case_temporary_workspace_cleanup(&repo).await?;
+            case_commit_leaves_a_held_staged_db_handle_usable(&repo).await?;
+            case_delete_keeps_the_workspace_while_the_staged_db_is_held(&repo).await?;
+            case_concurrent_create_with_name_exactly_one_succeeds(&repo).await?;
+            case_ensure_name_index_rebuilds_after_invalidation(&repo).await?;
+            case_create_records_created_at(&repo).await?;
+            case_config_without_created_at_still_loads_and_commits(&repo).await?;
+            case_config_under_the_former_filename_still_loads(&repo).await?;
+            case_list_skips_a_workspace_with_an_unparseable_config(&repo).await?;
+            case_list_skips_a_workspace_pinned_to_a_missing_commit(&repo).await?;
+            case_get_by_name_skips_a_damaged_sibling(&repo).await?;
+            case_a_commit_whose_id_is_taken_is_refused_until_a_later_second(&repo).await?;
+            case_list_propagates_an_unreadable_repository_config(&repo).await?;
             Ok(())
         })
         .await
     }
 
-    #[tokio::test]
-    async fn test_cannot_commit_different_files_workspaces_with_merge_conflicts()
-    -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
+    fn commit_body(message: &str) -> NewCommitBody {
+        NewCommitBody {
+            message: message.to_string(),
+            author: "Bessie".to_string(),
+            email: "bessie@oxen.ai".to_string(),
+        }
+    }
+
+    /// The ids of the workspaces `list` returns, sorted.
+    async fn listed_ids(repo: &LocalRepository) -> Result<Vec<String>, OxenError> {
+        let mut ids: Vec<_> = repositories::workspaces::list(repo)
+            .await?
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect();
+        ids.sort();
+        Ok(ids)
+    }
+
+    /// Two workspaces off one commit, each changing a different file in `dir`, both commit to
+    /// `branch`.
+    async fn case_commit_different_files_without_merge_conflicts(
+        repo: &LocalRepository,
+        dir: &Path,
+        branch: &str,
+    ) -> Result<(), OxenError> {
+        // Write two files, hello.txt and goodbye.txt, and commit them
+        let hello_file = repo.path.join(dir).join("hello.txt");
+        let goodbye_file = repo.path.join(dir).join("goodbye.txt");
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        util::fs::write_to_path(&goodbye_file, "Goodbye")?;
+        repositories::add(repo, &hello_file).await?;
+        repositories::add(repo, &goodbye_file).await?;
+        let commit = repositories::commit(repo, "Adding hello and goodbye files")?;
+        repositories::branches::create(repo, branch, &commit.id)?;
+
+        {
+            // Create temporary workspace in new scope
+            let temp_workspace = create_temporary(repo, &commit).await?;
+
+            // Update the hello file in the temporary workspace
+            let workspace_hello_file = temp_workspace.dir().join(dir).join("hello.txt");
+            util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
+            repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
+            repositories::workspaces::commit(
+                &temp_workspace,
+                &commit_body("Updating hello file"),
+                branch,
+            )
+            .await?;
+        } // temp_workspace goes out of scope here and gets cleaned up
+
+        {
+            // Create a new temporary workspace off of the same original commit
+            let temp_workspace = create_temporary(repo, &commit).await?;
+
+            // Update the goodbye file in the temporary workspace
+            let workspace_goodbye_file = temp_workspace.dir().join(dir).join("goodbye.txt");
+            util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
+            repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file).await?;
+            repositories::workspaces::commit(
+                &temp_workspace,
+                &commit_body("Updating goodbye file"),
+                branch,
+            )
+            .await?;
+        } // temp_workspace goes out of scope here and gets cleaned up
+
+        Ok(())
+    }
+
+    async fn case_commit_different_files_with_merge_conflicts(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        const BRANCH: &str = "conflicting-files";
+        for (path, content) in [
+            ("greetings/hello.txt", "Hello"),
+            ("greetings/bye.txt", "Bye"),
+            ("docs/readme.txt", "Read me"),
+            ("other/notes.txt", "Notes"),
+        ] {
+            util::fs::write_to_path(repo.path.join(path), content)?;
+        }
+        repositories::add(repo, &repo.path).await?;
+        let commit = repositories::commit(repo, "Adding greetings and docs")?;
+        repositories::branches::create(repo, BRANCH, &commit.id)?;
+        let body = commit_body("Updating greetings");
+
+        {
+            // The branch moves on from the original commit through a first workspace
+            let temp_workspace = create_temporary(repo, &commit).await?;
             for (path, content) in [
-                ("greetings/hello.txt", "Hello"),
-                ("greetings/bye.txt", "Bye"),
-                ("docs/readme.txt", "Read me"),
-                ("other/notes.txt", "Notes"),
+                ("greetings/hello.txt", "Hello again"),
+                ("greetings/new.txt", "Added on the branch"),
+                ("docs/added.txt", "Added on the branch"),
             ] {
-                util::fs::write_to_path(repo.path.join(path), content)?;
-            }
-            repositories::add(&repo, &repo.path).await?;
-            let commit = repositories::commit(&repo, "Adding greetings and docs")?;
-            let body = NewCommitBody {
-                message: "Updating greetings".to_string(),
-                author: "Bessie".to_string(),
-                email: "bessie@oxen.ai".to_string(),
-            };
-
-            {
-                // Main moves on from the original commit through a first workspace
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-                for (path, content) in [
-                    ("greetings/hello.txt", "Hello again"),
-                    ("greetings/new.txt", "Added on main"),
-                    ("docs/added.txt", "Added on main"),
-                ] {
-                    let path = temp_workspace.dir().join(path);
-                    util::fs::write_to_path(&path, content)?;
-                    repositories::workspaces::files::add(&temp_workspace, path).await?;
-                }
-                repositories::workspaces::files::rm(
-                    &temp_workspace,
-                    &[Path::new("greetings").join("bye.txt")],
-                )
-                .await?;
-                repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
-                    .await?;
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            {
-                // A workspace off the original commit changes each path main changed since, each
-                // differently from main
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-                for (path, content) in [
-                    ("greetings/hello.txt", "Hello from behind main"),
-                    ("greetings/new.txt", "Added in a workspace behind main"),
-                    ("greetings/bye.txt", "Bye from behind main"),
-                ] {
-                    let path = temp_workspace.dir().join(path);
-                    util::fs::write_to_path(&path, content)?;
-                    repositories::workspaces::files::add(&temp_workspace, path).await?;
-                }
-                // main has not touched `other`, so removing it is not a conflict
-                repositories::workspaces::files::rm(
-                    &temp_workspace,
-                    &[PathBuf::from("docs"), PathBuf::from("other")],
-                )
-                .await?;
-
-                let mut conflicts = mergeability(&temp_workspace, DEFAULT_BRANCH_NAME)?
-                    .conflicts
-                    .into_iter()
-                    .map(|conflict| PathBuf::from(conflict.path))
-                    .collect::<Vec<_>>();
-                conflicts.sort();
-                let mut expected = vec![
-                    PathBuf::from("docs"),
-                    Path::new("greetings").join("bye.txt"),
-                    Path::new("greetings").join("hello.txt"),
-                    Path::new("greetings").join("new.txt"),
-                ];
-                expected.sort();
-                assert_eq!(
-                    conflicts, expected,
-                    "a file main modified, added, or removed, and a directory main added to, each \
-                     conflict with the workspace's own change to it"
-                );
-
-                let result =
-                    repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
-                        .await;
-                assert!(
-                    matches!(result, Err(OxenError::WorkspaceBehind(_))),
-                    "a commit with conflicts is refused, got {result:?}"
-                );
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            {
-                // A workspace off the original commit stages exactly what main already holds
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-                let path = temp_workspace.dir().join("greetings").join("new.txt");
-                util::fs::write_to_path(&path, "Added on main")?;
+                let path = temp_workspace.dir().join(path);
+                util::fs::write_to_path(&path, content)?;
                 repositories::workspaces::files::add(&temp_workspace, path).await?;
-                let head = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
-                let landed =
-                    repositories::workspaces::commit(&temp_workspace, &body, DEFAULT_BRANCH_NAME)
-                        .await?;
-                assert_eq!(
-                    landed.parent_ids,
-                    vec![head.commit_id],
-                    "a workspace staging what main already holds commits on top of main"
-                );
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            Ok(())
-        })
-        .await
-    }
-
-    // A commit's parent, message, author, email, and second decide its id, so a second commit
-    // matching all five is refused rather than written under the first one's id, and a retry in a
-    // later second lands with an id of its own.
-    #[tokio::test]
-    async fn test_a_commit_whose_id_is_taken_is_refused_until_a_later_second()
-    -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let head = repositories::commits::head_commit(&repo)?;
-            let mut staged = vec![];
-            for name in ["first.txt", "second.txt"] {
-                let workspace = create(&repo, &head, Uuid::new_v4().to_string(), true)?;
-                let path = workspace.workspace_repo.path.join(name);
-                util::fs::write_to_path(&path, format!("content of {name}"))?;
-                repositories::workspaces::files::add(&workspace, &path).await?;
-                staged.push((workspace, name));
             }
-            let body = NewCommitBody {
-                message: "Same message".to_string(),
-                author: "Bessie".to_string(),
-                email: "bessie@oxen.ai".to_string(),
-            };
+            repositories::workspaces::files::rm(
+                &temp_workspace,
+                &[Path::new("greetings").join("bye.txt")],
+            )
+            .await?;
+            repositories::workspaces::commit(&temp_workspace, &body, BRANCH).await?;
+        } // temp_workspace goes out of scope here and gets cleaned up
 
-            // Both commits carry one timestamp, and each goes to its own new branch, which starts
-            // at `head`, so both share that parent: only their contents differ.
-            let now = OffsetDateTime::now_utc();
-            pin_commit_timestamp(&repo.path, now);
-            let [
-                (first_workspace, first_name),
-                (second_workspace, second_name),
-            ] = &staged[..]
-            else {
-                unreachable!("two workspaces were staged");
-            };
-            let second_branch = format!("branch-{second_name}");
-            let first = commit(first_workspace, &body, format!("branch-{first_name}")).await?;
-            let refused = commit(second_workspace, &body, &second_branch).await;
-            assert!(
-                matches!(refused, Err(OxenError::CommitIdTaken(id)) if id.to_string() == first.id),
-                "a commit whose id is already taken is refused, got {refused:?}"
-            );
-            assert!(
-                repositories::tree::get_file_by_path(&repo, &first, Path::new(first_name))?
-                    .is_some()
-                    && repositories::tree::get_file_by_path(&repo, &first, Path::new(second_name))?
-                        .is_none(),
-                "the refused commit leaves the first commit's tree as it was"
-            );
+        {
+            // A workspace off the original commit changes each path the branch changed since, each
+            // differently from the branch
+            let temp_workspace = create_temporary(repo, &commit).await?;
+            for (path, content) in [
+                ("greetings/hello.txt", "Hello from behind the branch"),
+                (
+                    "greetings/new.txt",
+                    "Added in a workspace behind the branch",
+                ),
+                ("greetings/bye.txt", "Bye from behind the branch"),
+            ] {
+                let path = temp_workspace.dir().join(path);
+                util::fs::write_to_path(&path, content)?;
+                repositories::workspaces::files::add(&temp_workspace, path).await?;
+            }
+            // The branch has not touched `other`, so removing it is not a conflict
+            repositories::workspaces::files::rm(
+                &temp_workspace,
+                &[PathBuf::from("docs"), PathBuf::from("other")],
+            )
+            .await?;
+
+            let mut conflicts = mergeability(&temp_workspace, BRANCH)?
+                .conflicts
+                .into_iter()
+                .map(|conflict| PathBuf::from(conflict.path))
+                .collect::<Vec<_>>();
+            conflicts.sort();
+            let mut expected = vec![
+                PathBuf::from("docs"),
+                Path::new("greetings").join("bye.txt"),
+                Path::new("greetings").join("hello.txt"),
+                Path::new("greetings").join("new.txt"),
+            ];
+            expected.sort();
             assert_eq!(
-                repositories::branches::get_by_name(&repo, &second_branch)?.commit_id,
-                head.id,
-                "the refused commit leaves its branch where it was"
+                conflicts, expected,
+                "a file the branch modified, added, or removed, and a directory the branch added \
+                 to, each conflict with the workspace's own change to it"
             );
 
-            pin_commit_timestamp(&repo.path, now + Duration::seconds(1));
-            let second = commit(second_workspace, &body, &second_branch).await?;
-            assert_eq!(
-                second.parent_ids, first.parent_ids,
-                "the retry shares the parent"
-            );
-            assert_ne!(
-                second.id, first.id,
-                "a retry in a later second gets its own id"
-            );
+            let result = repositories::workspaces::commit(&temp_workspace, &body, BRANCH).await;
             assert!(
-                repositories::tree::get_file_by_path(&repo, &second, Path::new(second_name))?
-                    .is_some(),
-                "the retried commit's tree holds its own file"
+                matches!(result, Err(OxenError::WorkspaceBehind(_))),
+                "a commit with conflicts is refused, got {result:?}"
             );
+        } // temp_workspace goes out of scope here and gets cleaned up
 
-            Ok(())
-        })
-        .await
-    }
+        {
+            // A workspace off the original commit stages exactly what the branch already holds
+            let temp_workspace = create_temporary(repo, &commit).await?;
+            let path = temp_workspace.dir().join("greetings").join("new.txt");
+            util::fs::write_to_path(&path, "Added on the branch")?;
+            repositories::workspaces::files::add(&temp_workspace, path).await?;
+            let head = repositories::branches::get_by_name(repo, BRANCH)?;
+            let landed = repositories::workspaces::commit(&temp_workspace, &body, BRANCH).await?;
+            assert_eq!(
+                landed.parent_ids,
+                vec![head.commit_id],
+                "a workspace staging what the branch already holds commits on top of the branch"
+            );
+        } // temp_workspace goes out of scope here and gets cleaned up
 
-    #[tokio::test]
-    async fn test_can_commit_different_files_workspaces_without_merge_conflicts_in_subdirs()
-    -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Write two files, greetings/hello.txt and greetings/goodbye.txt, and commit them
-            let hello_file = repo.path.join("greetings").join("hello.txt");
-            let goodbye_file = repo.path.join("greetings").join("goodbye.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            util::fs::write_to_path(&goodbye_file, "Goodbye")?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::add(&repo, &goodbye_file).await?;
-            let commit = repositories::commit(&repo, "Adding hello and goodbye files")?;
-
-            {
-                // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the hello file in the temporary workspace
-                let workspace_hello_file = temp_workspace.dir().join("greetings").join("hello.txt");
-                util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_hello_file).await?;
-                // Commit the changes to the "main" branch
-                repositories::workspaces::commit(
-                    &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating hello file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
-                )
-                .await?;
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            {
-                // Create a new temporary workspace off of the same original commit
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Update the goodbye file in the temporary workspace
-                let workspace_goodbye_file =
-                    temp_workspace.dir().join("greetings").join("goodbye.txt");
-                util::fs::write_to_path(&workspace_goodbye_file, "Goodbye again")?;
-                repositories::workspaces::files::add(&temp_workspace, workspace_goodbye_file)
-                    .await?;
-                // Commit the changes to the "main" branch
-                repositories::workspaces::commit(
-                    &temp_workspace,
-                    &NewCommitBody {
-                        message: "Updating goodbye file".to_string(),
-                        author: "Bessie".to_string(),
-                        email: "bessie@oxen.ai".to_string(),
-                    },
-                    DEFAULT_BRANCH_NAME,
-                )
-                .await?;
-            } // temp_workspace goes out of scope here and gets cleaned up
-
-            Ok(())
-        })
-        .await
+        Ok(())
     }
 
     // On Windows, the workspace repo's LMDB env still maps files under the workspace dir
     // during TemporaryWorkspace::drop, so remove_dir_all fails with a sharing violation and
     // the dir is not cleaned up. Skip until the store can be disconnected before deletion
     // (ENG-1159).
-    #[cfg_attr(
-        windows,
-        ignore = "workspace dir removal fails while LMDB env is mapped"
-    )]
-    #[tokio::test]
-    async fn test_temporary_workspace_cleanup() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Write a test file and commit it
-            let test_file = repo.path.join("test.txt");
-            util::fs::write_to_path(&test_file, "Hello")?;
-            repositories::add(&repo, &test_file).await?;
-            let commit = repositories::commit(&repo, "Adding test file")?;
-            let workspaces_dir = repo.path.join(".oxen").join("workspaces");
+    #[cfg(not(windows))]
+    async fn case_temporary_workspace_cleanup(repo: &LocalRepository) -> Result<(), OxenError> {
+        use crate::constants::WORKSPACE_NAME_INDEX_DIR;
 
-            {
-                // Create temporary workspace in new scope
-                let temp_workspace = create_temporary(&repo, &commit).await?;
-
-                // Verify workspace exists and contains our file
-                assert!(temp_workspace.dir().exists());
-
-                // Test deref functionality by accessing workspace fields/methods
-                assert_eq!(temp_workspace.commit.id, commit.id);
-                assert!(temp_workspace.is_editable);
-
-                let workspace_count = std::fs::read_dir(&workspaces_dir)?
-                    .filter(|e| {
-                        e.as_ref()
-                            .map(|e| e.file_name() != WORKSPACE_NAME_INDEX_DIR)
-                            .unwrap_or(false)
-                    })
-                    .count();
-                assert_eq!(workspace_count, 1);
-            } // temp_workspace goes out of scope here
-
-            // Verify workspace was cleaned up (only the name index dir should remain)
-            let workspace_count = std::fs::read_dir(&workspaces_dir)?
+        // Write a test file and commit it
+        let test_file = repo.path.join("cleanup").join("test.txt");
+        util::fs::write_to_path(&test_file, "Hello")?;
+        repositories::add(repo, &test_file).await?;
+        let commit = repositories::commit(repo, "Adding test file")?;
+        let workspaces_dir = repo.path.join(".oxen").join("workspaces");
+        let workspace_dir_count = || -> Result<usize, OxenError> {
+            Ok(std::fs::read_dir(&workspaces_dir)?
                 .filter(|e| {
                     e.as_ref()
                         .map(|e| e.file_name() != WORKSPACE_NAME_INDEX_DIR)
                         .unwrap_or(false)
                 })
-                .count();
-            assert_eq!(
-                workspace_count, 0,
-                "Workspace directory should have no workspace dirs after cleanup"
-            );
+                .count())
+        };
+        // Earlier cases leave workspaces of their own behind
+        let before = workspace_dir_count()?;
 
-            Ok(())
-        })
-        .await
+        {
+            // Create temporary workspace in new scope
+            let temp_workspace = create_temporary(repo, &commit).await?;
+
+            // Verify workspace exists and contains our file
+            assert!(temp_workspace.dir().exists());
+
+            // Test deref functionality by accessing workspace fields/methods
+            assert_eq!(temp_workspace.commit.id, commit.id);
+            assert!(temp_workspace.is_editable);
+
+            assert_eq!(workspace_dir_count()?, before + 1);
+        } // temp_workspace goes out of scope here
+
+        assert_eq!(
+            workspace_dir_count()?,
+            before,
+            "the temporary workspace's directory should be gone after cleanup"
+        );
+
+        Ok(())
     }
 
+    /// A workspace read that is in flight when a commit lands keeps the staged db handle it
+    /// already holds, and a read arriving after the commit opens against that same handle
+    /// instead of colliding with RocksDB's per-directory LOCK.
+    async fn case_commit_leaves_a_held_staged_db_handle_usable(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        const BRANCH: &str = "held-staged-db";
+        let hello_path = Path::new("held").join("hello.txt");
+        let hello_file = repo.path.join(&hello_path);
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, &hello_file).await?;
+        let commit = repositories::commit(repo, "Adding hello file")?;
+        repositories::branches::create(repo, BRANCH, &commit.id)?;
+
+        // Named, so the commit updates the workspace rather than deleting it.
+        let workspace = repositories::workspaces::create_with_name(
+            repo,
+            &commit,
+            "wid-held",
+            Some("named-held".to_string()),
+            true,
+        )
+        .await?;
+
+        let workspace_hello_file = workspace.dir().join(&hello_path);
+        util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
+        repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
+
+        let reader = get_staged_db_manager(&workspace.workspace_repo)?;
+
+        repositories::workspaces::commit(&workspace, &commit_body("Updating hello file"), BRANCH)
+            .await?;
+
+        let after = get_staged_db_manager(&workspace.workspace_repo)?;
+        assert!(after.read_from_staged_db(&hello_path)?.is_none());
+        assert!(
+            repositories::workspaces::status::status_from_dir(&workspace, Path::new(""))?
+                .is_clean()
+        );
+
+        drop(reader);
+        Ok(())
+    }
+
+    /// A delete that cannot close the staged db leaves the workspace untouched (directory, name
+    /// index, and registry entry), so the caller still holding the handle keeps reading through
+    /// it and a later delete removes the workspace once that caller is gone.
+    async fn case_delete_keeps_the_workspace_while_the_staged_db_is_held(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let hello_path = Path::new("held-delete").join("hello.txt");
+        let hello_file = repo.path.join(&hello_path);
+        util::fs::write_to_path(&hello_file, "Hello")?;
+        repositories::add(repo, &hello_file).await?;
+        let commit = repositories::commit(repo, "Adding hello file to delete")?;
+
+        let workspace = repositories::workspaces::create_with_name(
+            repo,
+            &commit,
+            "wid-held-delete",
+            Some("named-held-delete".to_string()),
+            true,
+        )
+        .await?;
+
+        let workspace_hello_file = workspace.dir().join(&hello_path);
+        util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
+        repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
+
+        let reader = get_staged_db_manager(&workspace.workspace_repo)?;
+
+        assert!(repositories::workspaces::delete(&workspace).is_err());
+        assert!(workspace.dir().exists());
+        assert!(
+            repositories::workspaces::get_by_name(repo, "named-held-delete")?.is_some(),
+            "the refused delete dropped the name index entry"
+        );
+
+        // The registry entry survived, so a caller arriving after the refused delete shares
+        // the open handle instead of colliding with RocksDB's per-directory LOCK.
+        let after = get_staged_db_manager(&workspace.workspace_repo)?;
+        assert!(after.read_from_staged_db(&hello_path)?.is_some());
+
+        drop(after);
+        drop(reader);
+        repositories::workspaces::delete(&workspace)?;
+        assert!(!workspace.dir().exists());
+
+        let body = commit_body("Committing a deleted workspace");
+        let result = repositories::workspaces::commit(&workspace, &body, DEFAULT_BRANCH_NAME).await;
+        assert!(
+            matches!(result, Err(OxenError::WorkspaceNotFound(_))),
+            "a commit through a copy of a deleted workspace fails as not found, got {result:?}"
+        );
+        assert!(
+            !workspace.dir().exists(),
+            "the failed commit leaves no workspace directory behind"
+        );
+
+        Ok(())
+    }
+
+    async fn case_concurrent_create_with_name_exactly_one_succeeds(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        const NUM_TASKS: usize = 10;
+        const SHARED_NAME: &str = "shared-workspace-name";
+
+        let commit = repositories::commits::head_commit(repo)?;
+        // Earlier cases built the name index, so drop it for the creates to race to rebuild it, as
+        // they do in a repository with no workspaces yet.
+        invalidate_name_index(repo);
+
+        let mut handles = Vec::with_capacity(NUM_TASKS);
+        for i in 0..NUM_TASKS {
+            let repo = repo.clone();
+            let commit = commit.clone();
+            handles.push(tasks::spawn(async move {
+                let workspace_id = format!("ws-id-{i}");
+                create_with_name(
+                    &repo,
+                    &commit,
+                    &workspace_id,
+                    Some(SHARED_NAME.to_string()),
+                    true,
+                )
+                .await
+            }));
+        }
+
+        let mut winners = Vec::new();
+        let mut already_exists_count = 0;
+        for handle in handles {
+            match handle.await.expect("task panicked") {
+                Ok(ws) => winners.push(ws),
+                Err(OxenError::WorkspaceAlreadyExists(_)) => already_exists_count += 1,
+                Err(e) => return Err(e),
+            }
+        }
+
+        assert_eq!(winners.len(), 1, "exactly one create_with_name must win");
+        assert_eq!(
+            already_exists_count,
+            NUM_TASKS - 1,
+            "every loser must return WorkspaceAlreadyExists",
+        );
+
+        // The winner's workspace dir must still be on disk; loser dirs are rolled back.
+        let winner = &winners[0];
+        assert!(winner.workspace_repo.path.exists());
+        for i in 0..NUM_TASKS {
+            let loser_id = format!("ws-id-{i}");
+            if loser_id == winner.id {
+                continue;
+            }
+            let loser_id_hash = util::hasher::hash_str_sha256(&loser_id);
+            let loser_dir = Workspace::workspace_dir(repo, &loser_id_hash);
+            assert!(
+                !loser_dir.exists(),
+                "loser workspace dir {loser_dir:?} should have been rolled back",
+            );
+        }
+
+        // The index maps the name to the winner.
+        let idx = workspace_name_index::get_index(repo)?;
+        assert_eq!(idx.get_id_by_name(SHARED_NAME)?, Some(winner.id.clone()));
+
+        Ok(())
+    }
+
+    // A failed rebuild leaves an index dir that `index_exists` would otherwise
+    // report as ready, short-circuiting future `ensure_name_index` calls onto an
+    // empty index. Invalidation must remove that dir so the next call rebuilds.
+    async fn case_ensure_name_index_rebuilds_after_invalidation(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+
+        // Create a named workspace so a correct rebuild has an entry to find.
+        create_with_name(
+            repo,
+            &commit,
+            "ws-rebuild-id",
+            Some("named-ws".to_string()),
+            true,
+        )
+        .await?;
+        assert!(workspace_name_index::index_exists(repo));
+
+        // Invalidation stands in for the cleanup done on a failed build: the
+        // on-disk index dir is gone, so `index_exists` no longer short-circuits.
+        invalidate_name_index(repo);
+        assert!(!workspace_name_index::index_exists(repo));
+
+        // The next call rebuilds from disk rather than trusting a missing index.
+        ensure_name_index(repo).await?;
+        assert!(workspace_name_index::index_exists(repo));
+
+        let idx = workspace_name_index::get_index(repo)?;
+        assert_eq!(
+            idx.get_id_by_name("named-ws")?,
+            Some("ws-rebuild-id".to_string())
+        );
+
+        Ok(())
+    }
+
+    async fn case_create_records_created_at(repo: &LocalRepository) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        let before = OffsetDateTime::now_utc();
+        let workspace = repositories::workspaces::create(repo, &commit, "ws-created-at", true)?;
+        let after = OffsetDateTime::now_utc();
+
+        let created_at = workspace
+            .created_at
+            .expect("a freshly created workspace records created_at");
+        assert!(
+            created_at >= before && created_at <= after,
+            "created_at {created_at} should sit between {before} and {after}"
+        );
+
+        // Survives the round trip through the on-disk config.
+        let reloaded = repositories::workspaces::get(repo, "ws-created-at")?
+            .expect("workspace should be found by id");
+        assert_eq!(reloaded.created_at, workspace.created_at);
+
+        Ok(())
+    }
+
+    async fn case_config_without_created_at_still_loads_and_commits(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        let workspace = repositories::workspaces::create(repo, &commit, "ws-legacy", true)?;
+
+        // A config written before the server recorded creation time has no `created_at` key.
+        let config_path = workspace.config_path();
+        let contents = util::fs::read_from_path(&config_path)?;
+        let legacy: String = contents
+            .lines()
+            .filter(|line| !line.starts_with("created_at"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        assert!(!legacy.contains("created_at"));
+        AtomicFile::new(&config_path).write(legacy.as_bytes())?;
+
+        let reloaded = repositories::workspaces::get(repo, "ws-legacy")?
+            .expect("a workspace without created_at should still load");
+        assert_eq!(reloaded.created_at, None);
+
+        // Rewriting the config must not choke on the absent timestamp.
+        repositories::workspaces::update_commit(&reloaded, &commit.id)?;
+        let after_update = repositories::workspaces::get(repo, "ws-legacy")?
+            .expect("workspace should still load after its commit is updated");
+        assert_eq!(after_update.created_at, None);
+
+        Ok(())
+    }
+
+    async fn case_config_under_the_former_filename_still_loads(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        let workspace = repositories::workspaces::create(repo, &commit, "ws-renamed", true)?;
+        let workspace_dir = workspace.dir();
+
+        // A workspace whose config was written before the file was renamed.
+        let current_path = Workspace::config_path_from_dir(&workspace_dir);
+        let legacy_path = Workspace::legacy_config_path_from_dir(&workspace_dir);
+        let contents = util::fs::read_from_path(&current_path)?;
+        AtomicFile::new(&legacy_path).write(contents.as_bytes())?;
+        util::fs::remove_file(&current_path)?;
+
+        let reloaded = repositories::workspaces::get(repo, "ws-renamed")?
+            .expect("a workspace under the former config name should still load");
+        assert_eq!(reloaded.created_at, workspace.created_at);
+
+        // Writing moves it onto the current name and leaves only one config behind.
+        repositories::workspaces::update_commit(&reloaded, &commit.id)?;
+        assert!(current_path.exists());
+        assert!(!legacy_path.exists());
+
+        Ok(())
+    }
+
+    /// One workspace whose config cannot be parsed costs its own entry in the listing, not every
+    /// other workspace in the repository.
+    async fn case_list_skips_a_workspace_with_an_unparseable_config(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        repositories::workspaces::create(repo, &commit, "ws-good", true)?;
+        let broken = repositories::workspaces::create(repo, &commit, "ws-broken", true)?;
+        let mut expected = listed_ids(repo).await?;
+        expected.retain(|id| id != "ws-broken");
+        assert!(expected.contains(&"ws-good".to_string()));
+        AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
+
+        assert_eq!(listed_ids(repo).await?, expected);
+
+        Ok(())
+    }
+
+    /// A workspace pinned to a commit the repository no longer has is skipped by the listing too:
+    /// `get_by_dir` reports that as an error rather than as an absent workspace.
+    async fn case_list_skips_a_workspace_pinned_to_a_missing_commit(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        repositories::workspaces::create(repo, &commit, "ws-pinned-sibling", true)?;
+        let dangling = repositories::workspaces::create(repo, &commit, "ws-dangling", true)?;
+        let mut expected = listed_ids(repo).await?;
+        expected.retain(|id| id != "ws-dangling");
+        assert!(expected.contains(&"ws-pinned-sibling".to_string()));
+
+        let mut config = read_config(&dangling.dir())?.expect("workspace should have a config");
+        config.workspace_commit_id = "0123456789abcdef0123456789abcdef".to_string();
+        write_config(&dangling.dir(), &config)?;
+
+        assert_eq!(listed_ids(repo).await?, expected);
+
+        Ok(())
+    }
+
+    /// Looking a workspace up by name walks the same directories, so a damaged sibling must not
+    /// hide the one being asked for. Exercises the slow path taken before the name index exists.
+    async fn case_get_by_name_skips_a_damaged_sibling(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        create_with_name(
+            repo,
+            &commit,
+            "ws-wanted-id",
+            Some("ws-wanted".to_string()),
+            true,
+        )
+        .await?;
+        let broken = repositories::workspaces::create(repo, &commit, "ws-damaged", true)?;
+        AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
+
+        // Drop the name index so the lookup falls back to scanning every directory.
+        invalidate_name_index(repo);
+        assert!(!workspace_name_index::index_exists(repo));
+
+        let found = repositories::workspaces::get_by_name(repo, "ws-wanted")?
+            .expect("a damaged sibling should not hide the workspace being looked up");
+        assert_eq!(found.id, "ws-wanted-id");
+
+        Ok(())
+    }
+
+    // A commit's parent, message, author, email, and second decide its id, so a second commit
+    // matching all five is refused rather than written under the first one's id, and a retry in a
+    // later second lands with an id of its own.
+    async fn case_a_commit_whose_id_is_taken_is_refused_until_a_later_second(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let head = repositories::commits::head_commit(repo)?;
+        let mut staged = vec![];
+        for name in ["first.txt", "second.txt"] {
+            let workspace = create(repo, &head, Uuid::new_v4().to_string(), true)?;
+            let path = workspace.workspace_repo.path.join(name);
+            util::fs::write_to_path(&path, format!("content of {name}"))?;
+            repositories::workspaces::files::add(&workspace, &path).await?;
+            staged.push((workspace, name));
+        }
+        let body = commit_body("Same message");
+
+        // Both commits carry one timestamp, and each goes to its own new branch, which starts
+        // at `head`, so both share that parent: only their contents differ.
+        let now = OffsetDateTime::now_utc();
+        pin_commit_timestamp(&repo.path, now);
+        let [
+            (first_workspace, first_name),
+            (second_workspace, second_name),
+        ] = &staged[..]
+        else {
+            unreachable!("two workspaces were staged");
+        };
+        let second_branch = format!("branch-{second_name}");
+        let first = commit(first_workspace, &body, format!("branch-{first_name}")).await?;
+        let refused = commit(second_workspace, &body, &second_branch).await;
+        assert!(
+            matches!(refused, Err(OxenError::CommitIdTaken(id)) if id.to_string() == first.id),
+            "a commit whose id is already taken is refused, got {refused:?}"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &first, Path::new(first_name))?.is_some()
+                && repositories::tree::get_file_by_path(repo, &first, Path::new(second_name))?
+                    .is_none(),
+            "the refused commit leaves the first commit's tree as it was"
+        );
+        assert_eq!(
+            repositories::branches::get_by_name(repo, &second_branch)?.commit_id,
+            head.id,
+            "the refused commit leaves its branch where it was"
+        );
+
+        pin_commit_timestamp(&repo.path, now + Duration::seconds(1));
+        let second = commit(second_workspace, &body, &second_branch).await?;
+        assert_eq!(
+            second.parent_ids, first.parent_ids,
+            "the retry shares the parent"
+        );
+        assert_ne!(
+            second.id, first.id,
+            "a retry in a later second gets its own id"
+        );
+        assert!(
+            repositories::tree::get_file_by_path(repo, &second, Path::new(second_name))?.is_some(),
+            "the retried commit's tree holds its own file"
+        );
+        unpin_commit_timestamp(&repo.path);
+
+        Ok(())
+    }
+
+    /// A repository whose own config is unreadable fails the listing rather than reporting that it
+    /// holds no workspaces: the fault is the repository's, not any one workspace's.
+    async fn case_list_propagates_an_unreadable_repository_config(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let commit = repositories::commits::head_commit(repo)?;
+        repositories::workspaces::create(repo, &commit, "ws-listed", true)?;
+
+        AtomicFile::new(util::fs::config_filepath(&repo.path)).write(b"not valid toml {{{")?;
+
+        assert!(
+            repositories::workspaces::list(repo).await.is_err(),
+            "a broken repository config must not read as an empty workspace list"
+        );
+
+        Ok(())
+    }
+
+    // Each case makes its own workspaces and commits to its own branches, and the remote's main
+    // branch moves only in the first.
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_concurrent_workspace_commits() -> Result<(), OxenError> {
+    async fn test_concurrent_remote_workspace_commits() -> Result<(), OxenError> {
         test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
-            // Create two files in different directories to avoid conflicts
-            let file1 = repo.path.join("dir1").join("file1.txt");
-            let file2 = repo.path.join("dir2").join("file2.txt");
-            util::fs::write_to_path(&file1, "File 1 content")?;
-            util::fs::write_to_path(&file2, "File 2 content")?;
-            repositories::add(&repo, &file1).await?;
-            repositories::add(&repo, &file2).await?;
-            let _commit = repositories::commit(&repo, "Adding initial files")?;
-            repositories::push(&repo).await?;
-
-            // Create two workspaces
-            let workspace1 =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, "workspace1")
-                    .await?;
-            let workspace2 =
-                api::client::workspaces::create(&remote_repo, DEFAULT_BRANCH_NAME, "workspace2")
-                    .await?;
-
-            // Modify files in each workspace
-            util::fs::write_to_path(&file1, "Updated file 1")?;
-            util::fs::write_to_path(&file2, "Updated file 2")?;
-            api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace1.id,
-                "dir1",
-                file1,
-            )
-            .await?;
-            api::client::workspaces::files::upload_single_file(
-                &remote_repo,
-                &workspace2.id,
-                "dir2",
-                file2,
-            )
-            .await?;
-
-            // Create commit bodies
-            let commit_body1 = NewCommitBody {
-                message: "Update file 1".to_string(),
-                author: "Bessie".to_string(),
-                email: "bessie@oxen.ai".to_string(),
-            };
-            let commit_body2 = NewCommitBody {
-                message: "Update file 2".to_string(),
-                author: "Bessie".to_string(),
-                email: "bessie@oxen.ai".to_string(),
-            };
-
-            // Clone necessary values for the second task
-            let remote_repo_clone1 = remote_repo.clone();
-            let remote_repo_clone2 = remote_repo.clone();
-
-            // Spawn two concurrent commit tasks
-            let commit_task1 = tasks::spawn(async move {
-                api::client::workspaces::commit(
-                    &remote_repo_clone1,
-                    DEFAULT_BRANCH_NAME,
-                    &workspace1.id,
-                    &commit_body1,
-                )
-                .await
-            });
-            let commit_task2 = tasks::spawn(async move {
-                api::client::workspaces::commit(
-                    &remote_repo_clone2,
-                    DEFAULT_BRANCH_NAME,
-                    &workspace2.id,
-                    &commit_body2,
-                )
-                .await
-            });
-
-            // Wait for both tasks to complete
-            let result1 = commit_task1.await.expect("Task 1 panicked")?;
-            let result2 = commit_task2.await.expect("Task 2 panicked")?;
-
-            // Verify both commits were successful
-            assert_ne!(result1.id, result2.id, "Commits should have different IDs");
-            assert!(!result1.id.is_empty(), "Commit 1 should have valid ID");
-            assert!(!result2.id.is_empty(), "Commit 2 should have valid ID");
-
+            case_concurrent_workspace_commits(&repo, &remote_repo).await?;
+            case_fully_concurrent_workspace_operations(&repo, &remote_repo).await?;
             Ok(remote_repo)
         })
         .await
     }
 
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_fully_concurrent_workspace_operations() -> Result<(), OxenError> {
+    async fn case_concurrent_workspace_commits(
+        repo: &LocalRepository,
+        remote_repo: &RemoteRepository,
+    ) -> Result<(), OxenError> {
+        // Create two files in different directories to avoid conflicts
+        let file1 = repo.path.join("dir1").join("file1.txt");
+        let file2 = repo.path.join("dir2").join("file2.txt");
+        util::fs::write_to_path(&file1, "File 1 content")?;
+        util::fs::write_to_path(&file2, "File 2 content")?;
+        repositories::add(repo, &file1).await?;
+        repositories::add(repo, &file2).await?;
+        let _commit = repositories::commit(repo, "Adding initial files")?;
+        repositories::push(repo).await?;
+
+        // Create two workspaces
+        let workspace1 =
+            api::client::workspaces::create(remote_repo, DEFAULT_BRANCH_NAME, "workspace1").await?;
+        let workspace2 =
+            api::client::workspaces::create(remote_repo, DEFAULT_BRANCH_NAME, "workspace2").await?;
+
+        // Modify files in each workspace
+        util::fs::write_to_path(&file1, "Updated file 1")?;
+        util::fs::write_to_path(&file2, "Updated file 2")?;
+        api::client::workspaces::files::upload_single_file(
+            remote_repo,
+            &workspace1.id,
+            "dir1",
+            file1,
+        )
+        .await?;
+        api::client::workspaces::files::upload_single_file(
+            remote_repo,
+            &workspace2.id,
+            "dir2",
+            file2,
+        )
+        .await?;
+
+        // Create commit bodies
+        let commit_body1 = commit_body("Update file 1");
+        let commit_body2 = commit_body("Update file 2");
+
+        // Clone necessary values for the second task
+        let remote_repo_clone1 = remote_repo.clone();
+        let remote_repo_clone2 = remote_repo.clone();
+
+        // Spawn two concurrent commit tasks
+        let commit_task1 = tasks::spawn(async move {
+            api::client::workspaces::commit(
+                &remote_repo_clone1,
+                DEFAULT_BRANCH_NAME,
+                &workspace1.id,
+                &commit_body1,
+            )
+            .await
+        });
+        let commit_task2 = tasks::spawn(async move {
+            api::client::workspaces::commit(
+                &remote_repo_clone2,
+                DEFAULT_BRANCH_NAME,
+                &workspace2.id,
+                &commit_body2,
+            )
+            .await
+        });
+
+        // Wait for both tasks to complete
+        let result1 = commit_task1.await.expect("Task 1 panicked")?;
+        let result2 = commit_task2.await.expect("Task 2 panicked")?;
+
+        // Verify both commits were successful
+        assert_ne!(result1.id, result2.id, "Commits should have different IDs");
+        assert!(!result1.id.is_empty(), "Commit 1 should have valid ID");
+        assert!(!result2.id.is_empty(), "Commit 2 should have valid ID");
+
+        Ok(())
+    }
+
+    async fn case_fully_concurrent_workspace_operations(
+        repo: &LocalRepository,
+        remote_repo: &RemoteRepository,
+    ) -> Result<(), OxenError> {
         // Number of concurrent tasks to run
         const NUM_TASKS: usize = 20;
 
-        test::run_one_commit_sync_repo_test(|repo, remote_repo| async move {
-            let mut handles = vec![];
+        let mut handles = vec![];
 
-            // Spawn NUM_TASKS concurrent tasks
-            for i in 0..NUM_TASKS {
-                let remote_repo = remote_repo.clone();
-                let repo = repo.clone();
-                let handle = tasks::spawn(async move {
-                    // Create a unique branch for this task
-                    let branch_name = format!("branch-{i}");
-                    api::client::branches::create_from_branch(
-                        &remote_repo,
-                        &branch_name,
-                        DEFAULT_BRANCH_NAME,
-                    )
-                    .await?;
+        // Spawn NUM_TASKS concurrent tasks
+        for i in 0..NUM_TASKS {
+            let remote_repo = remote_repo.clone();
+            let repo = repo.clone();
+            let handle = tasks::spawn(async move {
+                // Create a unique branch for this task
+                let branch_name = format!("branch-{i}");
+                api::client::branches::create_from_branch(
+                    &remote_repo,
+                    &branch_name,
+                    DEFAULT_BRANCH_NAME,
+                )
+                .await?;
 
-                    // Create workspace from the new branch
-                    let workspace = api::client::workspaces::create(
-                        &remote_repo,
-                        &branch_name,
-                        &format!("workspace-{i}"),
-                    )
-                    .await?;
+                // Create workspace from the new branch
+                let workspace = api::client::workspaces::create(
+                    &remote_repo,
+                    &branch_name,
+                    &format!("workspace-{i}"),
+                )
+                .await?;
 
-                    // Add a unique file
-                    let file_path = repo.path.join(format!("file-{i}.txt"));
-                    util::fs::write_to_path(&file_path, format!("content {i}"))?;
-                    api::client::workspaces::files::upload_single_file(
-                        &remote_repo,
-                        &workspace.id,
-                        "",
-                        file_path,
-                    )
-                    .await?;
+                // Add a unique file
+                let file_path = repo.path.join(format!("file-{i}.txt"));
+                util::fs::write_to_path(&file_path, format!("content {i}"))?;
+                api::client::workspaces::files::upload_single_file(
+                    &remote_repo,
+                    &workspace.id,
+                    "",
+                    file_path,
+                )
+                .await?;
 
-                    // Commit changes back to the task's branch
-                    let commit_body = NewCommitBody {
-                        message: format!("Commit from task {i}"),
-                        author: "Test Author".to_string(),
-                        email: "test@oxen.ai".to_string(),
-                    };
+                // Commit changes back to the task's branch
+                api::client::workspaces::commit(
+                    &remote_repo,
+                    &branch_name,
+                    &workspace.id,
+                    &commit_body(&format!("Commit from task {i}")),
+                )
+                .await?;
 
-                    api::client::workspaces::commit(
-                        &remote_repo,
-                        &branch_name,
-                        &workspace.id,
-                        &commit_body,
-                    )
-                    .await?;
+                Ok::<_, OxenError>(())
+            });
+            handles.push(handle);
+        }
 
-                    Ok::<_, OxenError>(())
-                });
-                handles.push(handle);
-            }
+        // Wait for all tasks to complete and collect results
+        for handle in handles {
+            handle
+                .await
+                .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
+        }
 
-            // Wait for all tasks to complete and collect results
-            for handle in handles {
-                handle
-                    .await
-                    .map_err(|e| OxenError::basic_str(format!("Task error: {e}")))??;
-            }
-
-            Ok(remote_repo)
-        })
-        .await
+        Ok(())
     }
 
     #[tokio::test]
@@ -1433,401 +1758,5 @@ mod tests {
         assert!(!registry.contains_key(&key));
 
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_concurrent_create_with_name_exactly_one_succeeds() -> Result<(), OxenError> {
-        const NUM_TASKS: usize = 10;
-        const SHARED_NAME: &str = "shared-workspace-name";
-
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-
-            let mut handles = Vec::with_capacity(NUM_TASKS);
-            for i in 0..NUM_TASKS {
-                let repo = repo.clone();
-                let commit = commit.clone();
-                handles.push(tasks::spawn(async move {
-                    let workspace_id = format!("ws-id-{i}");
-                    create_with_name(
-                        &repo,
-                        &commit,
-                        &workspace_id,
-                        Some(SHARED_NAME.to_string()),
-                        true,
-                    )
-                    .await
-                }));
-            }
-
-            let mut winners = Vec::new();
-            let mut already_exists_count = 0;
-            for handle in handles {
-                match handle.await.expect("task panicked") {
-                    Ok(ws) => winners.push(ws),
-                    Err(OxenError::WorkspaceAlreadyExists(_)) => already_exists_count += 1,
-                    Err(e) => return Err(e),
-                }
-            }
-
-            assert_eq!(winners.len(), 1, "exactly one create_with_name must win");
-            assert_eq!(
-                already_exists_count,
-                NUM_TASKS - 1,
-                "every loser must return WorkspaceAlreadyExists",
-            );
-
-            // The winner's workspace dir must still be on disk; loser dirs are rolled back.
-            let winner = &winners[0];
-            assert!(winner.workspace_repo.path.exists());
-            for i in 0..NUM_TASKS {
-                let loser_id = format!("ws-id-{i}");
-                if loser_id == winner.id {
-                    continue;
-                }
-                let loser_id_hash = util::hasher::hash_str_sha256(&loser_id);
-                let loser_dir = Workspace::workspace_dir(&repo, &loser_id_hash);
-                assert!(
-                    !loser_dir.exists(),
-                    "loser workspace dir {loser_dir:?} should have been rolled back",
-                );
-            }
-
-            // The index maps the name to the winner.
-            let idx = workspace_name_index::get_index(&repo)?;
-            assert_eq!(idx.get_id_by_name(SHARED_NAME)?, Some(winner.id.clone()));
-
-            Ok(())
-        })
-        .await
-    }
-
-    // A failed rebuild leaves an index dir that `index_exists` would otherwise
-    // report as ready, short-circuiting future `ensure_name_index` calls onto an
-    // empty index. Invalidation must remove that dir so the next call rebuilds.
-    #[tokio::test]
-    async fn test_ensure_name_index_rebuilds_after_invalidation() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-
-            // Create a named workspace so a correct rebuild has an entry to find.
-            create_with_name(
-                &repo,
-                &commit,
-                "ws-id-1",
-                Some("named-ws".to_string()),
-                true,
-            )
-            .await?;
-            assert!(workspace_name_index::index_exists(&repo));
-
-            // Invalidation stands in for the cleanup done on a failed build: the
-            // on-disk index dir is gone, so `index_exists` no longer short-circuits.
-            invalidate_name_index(&repo);
-            assert!(!workspace_name_index::index_exists(&repo));
-
-            // The next call rebuilds from disk rather than trusting a missing index.
-            ensure_name_index(&repo).await?;
-            assert!(workspace_name_index::index_exists(&repo));
-
-            let idx = workspace_name_index::get_index(&repo)?;
-            assert_eq!(idx.get_id_by_name("named-ws")?, Some("ws-id-1".to_string()));
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_create_records_created_at() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let before = OffsetDateTime::now_utc();
-            let workspace =
-                repositories::workspaces::create(&repo, &commit, "ws-created-at", true)?;
-            let after = OffsetDateTime::now_utc();
-
-            let created_at = workspace
-                .created_at
-                .expect("a freshly created workspace records created_at");
-            assert!(
-                created_at >= before && created_at <= after,
-                "created_at {created_at} should sit between {before} and {after}"
-            );
-
-            // Survives the round trip through the on-disk config.
-            let reloaded = repositories::workspaces::get(&repo, "ws-created-at")?
-                .expect("workspace should be found by id");
-            assert_eq!(reloaded.created_at, workspace.created_at);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_config_without_created_at_still_loads_and_commits() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let workspace = repositories::workspaces::create(&repo, &commit, "ws-legacy", true)?;
-
-            // A config written before the server recorded creation time has no `created_at` key.
-            let config_path = workspace.config_path();
-            let contents = util::fs::read_from_path(&config_path)?;
-            let legacy: String = contents
-                .lines()
-                .filter(|line| !line.starts_with("created_at"))
-                .map(|line| format!("{line}\n"))
-                .collect();
-            assert!(!legacy.contains("created_at"));
-            AtomicFile::new(&config_path).write(legacy.as_bytes())?;
-
-            let reloaded = repositories::workspaces::get(&repo, "ws-legacy")?
-                .expect("a workspace without created_at should still load");
-            assert_eq!(reloaded.created_at, None);
-
-            // Rewriting the config must not choke on the absent timestamp.
-            repositories::workspaces::update_commit(&reloaded, &commit.id)?;
-            let after_update = repositories::workspaces::get(&repo, "ws-legacy")?
-                .expect("workspace should still load after its commit is updated");
-            assert_eq!(after_update.created_at, None);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_config_under_the_former_filename_still_loads() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            let workspace = repositories::workspaces::create(&repo, &commit, "ws-renamed", true)?;
-            let workspace_dir = workspace.dir();
-
-            // A workspace whose config was written before the file was renamed.
-            let current_path = Workspace::config_path_from_dir(&workspace_dir);
-            let legacy_path = Workspace::legacy_config_path_from_dir(&workspace_dir);
-            let contents = util::fs::read_from_path(&current_path)?;
-            AtomicFile::new(&legacy_path).write(contents.as_bytes())?;
-            util::fs::remove_file(&current_path)?;
-
-            let reloaded = repositories::workspaces::get(&repo, "ws-renamed")?
-                .expect("a workspace under the former config name should still load");
-            assert_eq!(reloaded.created_at, workspace.created_at);
-
-            // Writing moves it onto the current name and leaves only one config behind.
-            repositories::workspaces::update_commit(&reloaded, &commit.id)?;
-            assert!(current_path.exists());
-            assert!(!legacy_path.exists());
-
-            Ok(())
-        })
-        .await
-    }
-
-    /// A workspace read that is in flight when a commit lands keeps the staged db handle it
-    /// already holds, and a read arriving after the commit opens against that same handle
-    /// instead of colliding with RocksDB's per-directory LOCK.
-    #[tokio::test]
-    async fn test_commit_leaves_a_held_staged_db_handle_usable() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file).await?;
-            let commit = repositories::commit(&repo, "Adding hello file")?;
-
-            // Named, so the commit updates the workspace rather than deleting it.
-            let workspace = repositories::workspaces::create_with_name(
-                &repo,
-                &commit,
-                "wid-held",
-                Some("named-held".to_string()),
-                true,
-            )
-            .await?;
-
-            let workspace_hello_file = workspace.dir().join("hello.txt");
-            util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-            repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
-
-            let reader = get_staged_db_manager(&workspace.workspace_repo)?;
-
-            repositories::workspaces::commit(
-                &workspace,
-                &NewCommitBody {
-                    message: "Updating hello file".to_string(),
-                    author: "Bessie".to_string(),
-                    email: "bessie@oxen.ai".to_string(),
-                },
-                DEFAULT_BRANCH_NAME,
-            )
-            .await?;
-
-            let after = get_staged_db_manager(&workspace.workspace_repo)?;
-            assert!(after.read_from_staged_db("hello.txt")?.is_none());
-            assert!(
-                repositories::workspaces::status::status_from_dir(&workspace, Path::new(""))?
-                    .is_clean()
-            );
-
-            drop(reader);
-            Ok(())
-        })
-        .await
-    }
-
-    /// A delete that cannot close the staged db leaves the workspace untouched (directory, name
-    /// index, and registry entry), so the caller still holding the handle keeps reading through
-    /// it and a later delete removes the workspace once that caller is gone.
-    #[tokio::test]
-    async fn test_delete_keeps_the_workspace_while_the_staged_db_is_held() -> Result<(), OxenError>
-    {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let hello_file = repo.path.join("hello.txt");
-            util::fs::write_to_path(&hello_file, "Hello")?;
-            repositories::add(&repo, &hello_file).await?;
-            let commit = repositories::commit(&repo, "Adding hello file")?;
-
-            let workspace = repositories::workspaces::create_with_name(
-                &repo,
-                &commit,
-                "wid-held-delete",
-                Some("named-held-delete".to_string()),
-                true,
-            )
-            .await?;
-
-            let workspace_hello_file = workspace.dir().join("hello.txt");
-            util::fs::write_to_path(&workspace_hello_file, "Hello again")?;
-            repositories::workspaces::files::add(&workspace, workspace_hello_file).await?;
-
-            let reader = get_staged_db_manager(&workspace.workspace_repo)?;
-
-            assert!(repositories::workspaces::delete(&workspace).is_err());
-            assert!(workspace.dir().exists());
-            assert!(
-                repositories::workspaces::get_by_name(&repo, "named-held-delete")?.is_some(),
-                "the refused delete dropped the name index entry"
-            );
-
-            // The registry entry survived, so a caller arriving after the refused delete shares
-            // the open handle instead of colliding with RocksDB's per-directory LOCK.
-            let after = get_staged_db_manager(&workspace.workspace_repo)?;
-            assert!(after.read_from_staged_db("hello.txt")?.is_some());
-
-            drop(after);
-            drop(reader);
-            repositories::workspaces::delete(&workspace)?;
-            assert!(!workspace.dir().exists());
-
-            let body = NewCommitBody {
-                message: "Committing a deleted workspace".to_string(),
-                author: "Bessie".to_string(),
-                email: "bessie@oxen.ai".to_string(),
-            };
-            let result =
-                repositories::workspaces::commit(&workspace, &body, DEFAULT_BRANCH_NAME).await;
-            assert!(
-                matches!(result, Err(OxenError::WorkspaceNotFound(_))),
-                "a commit through a copy of a deleted workspace fails as not found, got {result:?}"
-            );
-            assert!(
-                !workspace.dir().exists(),
-                "the failed commit leaves no workspace directory behind"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-    /// One workspace whose config cannot be parsed costs its own entry in the listing, not every
-    /// other workspace in the repository.
-    #[tokio::test]
-    async fn test_list_skips_a_workspace_with_an_unparseable_config() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
-            let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
-            AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
-
-            let listed = repositories::workspaces::list(&repo).await?;
-            let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
-            assert_eq!(ids, vec!["ws-good"]);
-
-            Ok(())
-        })
-        .await
-    }
-
-    /// A workspace pinned to a commit the repository no longer has is skipped by the listing too:
-    /// `get_by_dir` reports that as an error rather than as an absent workspace.
-    #[tokio::test]
-    async fn test_list_skips_a_workspace_pinned_to_a_missing_commit() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
-            let dangling = repositories::workspaces::create(&repo, &commit, "ws-dangling", true)?;
-
-            let mut config = read_config(&dangling.dir())?.expect("workspace should have a config");
-            config.workspace_commit_id = "0123456789abcdef0123456789abcdef".to_string();
-            write_config(&dangling.dir(), &config)?;
-
-            let listed = repositories::workspaces::list(&repo).await?;
-            let ids: Vec<_> = listed.iter().map(|w| w.id.as_str()).collect();
-            assert_eq!(ids, vec!["ws-good"]);
-
-            Ok(())
-        })
-        .await
-    }
-
-    /// Looking a workspace up by name walks the same directories, so a damaged sibling must not
-    /// hide the one being asked for. Exercises the slow path taken before the name index exists.
-    #[tokio::test]
-    async fn test_get_by_name_skips_a_damaged_sibling() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            create_with_name(
-                &repo,
-                &commit,
-                "ws-wanted-id",
-                Some("ws-wanted".to_string()),
-                true,
-            )
-            .await?;
-            let broken = repositories::workspaces::create(&repo, &commit, "ws-broken", true)?;
-            AtomicFile::new(broken.config_path()).write(b"this is not toml {{{")?;
-
-            // Drop the name index so the lookup falls back to scanning every directory.
-            invalidate_name_index(&repo);
-            assert!(!workspace_name_index::index_exists(&repo));
-
-            let found = repositories::workspaces::get_by_name(&repo, "ws-wanted")?
-                .expect("a damaged sibling should not hide the workspace being looked up");
-            assert_eq!(found.id, "ws-wanted-id");
-
-            Ok(())
-        })
-        .await
-    }
-
-    /// A repository whose own config is unreadable fails the listing rather than reporting that it
-    /// holds no workspaces: the fault is the repository's, not any one workspace's.
-    #[tokio::test]
-    async fn test_list_propagates_an_unreadable_repository_config() -> Result<(), OxenError> {
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let commit = repositories::commits::head_commit(&repo)?;
-            repositories::workspaces::create(&repo, &commit, "ws-good", true)?;
-
-            AtomicFile::new(util::fs::config_filepath(&repo.path)).write(b"not valid toml {{{")?;
-
-            assert!(
-                repositories::workspaces::list(&repo).await.is_err(),
-                "a broken repository config must not read as an empty workspace list"
-            );
-
-            Ok(())
-        })
-        .await
     }
 }
