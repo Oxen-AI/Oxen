@@ -176,7 +176,9 @@ mod tests {
     use sentry::{ClientOptions, Level, capture_message};
 
     use crate::helpers::stream_with_heartbeat;
-    use crate::middleware::{OXEN_REQUEST_ID, RequestIdMiddleware, run_request_as_task};
+    use crate::middleware::{
+        OXEN_REQUEST_ID, RequestIdMiddleware, read_body_under_request_hub, run_request_as_task,
+    };
 
     /// The route actix matches, the URI that matches it, and the transaction name `sentry-actix`
     /// derives from the two — what a task spawned anywhere under this request must report against.
@@ -214,6 +216,7 @@ mod tests {
             App::new()
                 .route(ROUTE_PATTERN, web::get().to(handler))
                 .wrap(RequestIdMiddleware)
+                .wrap(from_fn(read_body_under_request_hub))
                 .wrap(
                     sentry_actix::Sentry::builder()
                         .capture_server_errors(false)

@@ -22,7 +22,7 @@ use thiserror::Error;
 
 use oxen_server::middleware::{
     MetricsMiddleware, OxenRootSpanBuilder, RequestIdMiddleware, RequestStartLogMiddleware,
-    request_id, run_request_as_task,
+    read_body_under_request_hub, request_id, run_request_as_task,
 };
 use tracing_actix_web::TracingLogger;
 
@@ -945,6 +945,9 @@ async fn start(
             // it tags.
             .wrap(RequestIdMiddleware)
             .wrap(MetricsMiddleware)
+            // Inner of the Sentry wrap below, whose per-request hub it carries onto the response
+            // body, which actix reads after the request future has returned.
+            .wrap(from_fn(read_body_under_request_hub))
             // A per-request Sentry hub so a captured panic carries request context. Server-error
             // auto-capture is disabled here.
             .wrap(

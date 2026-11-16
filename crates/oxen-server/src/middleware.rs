@@ -1,17 +1,22 @@
 use actix_web::{
     Error, HttpMessage, HttpRequest,
-    body::MessageBody,
+    body::{BodySize, MessageBody},
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::header,
     middleware::Next,
 };
+use bytes::Bytes;
 use futures_util::future::LocalBoxFuture;
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
 use liboxen::model::LocalRepository;
 use liboxen::request_context::REQUEST_ID;
+use sentry::{Hub, HubSwitchGuard};
 use std::future::{Future, Ready, ready};
 use std::panic;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 use tokio_util::sync::CancellationToken;
 
 use crate::errors::OxenHttpError;
@@ -98,6 +103,53 @@ pub async fn run_request_as_task<B: MessageBody + 'static>(
         .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()));
     client_waiting.disarm();
     response
+}
+
+/// Reads each response body under the request's Sentry hub, so a task the body spawns as it is
+/// read, such as an S3 download's part tasks, reports under the request's route. `sentry-actix`
+/// binds the hub only around polls of the request future, and actix reads the body after that
+/// future has returned. Wrap it just inside `sentry-actix`, whose hub it captures. Use with
+/// [`actix_web::middleware::from_fn`].
+///
+/// The route reaches these events through the transaction name `sentry-actix` leaves on the hub's
+/// scope, which it sets only while it starts no performance transaction of its own. With
+/// `start_transaction` on, it finishes the transaction and resets the scope's span when the request
+/// future returns, before the body is read.
+pub async fn read_body_under_request_hub<B: MessageBody + Unpin + 'static>(
+    req: ServiceRequest,
+    next: Next<B>,
+) -> Result<ServiceResponse<RequestHubBody<B>>, Error> {
+    let hub = Hub::current();
+    let response = next.call(req).await?;
+    Ok(response.map_body(|_, body| RequestHubBody { body, hub }))
+}
+
+/// A response body read under its request's Sentry hub. See [`read_body_under_request_hub`].
+pub struct RequestHubBody<B> {
+    body: B,
+    hub: Arc<Hub>,
+}
+
+impl<B: MessageBody + Unpin> MessageBody for RequestHubBody<B> {
+    type Error = B::Error;
+
+    fn size(&self) -> BodySize {
+        self.body.size()
+    }
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Bytes, Self::Error>>> {
+        let this = self.get_mut();
+        let _hub = HubSwitchGuard::new(Arc::clone(&this.hub));
+        Pin::new(&mut this.body).poll_next(cx)
+    }
+
+    fn try_into_bytes(self) -> Result<Bytes, Self> {
+        let Self { body, hub } = self;
+        body.try_into_bytes().map_err(|body| Self { body, hub })
+    }
 }
 
 /// [`repo_locks::with_repo_exclusive`] for the request `req`. If the client resets its connection
