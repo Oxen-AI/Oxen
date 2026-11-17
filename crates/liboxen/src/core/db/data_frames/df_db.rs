@@ -78,7 +78,8 @@ const DUCKDB_THREADS: i64 = 5;
 /// of available memory, independently of every other cached connection.
 ///
 /// A ceiling, not a reservation: these databases are file-backed, so a query over
-/// it spills to `<db path>.tmp` rather than failing. Byte sizes only, no percentages.
+/// it spills to `<db path>.tmp` rather than failing. A sort of wide rows is the exception, and
+/// fails once it outgrows the ceiling. Byte sizes only, no percentages.
 const DUCKDB_MAX_MEMORY: &str = "512MiB";
 
 // Process-wide connection registry, one live connection per database file.

@@ -20,6 +20,7 @@ use crate::repositories::workspaces::{
 use crate::tasks;
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use std::io::{Seek, SeekFrom};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -704,40 +705,162 @@ pub fn extract_file_node_to_working_dir(
         .ok_or_else(|| OxenError::internal_error(format!("Invalid export path: {working_path:?}")))?
         .to_string_lossy()
         .to_string();
-    let export_path = working_path.with_file_name(format!(
-        ".oxentmp.{}.export-{}",
-        std::process::id(),
-        file_name
-    ));
-
-    with_df_db_manager(&db_path, |manager| {
+    let slice_bytes = exports_join_end_to_end(&working_path).then_some(EXPORT_SLICE_BYTES);
+    let export_files = with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            let projection = build_export_projection(conn, TABLE_NAME)?;
-            // Ordered so the committed file keeps the stable row order —
-            // DuckDB UPDATEs physically relocate rows, so an unordered COPY
-            // would reshuffle the file after any edit.
-            let sql = format!("SELECT {projection} FROM '{TABLE_NAME}' ORDER BY {OXEN_ROW_ID_COL}");
-            let query = wrap_sql_for_export(&sql, &export_path);
-            log::debug!("extracting file node to working dir query: {query:?}");
-            conn.execute(&query, [])?;
-            Ok(())
+            export_in_row_order(conn, slice_bytes, |part| {
+                working_path.with_file_name(format!(
+                    ".oxentmp.{}.export{part}-{file_name}",
+                    std::process::id()
+                ))
+            })
         })
     })?;
+    join_export_files(&export_files.paths)?;
 
     // wrap_sql_for_export falls back to a bare SELECT (no COPY, no file) for
     // extensions it doesn't know how to export; only publish when the COPY
     // actually produced the temp file.
-    if export_path.exists() {
+    if let Some(export_path) = export_files.paths.first()
+        && export_path.exists()
+    {
         // fsync before the rename so a crash can't leave the published file
         // pointing at unflushed bytes. Open writable: sync_all maps to
         // FlushFileBuffers on Windows, which rejects a read-only handle.
-        let exported = std::fs::OpenOptions::new().write(true).open(&export_path)?;
+        let exported = std::fs::OpenOptions::new().write(true).open(export_path)?;
         exported.sync_all()?;
         drop(exported);
-        util::fs::rename(&export_path, &working_path)?;
+        util::fs::rename(export_path, &working_path)?;
     }
 
     Ok(working_path)
+}
+
+/// Bytes of the staged table that one export statement sorts.
+///
+/// DuckDB's sort fails once a table of wide rows outgrows the connection's memory limit, even though
+/// other queries spill to disk. A slice this size sorts within the limit.
+const EXPORT_SLICE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Whether exports of consecutive ranges of rows, joined end to end, make the same file as one
+/// export of every row. A Parquet file or a JSON array does not.
+fn exports_join_end_to_end(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("csv" | "tsv" | "jsonl" | "ndjson")
+    )
+}
+
+/// The files of an export, removed when this is dropped unless already joined or moved into place.
+/// An export that fails partway leaves none of them behind.
+struct ExportFiles {
+    paths: Vec<PathBuf>,
+}
+
+impl Drop for ExportFiles {
+    fn drop(&mut self) {
+        for path in &self.paths {
+            if let Err(err) = std::fs::remove_file(path)
+                && err.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(
+                    file.path = %path.display(),
+                    exception.message = %err,
+                    "Could not remove a data frame export file"
+                );
+            }
+        }
+    }
+}
+
+/// Write the staged table in row order to files that, read one after another, hold the whole
+/// export. With `slice_bytes`, each file holds a range of rows of about that many bytes. Only the
+/// first file has a header row, and `part_path` names each file.
+fn export_in_row_order(
+    conn: &Connection,
+    slice_bytes: Option<u64>,
+    part_path: impl Fn(usize) -> PathBuf,
+) -> Result<ExportFiles, DataFrameError> {
+    let projection = build_export_projection(conn, TABLE_NAME)?;
+    let mut files = ExportFiles { paths: Vec::new() };
+    for (part, row_filter) in row_id_filters(conn, slice_bytes)?.iter().enumerate() {
+        let path = part_path(part);
+        // Ordered so the committed file keeps the stable row order.
+        // DuckDB UPDATEs physically relocate rows, so an unordered COPY
+        // would reshuffle the file after any edit.
+        let sql = format!(
+            "SELECT {projection} FROM '{TABLE_NAME}'{row_filter} ORDER BY {OXEN_ROW_ID_COL}"
+        );
+        let query = wrap_sql_for_export_with_header(&sql, &path, part == 0);
+        log::debug!("extracting file node to working dir query: {query:?}");
+        files.paths.push(path);
+        conn.execute(&query, [])?;
+    }
+    Ok(files)
+}
+
+/// The `WHERE` clauses that split the staged table into ranges of row ids of about `slice_bytes`
+/// each, in row order. Together they select every row, including any without a row id.
+fn row_id_filters(
+    conn: &Connection,
+    slice_bytes: Option<u64>,
+) -> Result<Vec<String>, duckdb::Error> {
+    let Some(slice_bytes) = slice_bytes else {
+        return Ok(vec![String::new()]);
+    };
+    // Materialized so the running sum sorts only row ids and sizes, never the rows themselves.
+    // The row is spelled out column by column because a bare table name means a column when one
+    // shares its name.
+    let starts: Vec<i64> = {
+        let mut stmt = conn.prepare(&format!(
+            "WITH row_bytes AS MATERIALIZED ( \
+                 SELECT {OXEN_ROW_ID_COL}, strlen(CAST(row(*COLUMNS(*)) AS VARCHAR)) AS bytes \
+                 FROM {TABLE_NAME}) \
+             SELECT min({OXEN_ROW_ID_COL}) AS slice_start FROM ( \
+                 SELECT {OXEN_ROW_ID_COL}, \
+                 sum(bytes) OVER (ORDER BY {OXEN_ROW_ID_COL}) // {slice_bytes} AS slice \
+                 FROM row_bytes) \
+             GROUP BY slice HAVING min({OXEN_ROW_ID_COL}) IS NOT NULL ORDER BY slice_start"
+        ))?;
+        stmt.query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?
+    };
+    // The first slice starts at the smallest row id, so its start bounds nothing.
+    let [_, bounds @ ..] = starts.as_slice() else {
+        return Ok(vec![String::new()]);
+    };
+    let (Some(first), Some(last)) = (bounds.first(), bounds.last()) else {
+        return Ok(vec![String::new()]);
+    };
+    let filters = std::iter::once(format!(" WHERE {OXEN_ROW_ID_COL} < {first}"))
+        .chain(bounds.windows(2).map(|range| {
+            format!(
+                " WHERE {OXEN_ROW_ID_COL} >= {} AND {OXEN_ROW_ID_COL} < {}",
+                range[0], range[1]
+            )
+        }))
+        .chain(std::iter::once(format!(
+            " WHERE {OXEN_ROW_ID_COL} >= {last} OR {OXEN_ROW_ID_COL} IS NULL"
+        )))
+        .collect();
+    Ok(filters)
+}
+
+/// Append every file of an export after the first to the first, removing each once appended.
+fn join_export_files(export_paths: &[PathBuf]) -> Result<(), OxenError> {
+    let [first, rest @ ..] = export_paths else {
+        return Ok(());
+    };
+    if rest.is_empty() {
+        return Ok(());
+    }
+    let mut joined = std::fs::OpenOptions::new().write(true).open(first)?;
+    joined.seek(SeekFrom::End(0))?;
+    for path in rest {
+        std::io::copy(&mut std::fs::File::open(path)?, &mut joined)?;
+        util::fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 pub const VALID_EXPORT_EXTENSIONS: [&str; 6] = ["csv", "tsv", "parquet", "jsonl", "json", "ndjson"];
@@ -752,6 +875,11 @@ pub fn is_valid_export_extension(path: &Path) -> bool {
 }
 
 pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
+    wrap_sql_for_export_with_header(sql, path, true)
+}
+
+/// As [`wrap_sql_for_export`], leaving out the CSV or TSV header row when `header` is false.
+fn wrap_sql_for_export_with_header(sql: &str, path: &Path, header: bool) -> String {
     let extension = path
         .extension()
         .unwrap_or_default()
@@ -759,12 +887,12 @@ pub fn wrap_sql_for_export(sql: &str, path: &Path) -> String {
         .unwrap_or_default();
     match extension {
         "csv" => format!(
-            "COPY ({}) TO '{}' (HEADER, DELIMITER ',');",
+            "COPY ({}) TO '{}' (HEADER {header}, DELIMITER ',');",
             sql,
             path.to_string_lossy()
         ),
         "tsv" => format!(
-            "COPY ({}) TO '{}' (HEADER, DELIMITER '\t');",
+            "COPY ({}) TO '{}' (HEADER {header}, DELIMITER '\t');",
             sql,
             path.to_string_lossy()
         ),
@@ -1030,6 +1158,78 @@ mod tests {
                 |row| row.get(0),
             )?;
             assert_eq!(count, 2);
+            Ok(())
+        })
+    }
+
+    /// DuckDB's sort fails once a table of wide rows outgrows the connection's memory limit. An
+    /// export sliced by row bytes stays within the limit and writes the same bytes as one statement.
+    #[test]
+    fn test_export_sliced_by_row_bytes_fits_memory_limit() -> Result<(), OxenError> {
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+        test::run_empty_dir_test(|dir| {
+            let conn = df_db::get_connection(&dir.join("db"))?;
+            // The wide rows all come first, so slices of equal row counts would not fit, and a column
+            // named like the table must not hide the rows' size. Updating a list column moves the
+            // row to the end of the table, and deleting rows leaves gaps in the row ids.
+            conn.execute_batch(&format!(
+                "SET memory_limit = '64MiB'; \
+                 CREATE TABLE {TABLE_NAME} AS SELECT '' AS {TABLE_NAME}, \
+                 CASE WHEN range < 30000 THEN repeat('x', 2000) ELSE '' END || range AS name, \
+                 [range] AS tags, range + 1 AS {OXEN_ROW_ID_COL} FROM range(60000); \
+                 UPDATE {TABLE_NAME} SET tags = [0] WHERE {OXEN_ROW_ID_COL} % 7 = 0; \
+                 DELETE FROM {TABLE_NAME} WHERE {OXEN_ROW_ID_COL} BETWEEN 100 AND 400;"
+            ))?;
+            let part_path = |name: &str, extension: &str| {
+                let name = name.to_string();
+                let extension = extension.to_string();
+                move |part: usize| dir.join(format!("{name}{part}.{extension}"))
+            };
+
+            assert!(
+                export_in_row_order(&conn, None, part_path("whole", "jsonl")).is_err(),
+                "one statement over the whole table runs out of memory"
+            );
+            assert!(
+                !dir.join("whole0.jsonl").exists(),
+                "a failed export leaves no file behind"
+            );
+            let sliced =
+                export_in_row_order(&conn, Some(8 * 1024 * 1024), part_path("sliced", "jsonl"))?;
+            assert!(sliced.paths.len() > 1, "the table takes several slices");
+            join_export_files(&sliced.paths)?;
+            conn.execute_batch("SET memory_limit = '1GiB'")?;
+            let whole = export_in_row_order(&conn, None, part_path("whole", "jsonl"))?;
+            assert!(
+                std::fs::read(&sliced.paths[0])? == std::fs::read(&whole.paths[0])?,
+                "the joined JSON Lines export differs from one statement's"
+            );
+            assert!(
+                sliced.paths[1..].iter().all(|path| !path.exists()),
+                "joined files are removed"
+            );
+
+            // A row without a row id comes last either way, and only the first CSV file has a
+            // header row.
+            conn.execute_batch(&format!(
+                "DELETE FROM {TABLE_NAME} WHERE {OXEN_ROW_ID_COL} > 1000; \
+                 INSERT INTO {TABLE_NAME} VALUES ('', 'no row id', [1], NULL);"
+            ))?;
+            let whole = export_in_row_order(&conn, None, part_path("whole", "csv"))?;
+            let sliced = export_in_row_order(&conn, Some(256 * 1024), part_path("sliced", "csv"))?;
+            assert!(sliced.paths.len() > 1, "the CSV table takes several slices");
+            join_export_files(&sliced.paths)?;
+            let joined = std::fs::read_to_string(&sliced.paths[0])?;
+            assert!(
+                joined == std::fs::read_to_string(&whole.paths[0])?,
+                "the joined CSV export differs from one statement's"
+            );
+            assert!(
+                joined.trim_end().ends_with("no row id,[1]"),
+                "the row without a row id comes last"
+            );
             Ok(())
         })
     }
