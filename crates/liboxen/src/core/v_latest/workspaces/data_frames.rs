@@ -219,7 +219,23 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
+/// Build the workspace's DuckDB table for the data frame at `path` from its version file.
+/// A table that is already fully indexed is left as it is, with the edits staged in it.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    build_table(workspace, path, false).await
+}
+
+/// Rebuild the workspace's DuckDB table for the data frame at `path` from its version file,
+/// discarding the edits staged in it.
+pub(crate) async fn restore(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    build_table(workspace, path, true).await
+}
+
+async fn build_table(
+    workspace: &Workspace,
+    path: &Path,
+    replace_indexed: bool,
+) -> Result<(), OxenError> {
     let (file_hash, extension, db_path, parent) = {
         let workspace = workspace.clone();
         let path = path.to_path_buf();
@@ -289,6 +305,12 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
     tasks::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| {
+                // Another request may have indexed this frame since the caller checked.
+                // A rebuild would then discard the edits staged in the table.
+                if !replace_indexed && df_db::table_is_fully_indexed(conn, TABLE_NAME)? {
+                    return Ok(());
+                }
+
                 // Drop any prior table (possibly partial or stale) and commit that
                 // drop before the rebuild, so a failed rebuild leaves no table at
                 // all rather than rolling back to a partial one.

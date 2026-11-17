@@ -107,21 +107,12 @@ pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Data
 }
 
 pub async fn restore(
-    repo: &LocalRepository,
+    _repo: &LocalRepository,
     workspace: &Workspace,
     path: impl AsRef<Path>,
 ) -> Result<(), OxenError> {
-    // Unstage and then restage the df
-    {
-        let workspace = workspace.clone();
-        let path = path.as_ref().to_path_buf();
-        tasks::spawn_blocking(move || unindex(&workspace, path)).await??;
-    }
-
     // TODO: we could do this more granularly without a full reset
-    index(repo, workspace, path.as_ref()).await?;
-
-    Ok(())
+    core::v_latest::workspaces::data_frames::restore(workspace, path.as_ref()).await
 }
 
 pub fn count(workspace: &Workspace, path: &Path) -> Result<usize, DataFrameError> {
@@ -686,6 +677,18 @@ mod tests {
             // A normal index produces a fully-indexed, queryable table.
             index(&repo, &workspace, &path).await?;
             assert!(is_indexed(&workspace, &path)?);
+
+            // Two index requests can overlap, and the second can run after a row was appended.
+            // A rebuild there would drop a row whose append reported success.
+            let committed_rows = count(&workspace, &path)?;
+            let appended = json!({"file": "images/appended.jpg", "label": "dog"});
+            rows::add(&repo, &workspace, &path, &appended)?;
+            index(&repo, &workspace, &path).await?;
+            assert_eq!(
+                count(&workspace, &path)?,
+                committed_rows + 1,
+                "indexing a fully indexed frame keeps the rows staged in it"
+            );
 
             // Simulate a table written by an older version: no index marker table. Such a table
             // may hold rows tombstoned as 'removed' that the current code would wrongly export, so
