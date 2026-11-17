@@ -88,7 +88,6 @@ pub use crate::core::v_latest::merge::lowest_common_ancestor_from_commits;
 #[cfg(test)]
 mod tests {
 
-    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
     use filetime::{FileTime, set_file_mtime};
@@ -334,6 +333,12 @@ mod tests {
 
             // Two way merge should have two parent IDs so we know where the merge came from
             assert_eq!(merge_commit.parent_ids.len(), 2);
+            assert!(
+                !util::fs::oxen_hidden_dir(&repo.path)
+                    .join(constants::MERGE_HEAD_FILE)
+                    .exists(),
+                "the merge commit clears the merge's record"
+            );
 
             // There should be 5 files: [a.txt, b.txt, c.txt, d.txt e.txt]
             let file_prefixes = ["a", "b", "c", "d", "e"];
@@ -1780,8 +1785,11 @@ mod tests {
         util::fs::remove_file(&blocker)?;
         repositories::add(repo, &notes_file).await?;
         let merged = repositories::commit(repo, "finish the merge")?;
-        let parents: HashSet<_> = merged.parent_ids.iter().cloned().collect();
-        assert_eq!(parents, HashSet::from([merge_tip.id, base_tip.id]));
+        assert_eq!(
+            merged.parent_ids,
+            [base_tip.id, merge_tip.id],
+            "the base is the first parent, as in git"
+        );
         assert!(
             repositories::entries::get_file(repo, &merged, "feature.txt")?.is_some(),
             "the merge commit carries the merged branch's file"

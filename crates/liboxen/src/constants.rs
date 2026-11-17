@@ -138,11 +138,11 @@ pub const WORKSPACE_CONFIG_LEGACY: &str = "WORKSPACE_CONFIG";
 /// workspace_name_index/ is a RocksDB mapping workspace names to workspace IDs for O(1) lookup
 pub const WORKSPACE_NAME_INDEX_DIR: &str = "workspace_name_index";
 
-/// A merge that stops before committing, on conflicts or when its add fails, writes MERGE_HEAD and
-/// ORIG_HEAD to keep track of the parents
+/// A client-side three-way merge writes MERGE_HEAD and ORIG_HEAD to keep track of its parents until
+/// the commit that finishes it
 pub const MERGE_HEAD_FILE: &str = "MERGE_HEAD";
-/// A merge that stops before committing, on conflicts or when its add fails, writes MERGE_HEAD and
-/// ORIG_HEAD to keep track of the parents
+/// A client-side three-way merge writes MERGE_HEAD and ORIG_HEAD to keep track of its parents until
+/// the commit that finishes it
 pub const ORIG_HEAD_FILE: &str = "ORIG_HEAD";
 /// Written at the start of a client-side merge and removed after HEAD advances.
 /// Contents are the target commit id. Presence means a merge was interrupted

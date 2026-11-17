@@ -1019,36 +1019,32 @@ async fn create_merge_commit(
     merge_commits: &MergeCommits,
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
-    let base_commit = Some(merge_commits.base.clone());
-    if let Err(err) =
-        add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes).await
+    // Record the merge before staging it, as a conflicted merge does, so a merge that stops from
+    // here on is finished by `oxen commit` or abandoned by `oxen merge --abort`. The commit below
+    // takes its parents from the record.
     {
-        // Leave the merge unfinished, as a conflicted merge does, since the working tree already
-        // holds it, so adding the files and committing makes the merge commit with both parents
         let repo = repo.clone();
         let merge_commit = merge_commits.merge.clone();
         let base_commit = merge_commits.base.clone();
         tasks::spawn_blocking(move || write_merge_heads(&repo, &merge_commit, &base_commit))
             .await??;
-        return Err(match err {
+    }
+
+    let base_commit = Some(merge_commits.base.clone());
+    add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes)
+        .await
+        .map_err(|err| match err {
             OxenError::AddFailed { failures } => OxenError::MergeAddFailed { failures },
             err => err,
-        });
-    }
+        })?;
 
     let commit_msg = merge_commits.commit_message();
     log::debug!("create_merge_commit {commit_msg}");
-
-    let parent_ids: Vec<String> = vec![
-        merge_commits.base.id.to_owned(),
-        merge_commits.merge.id.to_owned(),
-    ];
 
     commit_writer::commit_with_cfg(
         repo,
         commit_msg,
         &UserConfig::get()?,
-        Some(parent_ids),
         &commit_writer::default_commit_progress_bar(),
     )
 }

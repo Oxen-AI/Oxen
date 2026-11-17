@@ -65,7 +65,6 @@ pub fn commit_with_user(
             email: user.email.clone(),
             editor: None,
         },
-        None,
         &commit_writer::default_commit_progress_bar(),
     )
 }
