@@ -776,15 +776,6 @@ pub fn has_ext(path: &Path, ext: &str) -> bool {
     }
 }
 
-pub fn replace_file_name_keep_extension(path: &Path, new_filename: String) -> PathBuf {
-    let mut result = path.to_owned();
-    result.set_file_name(new_filename);
-    if let Some(extension) = path.extension() {
-        result.set_extension(extension);
-    }
-    result
-}
-
 pub fn recursive_files_with_extensions(dir: &Path, exts: &HashSet<String>) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = vec![];
     if !dir.is_dir() {
@@ -1720,34 +1711,6 @@ def add(a, b):
 
             Ok(())
         })
-    }
-
-    #[test]
-    fn replace_file_name_keep_extension_no_extension() -> Result<(), OxenError> {
-        let prior_path = Path::new("adjfkaljeklwjkljdaklfd.txt");
-        let prior_path_no_extension = Path::new("bdsfadfklajfkelj");
-        let prior_path_arbitrary = Path::new("jdakfljdfskl.boom");
-
-        let new_filename = "data".to_string();
-        assert_eq!(
-            util::fs::replace_file_name_keep_extension(prior_path, new_filename.clone()),
-            Path::new("data.txt")
-        );
-
-        assert_eq!(
-            util::fs::replace_file_name_keep_extension(
-                prior_path_no_extension,
-                new_filename.clone()
-            ),
-            Path::new("data")
-        );
-
-        assert_eq!(
-            util::fs::replace_file_name_keep_extension(prior_path_arbitrary, new_filename),
-            Path::new("data.boom")
-        );
-
-        Ok(())
     }
 
     #[test]

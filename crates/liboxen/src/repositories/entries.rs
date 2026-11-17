@@ -294,6 +294,16 @@ pub async fn list_missing_files_in_commit_range(
 
 pub use crate::core::v_latest::entries::list_tabular_files_in_repo;
 
+/// List the tabular files in a commit, with each one's metadata, off the async worker.
+pub async fn list_tabular_files_in_repo_async(
+    repo: &LocalRepository,
+    commit: &Commit,
+) -> Result<Vec<MetadataEntry>, OxenError> {
+    let repo = repo.clone();
+    let commit = commit.clone();
+    tasks::spawn_blocking(move || list_tabular_files_in_repo(&repo, &commit)).await?
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
