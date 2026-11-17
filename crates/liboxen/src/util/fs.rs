@@ -4,7 +4,7 @@
 
 mod atomic_file;
 pub use atomic_file::AtomicFile;
-pub(crate) use atomic_file::AtomicPartsFile;
+pub(crate) use atomic_file::{AtomicFileBatch, AtomicPartsFile, sync_filesystem};
 
 use futures::StreamExt;
 use jwalk::WalkDir;

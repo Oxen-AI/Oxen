@@ -95,7 +95,7 @@ mod tests {
     use crate::core::df::tabular;
     use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 
-    use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::constants::{self, DEFAULT_BRANCH_NAME};
     use crate::core::v_latest::merge_marker;
     use crate::error::OxenError;
     use crate::model::{Commit, LocalRepository, User};
@@ -333,6 +333,12 @@ mod tests {
 
             // Two way merge should have two parent IDs so we know where the merge came from
             assert_eq!(merge_commit.parent_ids.len(), 2);
+            assert!(
+                !util::fs::oxen_hidden_dir(&repo.path)
+                    .join(constants::MERGE_HEAD_FILE)
+                    .exists(),
+                "the merge commit clears the merge's record"
+            );
 
             // There should be 5 files: [a.txt, b.txt, c.txt, d.txt e.txt]
             let file_prefixes = ["a", "b", "c", "d", "e"];
@@ -1722,6 +1728,76 @@ mod tests {
         Ok(())
     }
 
+    // A conflict-free merge that cannot store a file's version file stops with the merge in
+    // progress, and adding that file and committing makes the merge commit.
+    async fn case_merge_add_failure_leaves_merge_to_commit(
+        repo: &LocalRepository,
+    ) -> Result<(), OxenError> {
+        let base_branch = repositories::branches::current_branch(repo)?.unwrap().name;
+
+        repositories::branches::create_checkout(repo, "feature")?;
+        let feature_file = repo.path.join("feature.txt");
+        util::fs::write_to_path(&feature_file, "feature")?;
+        repositories::add(repo, &feature_file).await?;
+        let merge_tip = repositories::commit(repo, "feature side")?;
+
+        repositories::checkout(repo, &base_branch).await?;
+        let base_file = repo.path.join("base.txt");
+        util::fs::write_to_path(&base_file, "base")?;
+        repositories::add(repo, &base_file).await?;
+        let base_tip = repositories::commit(repo, "base side")?;
+
+        // The merge stages the working tree, so an uncommitted file is the one with a version
+        // file to store. A regular file where its version directory goes blocks the store.
+        let hidden = util::fs::oxen_hidden_dir(&repo.path);
+        let versions_dir = hidden
+            .join(constants::VERSIONS_DIR)
+            .join(constants::FILES_DIR);
+        let notes_file = repo.path.join("notes.txt");
+        let (contents, blocker) = (0..)
+            .find_map(|n| {
+                let contents = format!("notes {n}");
+                let hash = util::hasher::hash_buffer(contents.as_bytes());
+                let blocker = versions_dir.join(&hash[..2]);
+                (!blocker.exists()).then_some((contents, blocker))
+            })
+            .expect("some contents have an unused version directory");
+        util::fs::write_to_path(&notes_file, contents)?;
+        util::fs::write_to_path(&blocker, "not a directory")?;
+
+        let result = repositories::merge::merge(repo, "feature").await;
+        let Err(OxenError::MergeAddFailed { failures }) = result else {
+            panic!("expected MergeAddFailed, got {result:?}");
+        };
+        let failed_paths: Vec<_> = failures.iter().map(|(path, _)| path.to_string()).collect();
+        assert_eq!(failed_paths, ["notes.txt"]);
+        assert_eq!(
+            util::fs::read_from_path(hidden.join(constants::MERGE_HEAD_FILE))?,
+            merge_tip.id,
+            "the merge records the commit it merges"
+        );
+        assert_eq!(
+            util::fs::read_from_path(hidden.join(constants::ORIG_HEAD_FILE))?,
+            base_tip.id,
+            "the merge records the commit it merges into"
+        );
+
+        util::fs::remove_file(&blocker)?;
+        repositories::add(repo, &notes_file).await?;
+        let merged = repositories::commit(repo, "finish the merge")?;
+        assert_eq!(
+            merged.parent_ids,
+            [base_tip.id, merge_tip.id],
+            "the base is the first parent, as in git"
+        );
+        assert!(
+            repositories::entries::get_file(repo, &merged, "feature.txt")?.is_some(),
+            "the merge commit carries the merged branch's file"
+        );
+        assert!(!hidden.join(constants::MERGE_HEAD_FILE).exists());
+        Ok(())
+    }
+
     // A marker left over from a merge whose target commit no longer exists locally — exactly the
     // "retry the original target" escape hatch in the MergeInProgressMismatch hint. Abort must
     // still clean up the working tree and the marker without requiring the target to be resolvable.
@@ -2050,6 +2126,14 @@ mod tests {
 
             start_case(&repo, &fixture_entries, "merge-abort-resets-truncated-file").await?;
             case_merge_abort_resets_truncated_file(&repo).await?;
+
+            start_case(
+                &repo,
+                &fixture_entries,
+                "merge-add-failure-leaves-merge-to-commit",
+            )
+            .await?;
+            case_merge_add_failure_leaves_merge_to_commit(&repo).await?;
 
             start_case(&repo, &fixture_entries, "merge-abort-clears-conflict-state").await?;
             case_merge_abort_clears_conflict_state(&repo).await?;

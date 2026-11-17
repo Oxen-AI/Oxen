@@ -5,7 +5,7 @@ use crate::core::db::merkle_node::MerkleNodeDB;
 pub use crate::core::merge::entry_merge_conflict_db_reader::EntryMergeConflictDBReader;
 pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBReader;
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
-use crate::core::merge::{db_path, node_merge_conflict_writer};
+use crate::core::merge::{db_path, node_merge_conflict_writer, write_merge_heads};
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::add;
 use crate::core::v_latest::branches::OnConflict;
@@ -25,6 +25,7 @@ use crate::model::{MerkleHash, PartialNode};
 use crate::repositories;
 use crate::repositories::commits::commit_writer;
 use crate::repositories::merge::MergeCommits;
+use crate::tasks;
 use crate::util;
 
 use rocksdb::DB;
@@ -1018,22 +1019,32 @@ async fn create_merge_commit(
     merge_commits: &MergeCommits,
     shared_hashes: HashSet<MerkleHash>,
 ) -> Result<Commit, OxenError> {
-    let base_commit = merge_commits.base.clone();
-    add::add_dir_except(repo, &Some(base_commit), repo.path.clone(), shared_hashes).await?;
+    // Record the merge before staging it, as a conflicted merge does, so a merge that stops from
+    // here on is finished by `oxen commit` or abandoned by `oxen merge --abort`. The commit below
+    // takes its parents from the record.
+    {
+        let repo = repo.clone();
+        let merge_commit = merge_commits.merge.clone();
+        let base_commit = merge_commits.base.clone();
+        tasks::spawn_blocking(move || write_merge_heads(&repo, &merge_commit, &base_commit))
+            .await??;
+    }
+
+    let base_commit = Some(merge_commits.base.clone());
+    add::add_dir_except(repo, &base_commit, repo.path.clone(), shared_hashes)
+        .await
+        .map_err(|err| match err {
+            OxenError::AddFailed { failures } => OxenError::MergeAddFailed { failures },
+            err => err,
+        })?;
 
     let commit_msg = merge_commits.commit_message();
     log::debug!("create_merge_commit {commit_msg}");
-
-    let parent_ids: Vec<String> = vec![
-        merge_commits.base.id.to_owned(),
-        merge_commits.merge.id.to_owned(),
-    ];
 
     commit_writer::commit_with_cfg(
         repo,
         commit_msg,
         &UserConfig::get()?,
-        Some(parent_ids),
         &commit_writer::default_commit_progress_bar(),
     )
 }

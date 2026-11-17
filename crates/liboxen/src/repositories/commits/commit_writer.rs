@@ -147,7 +147,7 @@ impl EntryVNode {
 
 pub fn commit(repo: &LocalRepository, message: impl AsRef<str>) -> Result<Commit, OxenError> {
     let cfg = UserConfig::get()?;
-    commit_with_cfg(repo, message, &cfg, None, &default_commit_progress_bar())
+    commit_with_cfg(repo, message, &cfg, &default_commit_progress_bar())
 }
 
 /// A default style spinner with a 100ms tick rate. Callers must set the message.
@@ -163,7 +163,6 @@ pub(crate) fn commit_with_cfg(
     repo: &LocalRepository,
     message: impl AsRef<str>,
     cfg: &UserConfig,
-    parent_ids: Option<Vec<String>>,
     commit_progress_bar: &ProgressBar,
 ) -> Result<Commit, OxenError> {
     // time the commit
@@ -199,21 +198,7 @@ pub(crate) fn commit_with_cfg(
     };
     let branch = repositories::branches::current_branch(repo)?;
     let maybe_branch_name = branch.map(|b| b.name);
-    let commit = if let Some(parent_ids) = parent_ids {
-        log::debug!("parent ids: {parent_ids:?}");
-        commit_dir_entries_with_parents(
-            repo,
-            parent_ids,
-            dir_entries,
-            &new_commit,
-            maybe_branch_name
-                .clone()
-                .unwrap_or(DEFAULT_BRANCH_NAME.to_string()),
-        )?
-    } else {
-        log::debug!("no parent ids, committing new");
-        commit_dir_entries_new(repo, dir_entries, &new_commit)?
-    };
+    let commit = commit_dir_entries_new(repo, dir_entries, &new_commit)?;
 
     // Clear the staged db
     let staged_db_path = staged_db.path().to_owned();
@@ -1270,7 +1255,8 @@ fn create_merge_commit(
     util::fs::remove_file(orig_head_path)?;
 
     Ok(NewCommit {
-        parent_ids: vec![merge_commit_id, head_commit_id],
+        // The base first, then the merged commit, as git orders a merge's parents
+        parent_ids: vec![head_commit_id, merge_commit_id],
         message: String::from(message),
         author: new_commit.author.clone(),
         email: new_commit.email.clone(),
