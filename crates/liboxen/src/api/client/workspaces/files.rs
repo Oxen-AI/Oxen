@@ -5,10 +5,11 @@ use crate::core::progress::push_progress::PushProgress;
 use crate::error::OxenError;
 use crate::model::{Commit, LocalRepository, MerkleHash, RemoteRepository};
 use crate::opts::GlobOpts;
+use crate::repositories::workspaces::files::IfExists;
 use crate::tasks;
 use crate::util::{self, concurrency};
 use crate::view::versions::WorkspaceDestination;
-use crate::view::workspaces::{RenameRequest, ValidateUploadFeasibilityRequest};
+use crate::view::workspaces::{CopyRequest, ValidateUploadFeasibilityRequest};
 use crate::view::{ErrorFileInfo, FilePathsResponse, FilesNotStagedResponse};
 use crate::{api, repositories, view};
 
@@ -1100,17 +1101,20 @@ pub async fn mv(
     }
 }
 
-/// Stage a copy of the committed file at `path` at `new_path` within a workspace.
+/// Stage a copy of the workspace's file at `path` at `new_path`, as the server's workspace copy
+/// does. The answer's status message is `resource_updated` when the copy replaced a file.
 pub async fn copy(
     remote_repo: &RemoteRepository,
     workspace_id: &str,
     path: &Path,
     new_path: &Path,
+    if_exists: IfExists,
 ) -> Result<view::StatusMessage, OxenError> {
     let uri = format!("/workspaces/{workspace_id}/copy/{}", path.to_string_lossy());
     let url = api::endpoint::url_from_repo(remote_repo, &uri)?;
-    let request = RenameRequest {
+    let request = CopyRequest {
         new_path: new_path.to_string_lossy().into_owned(),
+        overwrite: if_exists == IfExists::Replace,
     };
     let client = client::new_for_url(&url)?;
     let res = client.post(&url).json(&request).send().await?;
@@ -1222,6 +1226,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{add, add_files, copy, download, mv, rm, upload_single_file};
+    use crate::repositories::workspaces::files::IfExists;
 
     #[test]
     fn test_expected_staged_path_mirrors_server_normalization() {
@@ -1813,15 +1818,40 @@ mod tests {
             let old_file = entries::get_entry(&remote_repo, original_path, &commit.id).await?;
             assert!(old_file.is_none(), "File should not exist at original path");
 
-            // Copy the moved file, in a new workspace on the branch the move committed to
+            // Copy the moved file, in a new workspace on the branch the move committed to, then
+            // copy the staged copy back over it, which is refused unless it replaces the file
             workspaces::create(&remote_repo, branch_name, "copy").await?;
             let copy_path = Path::new("README_copy.md");
-            assert_eq!(
-                copy(&remote_repo, "copy", Path::new(new_path), copy_path)
-                    .await?
-                    .status,
-                "success"
+            let copied = copy(
+                &remote_repo,
+                "copy",
+                Path::new(new_path),
+                copy_path,
+                IfExists::Refuse,
+            )
+            .await?;
+            assert_eq!(copied.status_message, "resource_created");
+            let refused = copy(
+                &remote_repo,
+                "copy",
+                copy_path,
+                Path::new(new_path),
+                IfExists::Refuse,
+            )
+            .await;
+            assert!(
+                refused.is_err(),
+                "a copy over a committed file without overwrite"
             );
+            let replaced = copy(
+                &remote_repo,
+                "copy",
+                copy_path,
+                Path::new(new_path),
+                IfExists::Replace,
+            )
+            .await?;
+            assert_eq!(replaced.status_message, "resource_updated");
             let commit = workspaces::commit(
                 &remote_repo,
                 branch_name,
