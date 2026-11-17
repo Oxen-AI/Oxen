@@ -49,6 +49,7 @@ mod tests {
     use crate::constants;
     use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
     use crate::core::progress::push_progress::PushProgress;
+    use crate::core::progress::sync_progress::ProgressObserver;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
     use crate::opts::RmOpts;
@@ -61,7 +62,7 @@ mod tests {
     use crate::view::entries::EMetadataEntry;
     use std::collections::HashSet;
     use std::path::PathBuf;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     // One repository pushes a history of several commits to a new remote, then a commit on top of
     // it, then large files, so each push starts from the remote the push before it left. The
@@ -119,7 +120,30 @@ mod tests {
                 let commit = repositories::commit(&repo, "Adding rest of data")?;
 
                 let remote_repo = test::connect_remote_repo(&mut repo).await?;
-                repositories::push(&repo).await?;
+                let updates = Arc::new(Mutex::new(Vec::new()));
+                let opts = PushOpts {
+                    remote: DEFAULT_REMOTE_NAME.to_string(),
+                    branch: DEFAULT_BRANCH_NAME.to_string(),
+                    progress: Some(ProgressObserver::new({
+                        let updates = Arc::clone(&updates);
+                        move |update| updates.lock().expect("no observer panicked").push(update)
+                    })),
+                    ..Default::default()
+                };
+                repositories::push::push_remote_branch(&repo, &opts).await?;
+
+                // The observer hears the totals before anything is uploaded, then every file
+                let updates = updates.lock().expect("no observer panicked").clone();
+                let first = updates.first().expect("the push reports where it starts");
+                assert_eq!((first.files, first.bytes), (0, 0));
+                assert!(
+                    updates.iter().all(|u| u.total_files == Some(10)),
+                    "the README, six versions of the data files, two train files, and the LICENSE"
+                );
+                assert_eq!(updates.iter().map(|u| u.files).max(), Some(10));
+                let uploaded = updates.iter().map(|u| u.bytes).max();
+                assert!(uploaded > Some(0));
+                assert!(uploaded <= updates.iter().filter_map(|u| u.total_bytes).max());
 
                 let entries =
                     api::client::dir::list(&remote_repo, &commit.id, ".", 1, num_root_entries + 10)

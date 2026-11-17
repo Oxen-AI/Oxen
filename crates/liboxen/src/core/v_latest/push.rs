@@ -502,7 +502,11 @@ async fn push_commits(
     log::debug!("got commit info {num_commits}");
     let errors = Arc::new(Mutex::new(Vec::new()));
 
-    let progress = Arc::new(PushProgress::new_with_totals(num_files as u64, total_bytes));
+    let mut progress = PushProgress::new_with_totals(num_files as u64, total_bytes);
+    if let Some(observer) = &opts.progress {
+        progress.set_observer(observer.clone());
+    }
+    let progress = Arc::new(progress);
 
     stream::iter(commits_with_info)
         .for_each_concurrent(

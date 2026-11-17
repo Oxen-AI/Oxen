@@ -105,6 +105,7 @@ impl RunCmd for PushCmd {
             missing_files,
             missing_files_commit_id,
             revalidate,
+            progress: None,
         };
 
         // Call into liboxen to push or delete
