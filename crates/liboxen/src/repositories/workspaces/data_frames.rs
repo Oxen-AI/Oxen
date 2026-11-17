@@ -689,6 +689,12 @@ mod tests {
                 committed_rows + 1,
                 "indexing a fully indexed frame keeps the rows staged in it"
             );
+            restore(&repo, &workspace, &path).await?;
+            assert_eq!(
+                count(&workspace, &path)?,
+                committed_rows,
+                "restoring a fully indexed frame rebuilds it from the committed file"
+            );
 
             // Simulate a table written by an older version: no index marker table. Such a table
             // may hold rows tombstoned as 'removed' that the current code would wrongly export, so
