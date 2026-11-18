@@ -112,12 +112,10 @@ pub fn list_directory_with_depth(
 
     let _perf_dir_entry = crate::perf_guard!("core::entries::dir_node_to_metadata");
     let dir_entry =
-        dir_node_to_metadata_entry(repo, &dir, parsed_resource, &mut found_commits, false)?;
-    let dir_entry = dir_entry.map(|dir_entry| {
-        EMetadataEntry::WorkspaceMetadataEntry(WorkspaceMetadataEntry::from_metadata_entry(
-            dir_entry,
-        ))
-    });
+        dir_node_to_metadata_entry(repo, dir_node, parsed_resource, &mut found_commits, false)?;
+    let dir_entry = Some(EMetadataEntry::WorkspaceMetadataEntry(
+        WorkspaceMetadataEntry::from_metadata_entry(dir_entry),
+    ));
     drop(_perf_dir_entry);
 
     log::debug!("list_directory dir_entry {dir_entry:?}");
@@ -183,21 +181,19 @@ pub fn get_meta_entry(
             "get_meta_entry dir path found: {:?}",
             path.to_str().unwrap()
         );
-        let metadata =
-            dir_node_to_metadata_entry(repo, &node, parsed_resource, &mut HashMap::new(), false)?;
-        Ok(metadata.unwrap())
+        dir_node_to_metadata_entry(
+            repo,
+            &node.dir()?,
+            parsed_resource,
+            &mut HashMap::new(),
+            false,
+        )
     } else {
         log::debug!("get_meta_entry file path: {:?}", path.to_str().unwrap());
         let file_node = get_file(repo, &commit, path)?;
         if let Some(file_node) = file_node {
             // log::debug!("get_meta_entry file node found: {:?}", file_node);
-            let metadata = file_node_to_metadata_entry(
-                repo,
-                &file_node,
-                parsed_resource,
-                &mut HashMap::new(),
-            )?;
-            Ok(metadata.unwrap())
+            file_node_to_metadata_entry(repo, &file_node, parsed_resource, &mut HashMap::new())
         } else {
             log::debug!(
                 "get_meta_entry path not found: {:?}",
@@ -280,18 +276,14 @@ fn sort_entries(entries: &mut [MetadataEntry], sort_opts: &SortOpts) {
 
 fn dir_node_to_metadata_entry(
     repo: &LocalRepository,
-    node: &MerkleTreeNode,
+    dir_node: &DirNode,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
     // Should append resource is because at the top level we don't want to append the resource
     // but when we recurse we do
     should_append_resource: bool,
-) -> Result<Option<MetadataEntry>, OxenError> {
+) -> Result<MetadataEntry, OxenError> {
     let _perf = crate::perf_guard!("core::entries::dir_node_to_metadata_entry");
-
-    let EMerkleTreeNode::Directory(dir_node) = &node.node else {
-        return Ok(None);
-    };
 
     if let std::collections::hash_map::Entry::Vacant(e) =
         found_commits.entry(*dir_node.last_commit_id())
@@ -318,7 +310,7 @@ fn dir_node_to_metadata_entry(
         parsed_resource.path = parsed_resource.path.join(dir_node.name());
     }
 
-    Ok(Some(MetadataEntry {
+    Ok(MetadataEntry {
         filename: dir_node.name().to_string(),
         hash: dir_node.hash().to_string(),
         is_dir: true,
@@ -333,7 +325,7 @@ fn dir_node_to_metadata_entry(
         ))),
         is_queryable: None,
         children: None,
-    }))
+    })
 }
 
 fn file_node_to_metadata_entry(
@@ -341,7 +333,7 @@ fn file_node_to_metadata_entry(
     file_node: &FileNode,
     parsed_resource: &ParsedResource,
     found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
-) -> Result<Option<MetadataEntry>, OxenError> {
+) -> Result<MetadataEntry, OxenError> {
     let _perf = crate::perf_guard!("core::entries::file_node_to_metadata_entry");
 
     if let std::collections::hash_map::Entry::Vacant(e) =
@@ -387,7 +379,7 @@ fn file_node_to_metadata_entry(
     };
     drop(_perf_indexed);
 
-    Ok(Some(MetadataEntry {
+    Ok(MetadataEntry {
         filename: file_node.name().to_string(),
         hash: file_node.hash().to_string(),
         is_dir: false,
@@ -400,7 +392,7 @@ fn file_node_to_metadata_entry(
         metadata: file_node.metadata(),
         is_queryable: is_indexed,
         children: None,
-    }))
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -437,12 +429,11 @@ fn p_dir_entries(
                 if current_directory == search_directory && !child_dir.name().is_empty() {
                     let mut metadata = dir_node_to_metadata_entry(
                         repo,
-                        child,
+                        child_dir,
                         parsed_resource,
                         found_commits,
                         true,
-                    )?
-                    .unwrap();
+                    )?;
 
                     // Populate children if depth > 0
                     if depth > 0 {
@@ -499,9 +490,12 @@ fn p_dir_entries(
                 )?;
             }
             EMerkleTreeNode::File(child_file) if current_directory == search_directory => {
-                let metadata =
-                    file_node_to_metadata_entry(repo, child_file, parsed_resource, found_commits)?;
-                entries.push(metadata.unwrap());
+                entries.push(file_node_to_metadata_entry(
+                    repo,
+                    child_file,
+                    parsed_resource,
+                    found_commits,
+                )?);
             }
             _ => {}
         }
