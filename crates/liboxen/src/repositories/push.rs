@@ -54,6 +54,7 @@ mod tests {
     use crate::opts::RmOpts;
     use crate::opts::{CloneOpts, PushOpts};
     use crate::repositories;
+    use crate::repositories::branches;
     use crate::test;
     use crate::util;
     use crate::util::fs::AtomicFile;
@@ -314,12 +315,43 @@ mod tests {
                     "revalidate must re-push the missing blob"
                 );
 
+                // A repair targets the commit being pushed. The new-branch path's commit list runs
+                // newest first, so an end of it is the repository's oldest commit, whose tree
+                // predates this file.
+                let test_file_hash = file_hash("test/test_0.txt")?;
+                let repair_branch = "repair-on-a-new-branch";
+                branches::create_from_head(&repo, repair_branch)?;
+                server
+                    .version_store()
+                    .delete_version(&test_file_hash)
+                    .await?;
+                assert!(
+                    !server
+                        .version_store()
+                        .version_exists(&test_file_hash)
+                        .await?,
+                    "precondition: the blob should be gone from the server"
+                );
+                let opts = PushOpts {
+                    remote: DEFAULT_REMOTE_NAME.to_string(),
+                    branch: repair_branch.to_string(),
+                    missing_files: true,
+                    ..Default::default()
+                };
+                super::push_remote_branch(&repo, &opts).await?;
+                assert!(
+                    server
+                        .version_store()
+                        .version_exists(&test_file_hash)
+                        .await?,
+                    "a repair to a branch the remote lacks repairs the commit being pushed"
+                );
+
                 // `--missing-files` from a clone missing some of the files the remote needs must
                 // fail fast with CannotPushShallowClone and upload nothing, not partially upload
                 // and then error mid-stream. The server is missing both blobs, and this clone can
                 // supply LICENSE.md but not test/test_0.txt.
                 let license_hash = file_hash("LICENSE.md")?;
-                let test_file_hash = file_hash("test/test_0.txt")?;
                 server.version_store().delete_version(&license_hash).await?;
                 server
                     .version_store()
