@@ -116,9 +116,9 @@ impl SyncProgress {
             return;
         };
         (observer.0)(SyncProgressUpdate {
-            files: self.file_counter.load(Ordering::Relaxed),
+            files: self.get_num_files(),
             total_files: self.total_files,
-            bytes: self.byte_counter.load(Ordering::Relaxed),
+            bytes: self.get_num_bytes(),
             // The bar's length rather than the starting total, which `inc_total_bytes` extends.
             total_bytes: self.total_bytes.and(self.progress_bar.length()),
         });
