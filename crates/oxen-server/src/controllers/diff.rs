@@ -1063,7 +1063,7 @@ mod tests {
             .await
             .expect("main..main/file1.csv names a file at a revision");
         assert_eq!(resp.status(), StatusCode::OK);
-        // When the whole of head names a revision there is no file to compare.
+        // When the whole of head is a revision there is no file to compare.
         let err = compare_file("main..main")
             .await
             .expect_err("main..main names no file");
