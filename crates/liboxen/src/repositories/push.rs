@@ -150,15 +150,20 @@ mod tests {
                     "the push closed the channel, though the opts still hold its sender"
                 );
 
-                // A push with nothing to upload sends no update and closes the channel
-                let progress = ProgressSender::new();
-                let mut receiver = progress.subscribe();
-                let opts = PushOpts {
-                    progress: Some(progress),
-                    ..opts
-                };
-                repositories::push::push_remote_branch(&repo, &opts).await?;
-                assert_eq!(receiver.changed().now_or_never(), Some(None));
+                // A push with nothing to upload sends no update and closes the channel, whether the
+                // branch is up to date or new with every commit already on the remote
+                repositories::branches::create(&repo, "already-pushed", &commit.id)?;
+                for branch in [DEFAULT_BRANCH_NAME, "already-pushed"] {
+                    let progress = ProgressSender::new();
+                    let mut receiver = progress.subscribe();
+                    let opts = PushOpts {
+                        branch: branch.to_string(),
+                        progress: Some(progress),
+                        ..opts.clone()
+                    };
+                    repositories::push::push_remote_branch(&repo, &opts).await?;
+                    assert_eq!(receiver.changed().now_or_never(), Some(None), "{branch}");
+                }
 
                 let entries =
                     api::client::dir::list(&remote_repo, &commit.id, ".", 1, num_root_entries + 10)

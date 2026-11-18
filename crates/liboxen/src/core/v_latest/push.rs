@@ -505,6 +505,11 @@ async fn push_commits(
             Ok((commit, info))
         })
         .collect::<Result<Vec<(Commit, PushCommitInfo)>, OxenError>>()?;
+    // The remote has every commit, as it does for a new branch at a commit already pushed, so
+    // there is nothing to upload and no progress to report
+    if commits_with_info.is_empty() {
+        return Ok(());
+    }
 
     // Spot-check that file data exists locally before pushing. A shallow clone
     // has merkle tree metadata for all commits but only the version store files
