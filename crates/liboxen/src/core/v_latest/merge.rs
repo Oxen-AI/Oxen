@@ -7,6 +7,7 @@ pub use crate::core::merge::node_merge_conflict_db_reader::NodeMergeConflictDBRe
 use crate::core::merge::node_merge_conflict_reader::NodeMergeConflictReader;
 use crate::core::merge::{db_path, node_merge_conflict_writer, write_merge_heads};
 use crate::core::refs::with_ref_manager;
+use crate::core::staged::{close_staged_db, remove_from_cache_with_children};
 use crate::core::v_latest::add;
 use crate::core::v_latest::branches::OnConflict;
 use crate::core::v_latest::commits::{get_commit_or_head, list_between};
@@ -488,8 +489,8 @@ pub fn remove_conflict_path(repo: &LocalRepository, path: &Path) -> Result<(), O
     Ok(())
 }
 
-/// Abandon an interrupted or in-conflict merge, restoring the working tree to HEAD
-/// and clearing every piece of merge state on disk.
+/// Abandon an interrupted or in-conflict merge, restoring the working tree to HEAD, unstaging
+/// everything, and clearing every piece of merge state on disk.
 ///
 /// Returns `OxenError::NoMergeInProgress` if there is nothing to abort.
 pub async fn abort_merge(repo: &LocalRepository) -> Result<(), OxenError> {
@@ -533,6 +534,22 @@ pub async fn abort_merge(repo: &LocalRepository) -> Result<(), OxenError> {
         OnConflict::Overwrite,
     )
     .await?;
+
+    // Unstage everything, as git's `merge --abort` resets its index. A merge whose add stopped
+    // part way leaves the files it reached staged, and a later `oxen commit` would take them.
+    let repo_path = repo.path.clone();
+    tasks::spawn_blocking(move || {
+        let staged_dir = util::fs::oxen_hidden_dir(&repo_path).join(constants::STAGED_DIR);
+        close_staged_db(&repo_path)?;
+        let removed = if staged_dir.exists() {
+            util::fs::remove_dir_all(&staged_dir)
+        } else {
+            Ok(())
+        };
+        remove_from_cache_with_children(&repo_path)?;
+        removed
+    })
+    .await??;
 
     merge_marker::clear(repo).await?;
     if merge_head_path.exists() {
