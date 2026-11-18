@@ -51,7 +51,7 @@ mod tests {
     use crate::model::staged_data::StagedDataOpts;
     use crate::opts::clone_opts::CloneOpts;
 
-    use crate::{repositories, test};
+    use crate::{repositories, test, util};
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
@@ -93,54 +93,19 @@ mod tests {
                 let contents = std::fs::read_to_string(&full_path)?;
                 assert_eq!(contents, "Hello World");
 
-                Ok(())
-            })
-            .await?;
-
-            Ok(remote_repo_copy)
-        })
-        .await
-    }
-
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_remote_mode_restore_file_with_full_path() -> Result<(), OxenError> {
-        test::run_readme_remote_repo_test(|mut _local_repo, remote_repo| async move {
-            let remote_repo_copy = remote_repo.clone();
-
-            test::run_empty_dir_test_async(|dir| async move {
-                let mut opts = CloneOpts::new(&remote_repo.remote.url, dir.join("new_repo"));
-                opts.is_remote = true;
-                let cloned_repo = repositories::clone(&opts).await?;
-
-                let workspace_identifier = cloned_repo.workspace_name.clone().unwrap();
-                let directory = ".".to_string();
-                let status_opts =
-                    StagedDataOpts::from_paths_remote_mode(&[PathBuf::from(directory.clone())]);
-                let status = repositories::remote_mode::status(
-                    &cloned_repo,
-                    &remote_repo,
-                    &workspace_identifier,
-                    &directory,
-                    &status_opts,
-                )
-                .await?;
-                status.print();
-
-                let readme_path = PathBuf::from("README.md");
-                let full_path = cloned_repo.path.join(&readme_path);
-                let head_commit = repositories::commits::head_commit(&cloned_repo)?;
+                // The same file restores when given by its full path.
+                util::fs::remove_file(&full_path)?;
                 repositories::remote_mode::restore(
                     &cloned_repo,
                     std::slice::from_ref(&full_path),
                     &head_commit.id,
                 )
                 .await?;
-
-                assert!(readme_path.exists());
-
                 let contents = std::fs::read_to_string(&full_path)?;
-                assert_eq!(contents, "Hello World");
+                assert_eq!(
+                    contents, "Hello World",
+                    "restoring by full path rewrites the file"
+                );
 
                 Ok(())
             })
