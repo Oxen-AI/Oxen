@@ -271,23 +271,20 @@ pub fn resolve_base_head_branches(
     Ok((base, head))
 }
 
-/// Resolve the commits from the base and head strings (which can be either commit ids or branch names)
-pub fn resolve_base_head(
+/// Resolve the base and head strings (each a commit id, a branch name, or `HEAD`) to their commits,
+/// off the async worker. A string that names no revision is a `RevisionNotFound`, base's first.
+pub async fn resolve_base_head(
     repo: &LocalRepository,
     base: &str,
     head: &str,
-) -> Result<(Option<Commit>, Option<Commit>), OxenError> {
-    let base = resolve_revision(repo, base)?;
-    let head = resolve_revision(repo, head)?;
-    Ok((base, head))
-}
-
-pub fn resolve_revision(
-    repo: &LocalRepository,
-    revision: &str,
-) -> Result<Option<Commit>, OxenError> {
-    // Lookup commit by id or branch name
-    repositories::revisions::get(repo, revision)
+) -> Result<(Commit, Commit), OxenError> {
+    let (base_commit, head_commit) = tokio::try_join!(
+        repositories::revisions::get_async(repo, base),
+        repositories::revisions::get_async(repo, head),
+    )?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    Ok((base_commit, head_commit))
 }
 
 pub fn resolve_branch(repo: &LocalRepository, name: &str) -> Result<Option<Branch>, OxenError> {

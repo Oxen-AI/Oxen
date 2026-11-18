@@ -31,7 +31,7 @@ use liboxen::view::{
 };
 use liboxen::{constants, repositories, util};
 
-use crate::helpers::get_repo;
+use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{
     DFOptsQuery, PageNumQuery, app_data, df_opts_query, parse_base_head, parse_two_dot, path_param,
     resolve_base_head, resolve_diff_base,
@@ -60,23 +60,20 @@ pub async fn commits(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let base_head = path_param(&req, "base_head")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head(&base_head)?;
-    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
-
-    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
-    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head).await?;
 
     // Three dots (base...head) list the commits on either side of the fork but not both, the way
     // git's `log base...head` does; two dots list only what head added.
@@ -150,23 +147,21 @@ pub async fn entries(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let base_head = path_param(&req, "base_head")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head(&base_head)?;
-    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head).await?;
 
-    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
-    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
 
     let entries_diff = repositories::diffs::list_diff_entries(
@@ -231,19 +226,17 @@ pub async fn entries(
 )]
 pub async fn dir_tree(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let base_head = path_param(&req, "base_head")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head(&base_head)?;
-    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head).await?;
 
-    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
-    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
 
     let dir_diffs =
@@ -284,24 +277,22 @@ pub async fn dir_entries(
     query: web::Query<PageNumQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let base_head = path_param(&req, "base_head")?.to_string();
-    let dir = path_param(&req, "dir")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
+    let dir = path_param(&req, "dir")?;
 
     // Get the repository or return error
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     // Page size and number
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
     // Parse the base and head from the base..head or base...head string
-    let (base, head, three_dot) = parse_base_head(&base_head)?;
-    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head)?;
+    let (base, head, three_dot) = parse_base_head(base_head)?;
+    let (base_commit, head_commit) = resolve_base_head(&repository, &base, &head).await?;
 
-    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
-    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let base_commit = resolve_diff_base(&repository, base_commit, &head_commit, three_dot).await?;
     let dir = PathBuf::from(dir);
 
@@ -371,18 +362,18 @@ pub async fn file(
     query: web::Query<DFOptsQuery>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let base_head = path_param(&req, "base_head")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let base_head = path_param(&req, "base_head")?;
 
     // Get the repository or return error
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     // Parse the base and head from the base..head/resource string
     // For Example)
     //   main..feature/add-data/path/to/file.txt
     let (base_commit, head_commit, resource) =
-        parse_base_head_resource(&repository, &base_head).await?;
+        parse_base_head_resource(&repository, base_head).await?;
 
     log::debug!("base_commit: {base_commit:?}");
     log::debug!("head_commit: {head_commit:?}");
@@ -673,19 +664,16 @@ pub async fn get_df_diff(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let compare_id = path_param(&req, "compare_id")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
-    let base_head = path_param(&req, "base_head")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let compare_id = path_param(&req, "compare_id")?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
+    let base_head = path_param(&req, "base_head")?;
 
     let data: TabularCompareBody = serde_json::from_str(&body)?;
 
-    let (left, right) = parse_two_dot(&base_head)?;
-    let (left_commit, right_commit) = resolve_base_head(&repository, &left, &right)?;
-
-    let left_commit = left_commit.ok_or_else(|| OxenError::RevisionNotFound(left.into()))?;
-    let right_commit = right_commit.ok_or_else(|| OxenError::RevisionNotFound(right.into()))?;
+    let (left, right) = parse_two_dot(base_head)?;
+    let (left_commit, right_commit) = resolve_base_head(&repository, &left, &right).await?;
 
     let left_entry = repositories::entries::get_commit_entry(
         &repository,
@@ -706,7 +694,7 @@ pub async fn get_df_diff(
 
     let maybe_cached_diff = repositories::diffs::get_cached_diff(
         &repository,
-        &compare_id,
+        compare_id,
         Some(left_entry.clone()),
         Some(right_entry.clone()),
     )
@@ -924,34 +912,18 @@ async fn parse_base_head_resource(
     let base = base.as_str();
     let head = head.as_str();
 
-    let base_commit = repositories::revisions::get(repo, base)?
-        .ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
-
-    // Split on / and find longest branch name
-    let split_head = head.split('/');
-    let mut longest_str = String::from("");
-    let mut head_commit: Option<Commit> = None;
-    let mut resource: Option<PathBuf> = None;
-
-    for s in split_head {
-        let maybe_revision = format!("{longest_str}{s}");
-        log::debug!("Checking maybe head revision: {maybe_revision}");
-        let commit = repositories::revisions::get(repo, &maybe_revision)?;
-        if commit.is_some() {
-            head_commit = commit;
-            let mut r_str = head.replace(&maybe_revision, "");
-            // remove first char from r_str
-            r_str.remove(0);
-            resource = Some(PathBuf::from(r_str));
-        }
-        longest_str = format!("{maybe_revision}/");
-    }
+    // Head is a revision followed by the resource's path, and a branch name may itself contain `/`.
+    let (base_commit, head_split) = tokio::try_join!(
+        repositories::revisions::get_async(repo, base),
+        repositories::revisions::get_by_longest_prefix_async(repo, head),
+    )?;
+    let base_commit = base_commit.ok_or_else(|| OxenError::RevisionNotFound(base.into()))?;
+    let (head_commit, resource) = head_split
+        .filter(|(_, resource)| !resource.as_os_str().is_empty())
+        .ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
 
     log::debug!("Got head_commit: {head_commit:?}");
     log::debug!("Got resource: {resource:?}");
-
-    let head_commit = head_commit.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
-    let resource = resource.ok_or_else(|| OxenError::RevisionNotFound(head.into()))?;
     let base_commit = resolve_diff_base(repo, base_commit, &head_commit, three_dot).await?;
 
     Ok((base_commit, head_commit, resource))
@@ -1042,9 +1014,12 @@ fn group_dir_diffs_by_dir(dir_diffs: Vec<(PathBuf, DiffEntryStatus)>) -> Vec<Dir
 
 #[cfg(test)]
 mod tests {
+    use actix_web::http::StatusCode;
+    use actix_web::{ResponseError, web};
     use liboxen::{error::OxenError, repositories};
 
-    use crate::test;
+    use crate::params::DFOptsQuery;
+    use crate::{controllers, test};
 
     #[actix_web::test]
     async fn test_controllers_compare_create() -> Result<(), OxenError> {
@@ -1069,6 +1044,30 @@ mod tests {
         repositories::status(&repo).await?;
 
         repositories::commit(&repo, "commit 1")?;
+
+        // A file compare takes the longest revision in head, and the path after it is the file.
+        let compare_file = |base_head: &'static str| {
+            let req = test::repo_request_with_param(
+                &sync_dir,
+                "/",
+                namepsace,
+                repo_name,
+                "base_head",
+                base_head,
+            );
+            let query = web::Query::<DFOptsQuery>::from_query("")
+                .expect("every DFOptsQuery field is optional");
+            controllers::diff::file(req, query)
+        };
+        let resp = compare_file("main..main/file1.csv")
+            .await
+            .expect("main..main/file1.csv names a file at a revision");
+        assert_eq!(resp.status(), StatusCode::OK);
+        // When the whole of head names a revision there is no file to compare.
+        let err = compare_file("main..main")
+            .await
+            .expect_err("main..main names no file");
+        assert_eq!(err.error_response().status(), StatusCode::NOT_FOUND);
 
         Ok(())
     }
