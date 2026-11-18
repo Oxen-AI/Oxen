@@ -825,7 +825,7 @@ fn row_id_filters(
         stmt.query_map([], |row| row.get(0))?
             .collect::<Result<_, _>>()?
     };
-    // The first slice starts at the smallest row id, so its start bounds nothing.
+    // The first slice has no lower bound, since it starts at the smallest row id.
     let [_, bounds @ ..] = starts.as_slice() else {
         return Ok(vec![String::new()]);
     };
@@ -1171,9 +1171,9 @@ mod tests {
         }
         test::run_empty_dir_test(|dir| {
             let conn = df_db::get_connection(&dir.join("db"))?;
-            // The wide rows all come first, so slices of equal row counts would not fit, and a column
-            // named like the table must not hide the rows' size. Updating a list column moves the
-            // row to the end of the table, and deleting rows leaves gaps in the row ids.
+            // The first 30,000 rows are wide, so slicing by row count alone would not fit in memory.
+            // A column shares the table's name, the update moves rows to the end, and the delete
+            // leaves a gap in the row ids, because the slicing has to handle each of those.
             conn.execute_batch(&format!(
                 "SET memory_limit = '64MiB'; \
                  CREATE TABLE {TABLE_NAME} AS SELECT '' AS {TABLE_NAME}, \
