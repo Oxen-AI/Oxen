@@ -669,7 +669,8 @@ pub(super) fn move_index(
 
 /// A replacement for a data frame's DuckDB index, either a copy of another data frame's index or no
 /// index, made by [`IndexReplacement::prepare`] and put in place by [`IndexReplacement::install`].
-/// Dropping it deletes what it holds aside: the copy before `install`, the replaced index after.
+/// Dropping it deletes what it holds aside (the copy before `install`, the replaced index after),
+/// except a replaced index it could not put back.
 pub(super) struct IndexReplacement {
     db_path: PathBuf,
     aside: TempDir,
@@ -706,11 +707,11 @@ impl IndexReplacement {
     }
 
     /// Put the prepared index in place, keeping the replaced one aside for [`Self::restore`].
-    pub(super) fn install(&self) -> Result<(), OxenError> {
+    pub(super) fn install(&mut self) -> Result<(), OxenError> {
         let db_dir = db_parent(&self.db_path)?;
         let copy = self.aside.path().join("copy");
-        let previous = self.aside.path().join("previous");
-        with_db_closed(&self.db_path, || -> Result<(), OxenError> {
+        let previous = self.previous();
+        let result = with_db_closed(&self.db_path, || -> Result<(), OxenError> {
             if db_dir.exists() {
                 util::fs::rename(db_dir, &previous)?;
             }
@@ -721,25 +722,53 @@ impl IndexReplacement {
                 return Err(err);
             }
             Ok(())
-        })
+        });
+        if let Err(err) = &result {
+            self.keep_aside(err);
+        }
+        result
     }
 
     /// Best effort: put the replaced index back in place of the one [`Self::install`] put there.
-    pub(super) fn restore(&self) {
+    pub(super) fn restore(&mut self) {
+        let previous = self.previous();
         let result = with_db_closed(&self.db_path, || -> Result<(), OxenError> {
             let db_dir = db_parent(&self.db_path)?;
             if db_dir.exists() {
                 util::fs::remove_dir_all(db_dir)?;
             }
-            put_back(&self.aside.path().join("previous"), db_dir)
+            put_back(&previous, db_dir)
         });
-        if let Err(err) = result {
+        if let Err(err) = result
+            && !self.keep_aside(&err)
+        {
             tracing::error!(
                 file.path = %self.db_path.display(),
                 exception.message = %err,
                 "Could not put a data frame index back after a failed copy"
             );
         }
+    }
+
+    /// Where the replaced index waits while it is set aside.
+    fn previous(&self) -> PathBuf {
+        self.aside.path().join("previous")
+    }
+
+    /// When `err` left the replaced index set aside, keep it on disk rather than deleting it on
+    /// drop, and log where it is. Returns whether there was one to keep.
+    fn keep_aside(&mut self, err: &OxenError) -> bool {
+        let previous = self.previous();
+        if !previous.exists() {
+            return false;
+        }
+        self.aside.disable_cleanup(true);
+        tracing::error!(
+            file.path = %previous.display(),
+            exception.message = %err,
+            "Kept a data frame's replaced index aside, since it could not be put back"
+        );
+        true
     }
 }
 

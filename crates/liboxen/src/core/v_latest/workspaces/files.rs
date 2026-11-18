@@ -1530,7 +1530,7 @@ fn stage_copy(
     };
     // A copy that brings no index checks for one at `new_path` here, since another copy can
     // install one there before this lock is taken, and installs under this lock too.
-    let index = match index {
+    let mut index = match index {
         None => IndexReplacement::prepare(workspace, None, new_path)?,
         some => some,
     };
@@ -1539,11 +1539,11 @@ fn stage_copy(
     let mut batch = StagedWriteBatch::default();
     batch.upsert_file_node(new_path, status, &file_node);
     batch.add_parent_directories(new_path);
-    if let Some(index) = &index {
+    if let Some(index) = &mut index {
         index.install()?;
     }
     if let Err(err) = batch.write(&db) {
-        if let Some(index) = &index {
+        if let Some(index) = &mut index {
             index.restore();
         }
         return Err(err);
