@@ -62,7 +62,7 @@ pub struct SyncProgress {
     file_counter: Arc<AtomicU64>,
     progress_bar: ProgressBar,
     total_files: Option<u64>,
-    total_bytes: Option<u64>,
+    total_bytes: Option<AtomicU64>,
     observer: Option<ProgressObserver>,
 }
 
@@ -100,7 +100,7 @@ impl SyncProgress {
             file_counter: Arc::new(AtomicU64::new(0)),
             progress_bar,
             total_files: Some(total_files),
-            total_bytes: Some(total_bytes),
+            total_bytes: Some(AtomicU64::new(total_bytes)),
             observer: None,
         }
     }
@@ -119,22 +119,22 @@ impl SyncProgress {
             files: self.get_num_files(),
             total_files: self.total_files,
             bytes: self.get_num_bytes(),
-            // The bar's length rather than the starting total, which `inc_total_bytes` extends.
-            total_bytes: self.total_bytes.and(self.progress_bar.length()),
+            total_bytes: self
+                .total_bytes
+                .as_ref()
+                .map(|total| total.load(Ordering::Relaxed)),
         });
     }
 
-    pub fn set_totals(&mut self, total_files: u64, total_bytes: u64) {
-        self.total_files = Some(total_files);
-        self.total_bytes = Some(total_bytes);
-    }
-
-    /// Extend the underlying progress bar's total length by `delta`. Used when an
+    /// Extend the byte total, and the progress bar's length with it, by `delta`. Used when an
     /// additional pre-known byte count needs to be added to a bar that was already
     /// constructed with an initial total (e.g., the merkle-tree upload bytes layered
     /// on top of file-content upload bytes during a push). Uses `ProgressBar`'s
     /// interior mutability, so this works through `&Arc<SyncProgress>`.
     pub fn inc_total_bytes(&self, delta: u64) {
+        if let Some(total_bytes) = &self.total_bytes {
+            total_bytes.fetch_add(delta, Ordering::Relaxed);
+        }
         self.progress_bar.inc_length(delta);
         self.notify_observer();
     }
@@ -146,7 +146,7 @@ impl SyncProgress {
     pub fn update_message(&self) {
         let files = self.file_counter.load(Ordering::Relaxed);
         let bytes = self.byte_counter.load(Ordering::Relaxed);
-        match (self.total_files, self.total_bytes) {
+        match (self.total_files, &self.total_bytes) {
             (Some(total_files), Some(_)) => {
                 // let message = format!(
                 //     "🐂 {} {} ({} / {} files, {} / {} bytes)",
