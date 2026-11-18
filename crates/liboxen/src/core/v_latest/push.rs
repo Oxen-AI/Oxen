@@ -503,8 +503,8 @@ async fn push_commits(
     let errors = Arc::new(Mutex::new(Vec::new()));
 
     let mut progress = PushProgress::new_with_totals(num_files as u64, total_bytes);
-    if let Some(observer) = &opts.progress {
-        progress.set_observer(observer.clone());
+    if let Some(sender) = &opts.progress {
+        progress.set_sender(sender.clone());
     }
     let progress = Arc::new(progress);
 

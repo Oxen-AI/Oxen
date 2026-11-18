@@ -1,15 +1,15 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     borrow::Cow,
-    fmt,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
+use tokio::sync::watch;
 
 /// How far a push or pull has got.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SyncProgressUpdate {
     /// Files transferred so far.
     pub files: u64,
@@ -22,23 +22,39 @@ pub struct SyncProgressUpdate {
     pub total_bytes: Option<u64>,
 }
 
-/// Receives a [`SyncProgressUpdate`] each time a transfer's counts change, for a caller that shows
-/// progress somewhere other than the terminal.
-///
-/// It is called from the tasks doing the transfer, many times a second and from several at once,
-/// so it must return quickly, and two updates can arrive out of order.
-#[derive(Clone)]
-pub struct ProgressObserver(Arc<dyn Fn(SyncProgressUpdate) + Send + Sync>);
+/// Sends a transfer's latest [`SyncProgressUpdate`] to the [`ProgressReceiver`]s subscribed to it,
+/// for a caller that shows progress somewhere other than the terminal. A receiver can delay a send
+/// only by the time it takes to copy one update out.
+#[derive(Debug, Default, Clone)]
+pub struct ProgressSender(watch::Sender<SyncProgressUpdate>);
 
-impl ProgressObserver {
-    pub fn new(on_update: impl Fn(SyncProgressUpdate) + Send + Sync + 'static) -> Self {
-        ProgressObserver(Arc::new(on_update))
+impl ProgressSender {
+    /// A sender whose updates start at zero files and bytes, with no totals.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn subscribe(&self) -> ProgressReceiver {
+        ProgressReceiver(self.0.subscribe())
     }
 }
 
-impl fmt::Debug for ProgressObserver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ProgressObserver")
+/// Reads the updates a [`ProgressSender`] sends. It keeps only the latest one, so a receiver that
+/// reads less often than the transfer sends skips the updates in between.
+#[derive(Debug)]
+pub struct ProgressReceiver(watch::Receiver<SyncProgressUpdate>);
+
+impl ProgressReceiver {
+    /// The latest update.
+    pub fn latest(&self) -> SyncProgressUpdate {
+        *self.0.borrow()
+    }
+
+    /// Waits for an update newer than the last one this returned, and returns it. Returns `None`
+    /// once every [`ProgressSender`] is dropped and the receiver has seen the last update.
+    pub async fn changed(&mut self) -> Option<SyncProgressUpdate> {
+        self.0.changed().await.ok()?;
+        Some(*self.0.borrow_and_update())
     }
 }
 
@@ -63,7 +79,7 @@ pub struct SyncProgress {
     progress_bar: ProgressBar,
     total_files: Option<u64>,
     total_bytes: Option<AtomicU64>,
-    observer: Option<ProgressObserver>,
+    sender: Option<ProgressSender>,
 }
 
 impl SyncProgress {
@@ -79,7 +95,7 @@ impl SyncProgress {
             progress_bar,
             total_files: None,
             total_bytes: None,
-            observer: None,
+            sender: None,
         }
     }
 
@@ -101,28 +117,36 @@ impl SyncProgress {
             progress_bar,
             total_files: Some(total_files),
             total_bytes: Some(AtomicU64::new(total_bytes)),
-            observer: None,
+            sender: None,
         }
     }
 
-    /// Report every change in the counts to `observer`, starting with where they stand now.
-    pub(crate) fn set_observer(&mut self, observer: ProgressObserver) {
-        self.observer = Some(observer);
-        self.notify_observer();
+    /// Send every change in the counts to `sender`, starting with where they stand now.
+    pub(crate) fn set_sender(&mut self, sender: ProgressSender) {
+        self.sender = Some(sender);
+        self.send_update();
     }
 
-    fn notify_observer(&self) {
-        let Some(observer) = &self.observer else {
+    fn send_update(&self) {
+        let Some(sender) = &self.sender else {
             return;
         };
-        (observer.0)(SyncProgressUpdate {
-            files: self.get_num_files(),
-            total_files: self.total_files,
-            bytes: self.get_num_bytes(),
-            total_bytes: self
-                .total_bytes
-                .as_ref()
-                .map(|total| total.load(Ordering::Relaxed)),
+        // Reading the counts inside the closure reads them under the channel's lock, so updates
+        // from concurrent tasks go out one at a time and a receiver never sees this transfer's
+        // counts go down.
+        sender.0.send_if_modified(|update| {
+            let latest = SyncProgressUpdate {
+                files: self.get_num_files(),
+                total_files: self.total_files,
+                bytes: self.get_num_bytes(),
+                total_bytes: self
+                    .total_bytes
+                    .as_ref()
+                    .map(|total| total.load(Ordering::Relaxed)),
+            };
+            let changed = *update != latest;
+            *update = latest;
+            changed
         });
     }
 
@@ -136,7 +160,7 @@ impl SyncProgress {
             total_bytes.fetch_add(delta, Ordering::Relaxed);
         }
         self.progress_bar.inc_length(delta);
-        self.notify_observer();
+        self.send_update();
     }
 
     pub fn set_message(&self, message: impl Into<Cow<'static, str>>) {
@@ -176,7 +200,7 @@ impl SyncProgress {
                 self.progress_bar.set_message(message);
             }
         };
-        self.notify_observer();
+        self.send_update();
     }
 
     pub fn add_files(&self, files: u64) {
@@ -205,19 +229,16 @@ impl SyncProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use futures::FutureExt;
 
+    // Each update is sent before the call that made it returns, so `changed` is polled once rather
+    // than awaited: a missing update fails the assertion instead of hanging the test.
     #[test]
-    fn test_observer_is_told_each_change_in_the_counts() {
-        let seen = Arc::new(Mutex::new(Vec::new()));
+    fn test_receiver_sees_each_change_in_the_counts() {
+        let sender = ProgressSender::new();
+        let mut receiver = sender.subscribe();
         let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
-        progress.set_observer(ProgressObserver::new({
-            let seen = Arc::clone(&seen);
-            move |update| seen.lock().expect("no observer panicked").push(update)
-        }));
-        progress.add_bytes(10);
-        progress.add_files(1);
-        progress.inc_total_bytes(5);
+        progress.set_sender(sender.clone());
 
         let update = |files, bytes, total_bytes| SyncProgressUpdate {
             files,
@@ -226,32 +247,46 @@ mod tests {
             total_bytes: Some(total_bytes),
         };
         assert_eq!(
-            *seen.lock().expect("no observer panicked"),
-            [
-                update(0, 0, 30),
-                update(0, 10, 30),
-                update(1, 10, 30),
-                update(1, 10, 35),
-            ],
-            "the starting counts, then one update per change"
+            receiver.latest(),
+            update(0, 0, 30),
+            "the starting counts, sent as soon as the sender is set"
+        );
+        progress.add_bytes(10);
+        assert_eq!(
+            receiver.changed().now_or_never().flatten(),
+            Some(update(0, 10, 30)),
+            "the newest of the updates not yet seen"
+        );
+        progress.add_files(1);
+        assert_eq!(
+            receiver.changed().now_or_never().flatten(),
+            Some(update(1, 10, 30))
+        );
+        progress.inc_total_bytes(5);
+        assert_eq!(
+            receiver.changed().now_or_never().flatten(),
+            Some(update(1, 10, 35))
         );
 
         // Without totals there is nothing to report progress against.
         let mut spinner = SyncProgress::new(SyncType::Pull);
-        spinner.set_observer(ProgressObserver::new({
-            let seen = Arc::clone(&seen);
-            move |update| seen.lock().expect("no observer panicked").push(update)
-        }));
+        spinner.set_sender(sender);
         spinner.add_bytes(7);
-        let last = seen.lock().expect("no observer panicked").pop();
         assert_eq!(
-            last,
+            receiver.changed().now_or_never().flatten(),
             Some(SyncProgressUpdate {
                 files: 0,
                 total_files: None,
                 bytes: 7,
                 total_bytes: None,
             })
+        );
+
+        drop((progress, spinner));
+        assert_eq!(
+            receiver.changed().now_or_never(),
+            Some(None),
+            "every sender is gone"
         );
     }
 }
