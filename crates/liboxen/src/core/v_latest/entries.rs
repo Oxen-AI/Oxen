@@ -208,24 +208,6 @@ pub fn get_meta_entry(
     }
 }
 
-pub fn dir_entries(
-    repo: &LocalRepository,
-    dir: &MerkleTreeNode,
-    search_directory: impl AsRef<Path>,
-    parsed_resource: &ParsedResource,
-    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
-) -> Result<Vec<MetadataEntry>, OxenError> {
-    dir_entries_with_depth(
-        repo,
-        dir,
-        search_directory,
-        parsed_resource,
-        found_commits,
-        &SortOpts::default(),
-        0,
-    )
-}
-
 pub fn dir_entries_with_depth(
     repo: &LocalRepository,
     dir: &MerkleTreeNode,
