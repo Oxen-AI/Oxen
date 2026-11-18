@@ -1464,15 +1464,11 @@ pub async fn copy(
     tasks::spawn_blocking(move || {
         // Prepared before the staged-db lock is taken, so copying a large index doesn't hold up
         // the workspace.
-        let index = IndexReplacement::prepare(&workspace, index_source.as_deref(), &new_path)?;
-        stage_copy(
-            &workspace,
-            &path,
-            &new_path,
-            copy,
-            if_exists,
-            index.as_ref(),
-        )
+        let index = match index_source.as_deref() {
+            Some(source) => IndexReplacement::prepare(&workspace, Some(source), &new_path)?,
+            None => None,
+        };
+        stage_copy(&workspace, &path, &new_path, copy, if_exists, index)
     })
     .await?
 }
@@ -1518,7 +1514,7 @@ fn stage_copy(
     new_path: &Path,
     mut file_node: FileNode,
     if_exists: IfExists,
-    index: Option<&IndexReplacement>,
+    index: Option<IndexReplacement>,
 ) -> Result<Copied, OxenError> {
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     let db = staged_db_manager.lock_for_write();
@@ -1532,20 +1528,28 @@ fn stage_copy(
             replace_destination(workspace, path, new_path, read_from_db(&db, new_path)?)?
         }
     };
+    // A copy that brings no index checks for one at `new_path` here, since another copy can
+    // install one there before this lock is taken, and installs under this lock too.
+    let index = match index {
+        None => IndexReplacement::prepare(workspace, None, new_path)?,
+        some => some,
+    };
 
     file_node.set_name(&new_path.to_string_lossy());
     let mut batch = StagedWriteBatch::default();
     batch.upsert_file_node(new_path, status, &file_node);
     batch.add_parent_directories(new_path);
-    if let Some(index) = index {
+    if let Some(index) = &index {
         index.install()?;
     }
     if let Err(err) = batch.write(&db) {
-        if let Some(index) = index {
+        if let Some(index) = &index {
             index.restore();
         }
         return Err(err);
     }
+    // Released first, so deleting the replaced index doesn't hold up the workspace.
+    drop(db);
     Ok(copied)
 }
 
