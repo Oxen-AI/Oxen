@@ -15,10 +15,11 @@ use liboxen::model::metadata::metadata_video::VideoThumbnail;
 use liboxen::model::{MerkleHash, Workspace};
 use liboxen::repositories;
 use liboxen::repositories::versions::previews;
+use liboxen::repositories::workspaces::files::{Copied, IfExists};
 use liboxen::storage::VersionStore;
 use liboxen::util;
 use liboxen::util::hasher::hash_buffer_128bit;
-use liboxen::view::workspaces::RenameRequest;
+use liboxen::view::workspaces::{CopyRequest, RenameRequest};
 use liboxen::view::{
     ErrorFileInfo, FilePathsResponse, FilesNotStagedResponse, StatusMessage,
     StatusMessageDescription,
@@ -388,28 +389,28 @@ pub async fn mv(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttp
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
 }
 
-/// Copy a committed file to a new path within the workspace
+/// Copy a file to a new path within the workspace
 #[utoipa::path(
     post,
     path = "/api/repos/{namespace}/{repo_name}/workspaces/{workspace_id}/copy/{path}",
-    description = "Stage a copy of a file from the workspace's base commit at a new path. The copy shares the committed file's content, so nothing is uploaded. A copy with a different extension gets the type and metadata an upload of the same bytes to the new path would.",
+    description = "Stage a copy of a file at a new path: what the workspace stages for the file, with any data frame edits, or else the file in the workspace's base commit. The copy shares the source's content, so nothing is uploaded. A copy with a different extension gets the type and metadata an upload of the same bytes to the new path would.",
     tag = "Workspace Files",
     params(
         ("namespace" = String, Path, description = "The namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "The name of the repository", example = "ImageNet-1k"),
         ("workspace_id" = String, Path, description = "The UUID of the workspace", example = "580c0587-c157-417b-9118-8686d63d2745"),
-        ("path" = String, Path, description = "The path of the committed file to copy", example = "annotations/train.csv")
+        ("path" = String, Path, description = "The path of the file to copy", example = "annotations/train.csv")
     ),
     request_body(
-        content = RenameRequest,
-        description = "The path for the copy",
-        example = json!({"new_path": "annotations/train_results.csv"})
+        content = CopyRequest,
+        description = "The path for the copy, and whether it replaces a file already there",
+        example = json!({"new_path": "annotations/train_results.csv", "overwrite": false})
     ),
     responses(
-        (status = 200, description = "Copy staged", body = StatusMessage),
-        (status = 400, description = "Invalid request (empty new_path, or the path is a directory)"),
+        (status = 200, description = "Copy staged: resource_created when no file was at new_path, resource_updated when the copy replaced one", body = StatusMessage),
+        (status = 400, description = "Invalid request (an empty or out-of-workspace path, or the path is a directory)"),
         (status = 404, description = "Workspace or file not found"),
-        (status = 409, description = "new_path already exists or is staged, a file is at a parent of new_path, or the source has changes staged in the workspace")
+        (status = 409, description = "A file is at new_path and overwrite is false, a directory is at new_path, new_path is the source, a file is at a parent of new_path, or the source is staged for removal")
     )
 )]
 pub async fn copy(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
@@ -417,21 +418,29 @@ pub async fn copy(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHt
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let workspace_id = path_param(&req, "workspace_id")?.to_string();
+    let path = request_relative_path(Path::new(path_param(&req, "path")?), false, "path")?;
+    let body: CopyRequest = serde_json::from_str(&body)?;
+    let new_path = request_relative_path(Path::new(&body.new_path), false, "new_path")?;
+    let if_exists = if body.overwrite {
+        IfExists::Replace
+    } else {
+        IfExists::Refuse
+    };
     let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repo)?;
-    let path = PathBuf::from(path_param(&req, "path")?);
-
-    let body: RenameRequest = serde_json::from_str(&body)?;
-    let new_path = util::fs::validate_and_normalize_path(&body.new_path)?;
 
     let Some(workspace) = repositories::workspaces::get_async(&repo, &workspace_id).await? else {
         return Ok(HttpResponse::NotFound()
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    repositories::workspaces::files::copy(&workspace, &path, &new_path).await?;
+    let copied =
+        repositories::workspaces::files::copy(&workspace, &path, &new_path, if_exists).await?;
 
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+    Ok(HttpResponse::Ok().json(match copied {
+        Copied::Added => StatusMessage::resource_created(),
+        Copied::Replaced => StatusMessage::resource_updated(),
+    }))
 }
 
 /// The file parts of a multipart upload, split by whether each is ready to stage.

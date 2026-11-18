@@ -60,3 +60,12 @@ pub struct RenameRequest {
     #[schema(example = "path/to/new_file.txt")]
     pub new_path: String,
 }
+
+#[derive(Deserialize, Serialize, Debug, Default, ToSchema)]
+#[serde(default)]
+pub struct CopyRequest {
+    #[schema(example = "path/to/copy.txt")]
+    pub new_path: String,
+    /// Replace a file at `new_path`, committed or staged, rather than refuse the copy.
+    pub overwrite: bool,
+}
