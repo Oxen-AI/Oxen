@@ -528,6 +528,21 @@ mod tests {
                 );
             }
 
+            // A data frame indexed after a copy replaced it indexes the copy, not the committed file.
+            let workspace = repositories::workspaces::create(&repo, &commit, "replaced", true)?;
+            let rows_csv = workspace.workspace_repo.path.join("rows.csv");
+            fs::write_to_path(&rows_csv, "x,y\n5,6\n7,8\n")?;
+            workspaces::files::add(&workspace, &rows_csv).await?;
+            let table = Path::new("table.csv");
+            workspaces::files::copy(&workspace, Path::new("rows.csv"), table, IfExists::Replace)
+                .await?;
+            workspaces::data_frames::index(&repo, &workspace, table).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, table)?,
+                2,
+                "table.csv indexes the copy's two rows, not the committed file's one"
+            );
+
             // A committed directory moves with its nested subdirectory, and retrying the move
             // finds its source staged for removal.
             let workspace = committing_workspace(&repo, &commit, "nested")?;

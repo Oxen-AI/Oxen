@@ -226,21 +226,21 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
         let path = path.to_path_buf();
         tasks::spawn_blocking(move || -> Result<_, OxenError> {
             let path = path.as_path();
-            let file_node = match repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
-                path,
-            )? {
-                Some(file_node) => file_node,
-                None => {
-                    let staged = get_staged_db_manager(&workspace.workspace_repo)?
-                        .read_from_staged_db(path)?
-                        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
+            // What the workspace stages for the path, which may have replaced the committed file.
+            let staged = get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(path)?;
+            let file_node = match staged {
+                Some(staged) if staged.status != StagedEntryStatus::Removed => {
                     let EMerkleTreeNode::File(file_node) = staged.node.node else {
                         return Err(OxenError::NotAFile(path.to_path_buf().into()));
                     };
                     file_node
                 }
+                _ => repositories::tree::get_file_by_path(
+                    &workspace.base_repo,
+                    &workspace.commit,
+                    path,
+                )?
+                .ok_or_else(|| OxenError::path_does_not_exist(path))?,
             };
             if *file_node.data_type() != EntryDataType::Tabular {
                 return Err(OxenError::basic_str(
