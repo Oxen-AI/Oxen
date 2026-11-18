@@ -15,6 +15,7 @@ use crate::util;
 use crate::view::PaginatedDirEntries;
 use crate::view::entries::{EMetadataEntry, ResourceVersion};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::path::Path;
 
 use super::index::CommitMerkleTree;
@@ -274,6 +275,31 @@ fn sort_entries(entries: &mut [MetadataEntry], sort_opts: &SortOpts) {
     });
 }
 
+/// The commit an entry last changed in, read once per commit across a listing. A commit the
+/// repository doesn't have is logged and comes back as None.
+fn latest_commit(
+    repo: &LocalRepository,
+    commit_id: MerkleHash,
+    entry_name: &str,
+    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
+) -> Result<Option<Commit>, OxenError> {
+    match found_commits.entry(commit_id) {
+        Entry::Occupied(found) => Ok(found.get().clone()),
+        Entry::Vacant(slot) => {
+            let _perf = crate::perf_guard!("core::entries::get_commit_by_hash");
+            let commit = repositories::commits::get_by_hash(repo, &commit_id)?;
+            if commit.is_none() {
+                tracing::error!(
+                    oxen.commit_id = %commit_id,
+                    oxen.entry_name = %entry_name,
+                    "Entry names a commit the repository does not have"
+                );
+            }
+            Ok(slot.insert(commit).clone())
+        }
+    }
+}
+
 fn dir_node_to_metadata_entry(
     repo: &LocalRepository,
     dir_node: &DirNode,
@@ -285,25 +311,12 @@ fn dir_node_to_metadata_entry(
 ) -> Result<MetadataEntry, OxenError> {
     let _perf = crate::perf_guard!("core::entries::dir_node_to_metadata_entry");
 
-    if let std::collections::hash_map::Entry::Vacant(e) =
-        found_commits.entry(*dir_node.last_commit_id())
-    {
-        let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, dir_node.last_commit_id())?;
-        if commit.is_none() {
-            tracing::error!(
-                oxen.commit_id = %dir_node.last_commit_id(),
-                oxen.entry_name = %dir_node.name(),
-                "Entry names a commit the repository does not have"
-            );
-        }
-        e.insert(commit);
-    }
-
-    let latest_commit = found_commits
-        .get(dir_node.last_commit_id())
-        .cloned()
-        .flatten();
+    let latest_commit = latest_commit(
+        repo,
+        *dir_node.last_commit_id(),
+        dir_node.name(),
+        found_commits,
+    )?;
     let mut parsed_resource = parsed_resource.clone();
     if should_append_resource {
         parsed_resource.resource = parsed_resource.resource.join(dir_node.name());
@@ -336,25 +349,12 @@ fn file_node_to_metadata_entry(
 ) -> Result<MetadataEntry, OxenError> {
     let _perf = crate::perf_guard!("core::entries::file_node_to_metadata_entry");
 
-    if let std::collections::hash_map::Entry::Vacant(e) =
-        found_commits.entry(*file_node.last_commit_id())
-    {
-        let _perf_commit = crate::perf_guard!("core::entries::get_commit_by_hash");
-        let commit = repositories::commits::get_by_hash(repo, file_node.last_commit_id())?;
-        if commit.is_none() {
-            tracing::error!(
-                oxen.commit_id = %file_node.last_commit_id(),
-                oxen.entry_name = %file_node.name(),
-                "Entry names a commit the repository does not have"
-            );
-        }
-        e.insert(commit);
-    }
-
-    let latest_commit = found_commits
-        .get(file_node.last_commit_id())
-        .cloned()
-        .flatten();
+    let latest_commit = latest_commit(
+        repo,
+        *file_node.last_commit_id(),
+        file_node.name(),
+        found_commits,
+    )?;
     let data_type = file_node.data_type();
 
     let mut parsed_resource = parsed_resource.clone();
