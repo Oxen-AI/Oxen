@@ -320,6 +320,7 @@ mod tests {
     use crate::util;
     use crate::util::fs;
     use crate::util::fs::rcount_files_in_dir;
+    use crate::view::entries::EMetadataEntry;
 
     use super::{
         count_for_commit, get_directory, get_directory_async, get_meta_entry, get_meta_entry_async,
@@ -515,6 +516,59 @@ mod tests {
             assert_eq!((larger.total_pages, larger.entries.len()), (1, total));
             let smaller = page(1, total - 1)?;
             assert_eq!((smaller.total_pages, smaller.entries.len()), (2, total - 1));
+
+            // A newer commit to one directory and one file puts each last among its kind by date.
+            // Each page of every sort is the matching slice of the whole listing.
+            test::modify_txt_file(repo.path.join("dir_050").join("data_0.txt"), "changed")?;
+            test::modify_txt_file(repo.path.join("file_7.txt"), "changed")?;
+            repositories::add(&repo, &repo.path).await?;
+            let newer = repositories::commit(&repo, "Changing one directory and one file")?;
+            for (sort_by, last_dir, last_file) in [
+                (SortBy::Name, "dir_100", "file_9.txt"),
+                (SortBy::Date, "dir_050", "file_7.txt"),
+            ] {
+                for reverse in [false, true] {
+                    let sort_opts = SortOpts {
+                        sort_by: sort_by.clone(),
+                        reverse,
+                    };
+                    let page = |page_num, page_size| -> Result<Vec<EMetadataEntry>, OxenError> {
+                        Ok(list_directory_w_workspace_depth(
+                            &repo,
+                            Path::new(""),
+                            &newer.id,
+                            None,
+                            &PaginateOpts {
+                                page_num,
+                                page_size,
+                            },
+                            &sort_opts,
+                            0,
+                        )?
+                        .entries)
+                    };
+                    let case = format!("{sort_by}, reverse {reverse}");
+                    let whole = page(1, total)?;
+                    let paged = (1..=15)
+                        .map(|page_num| page(page_num, 10))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .concat();
+                    assert_eq!(
+                        serde_json::to_value(&paged).expect("entries serialize"),
+                        serde_json::to_value(&whole).expect("entries serialize"),
+                        "{case}: the pages hold the whole listing's entries, field for field"
+                    );
+                    // Reversing flips the order within directories and within files, but
+                    // directories still list first.
+                    let (dir_at, file_at) = if reverse {
+                        (0, num_dirs)
+                    } else {
+                        (num_dirs - 1, total - 1)
+                    };
+                    assert_eq!(whole[dir_at].filename(), last_dir, "{case}");
+                    assert_eq!(whole[file_at].filename(), last_file, "{case}");
+                }
+            }
 
             Ok(())
         })
