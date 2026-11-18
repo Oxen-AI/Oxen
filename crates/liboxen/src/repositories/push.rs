@@ -60,6 +60,7 @@ mod tests {
     use crate::util;
     use crate::util::fs::AtomicFile;
     use crate::view::entries::EMetadataEntry;
+    use futures::FutureExt;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -121,7 +122,7 @@ mod tests {
 
                 let remote_repo = test::connect_remote_repo(&mut repo).await?;
                 let progress = ProgressSender::new();
-                let receiver = progress.subscribe();
+                let mut receiver = progress.subscribe();
                 let opts = PushOpts {
                     remote: DEFAULT_REMOTE_NAME.to_string(),
                     branch: DEFAULT_BRANCH_NAME.to_string(),
@@ -138,6 +139,26 @@ mod tests {
                 );
                 assert!(uploaded.bytes > 0);
                 assert!(Some(uploaded.bytes) <= uploaded.total_bytes);
+                assert_eq!(
+                    receiver.changed().now_or_never(),
+                    Some(Some(uploaded)),
+                    "the last update, not yet seen"
+                );
+                assert_eq!(
+                    receiver.changed().now_or_never(),
+                    Some(None),
+                    "the push closed the channel, though the opts still hold its sender"
+                );
+
+                // A push with nothing to upload sends no update and closes the channel
+                let progress = ProgressSender::new();
+                let mut receiver = progress.subscribe();
+                let opts = PushOpts {
+                    progress: Some(progress),
+                    ..opts
+                };
+                repositories::push::push_remote_branch(&repo, &opts).await?;
+                assert_eq!(receiver.changed().now_or_never(), Some(None));
 
                 let entries =
                     api::client::dir::list(&remote_repo, &commit.id, ".", 1, num_root_entries + 10)

@@ -9,9 +9,10 @@ pub struct PushOpts {
     pub missing_files: bool,
     pub missing_files_commit_id: Option<String>,
     pub revalidate: bool,
-    /// Sent how many files and bytes the push has uploaded, as it uploads them. A push with
-    /// `missing_files` or `revalidate` set sends nothing. This field's sender lives as long as the
-    /// opts do, so a receiver learns that the push ended when the push returns, not from
-    /// `ProgressReceiver::changed`.
+    /// Sent how many files and bytes the push has uploaded, as it uploads them. The push closes
+    /// the channel when it ends, whether or not it succeeded, so `ProgressReceiver::changed`
+    /// returns `None` after the last update. A push that fails or is dropped partway closes it once
+    /// the uploads it started have stopped. A push with nothing to upload, or with `missing_files`
+    /// or `revalidate` set, sends no update and only closes the channel. A sender serves one push.
     pub progress: Option<ProgressSender>,
 }

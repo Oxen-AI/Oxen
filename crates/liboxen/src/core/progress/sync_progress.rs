@@ -1,4 +1,5 @@
 use indicatif::{ProgressBar, ProgressStyle};
+use parking_lot::Mutex;
 use std::{
     borrow::Cow,
     sync::{
@@ -25,17 +26,42 @@ pub struct SyncProgressUpdate {
 /// Sends a transfer's latest [`SyncProgressUpdate`] to the [`ProgressReceiver`]s subscribed to it,
 /// for a caller that shows progress somewhere other than the terminal. A receiver can delay a send
 /// only by the time it takes to copy one update out.
-#[derive(Debug, Default, Clone)]
-pub struct ProgressSender(watch::Sender<SyncProgressUpdate>);
+///
+/// It serves one transfer, which takes the channel's sending end out of it when it starts and
+/// closes the channel when it ends. A clone shares the same channel, so a second transfer given
+/// this sender or a clone of it sends nothing.
+#[derive(Debug, Clone)]
+pub struct ProgressSender {
+    sender: Arc<Mutex<Option<watch::Sender<SyncProgressUpdate>>>>,
+    receiver: watch::Receiver<SyncProgressUpdate>,
+}
 
 impl ProgressSender {
     /// A sender whose updates start at zero files and bytes, with no totals.
     pub fn new() -> Self {
-        Self::default()
+        let (sender, receiver) = watch::channel(SyncProgressUpdate::default());
+        Self {
+            sender: Arc::new(Mutex::new(Some(sender))),
+            receiver,
+        }
     }
 
+    /// A receiver for this sender's updates. One subscribed after the transfer ends still gets its
+    /// last update before learning the channel closed.
     pub fn subscribe(&self) -> ProgressReceiver {
-        ProgressReceiver(self.0.subscribe())
+        ProgressReceiver(self.receiver.clone())
+    }
+
+    /// The channel's sending end, for the transfer this sender serves. Returns `None` once a
+    /// transfer has taken it. The channel closes when the returned sender and its clones drop.
+    pub(crate) fn take(&self) -> Option<watch::Sender<SyncProgressUpdate>> {
+        self.sender.lock().take()
+    }
+}
+
+impl Default for ProgressSender {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -51,7 +77,7 @@ impl ProgressReceiver {
     }
 
     /// Waits for an update newer than the last one this returned, and returns it. Returns `None`
-    /// once every [`ProgressSender`] is dropped and the receiver has seen the last update.
+    /// once the transfer has ended and the receiver has seen its last update.
     pub async fn changed(&mut self) -> Option<SyncProgressUpdate> {
         self.0.changed().await.ok()?;
         Some(*self.0.borrow_and_update())
@@ -79,7 +105,7 @@ pub struct SyncProgress {
     progress_bar: ProgressBar,
     total_files: Option<u64>,
     total_bytes: Option<AtomicU64>,
-    sender: Option<ProgressSender>,
+    sender: Option<watch::Sender<SyncProgressUpdate>>,
 }
 
 impl SyncProgress {
@@ -122,7 +148,7 @@ impl SyncProgress {
     }
 
     /// Send every change in the counts to `sender`, starting with where they stand now.
-    pub(crate) fn set_sender(&mut self, sender: ProgressSender) {
+    pub(crate) fn set_sender(&mut self, sender: watch::Sender<SyncProgressUpdate>) {
         self.sender = Some(sender);
         self.send_update();
     }
@@ -134,7 +160,7 @@ impl SyncProgress {
         // Reading the counts inside the closure reads them under the channel's lock, so updates
         // from concurrent tasks go out one at a time and a receiver never sees this transfer's
         // counts go down.
-        sender.0.send_if_modified(|update| {
+        sender.send_if_modified(|update| {
             let latest = SyncProgressUpdate {
                 files: self.get_num_files(),
                 total_files: self.total_files,
@@ -237,8 +263,10 @@ mod tests {
     fn test_receiver_sees_each_change_in_the_counts() {
         let sender = ProgressSender::new();
         let mut receiver = sender.subscribe();
+        let channel = sender.take().expect("nothing has taken the channel yet");
+        assert!(sender.take().is_none(), "a sender serves one transfer");
         let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
-        progress.set_sender(sender.clone());
+        progress.set_sender(channel.clone());
 
         let update = |files, bytes, total_bytes| SyncProgressUpdate {
             files,
@@ -270,7 +298,7 @@ mod tests {
 
         // Without totals there is nothing to report progress against.
         let mut spinner = SyncProgress::new(SyncType::Pull);
-        spinner.set_sender(sender);
+        spinner.set_sender(channel);
         spinner.add_bytes(7);
         assert_eq!(
             receiver.changed().now_or_never().flatten(),
@@ -282,11 +310,12 @@ mod tests {
             })
         );
 
+        // The channel closes though `sender` is still in scope, as it is in a caller's `PushOpts`.
         drop((progress, spinner));
         assert_eq!(
             receiver.changed().now_or_never(),
             Some(None),
-            "every sender is gone"
+            "the transfers holding the channel are gone"
         );
     }
 }
