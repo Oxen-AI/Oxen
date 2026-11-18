@@ -1416,11 +1416,12 @@ pub enum Copied {
 }
 
 /// Stage a copy of the workspace's file at `path` at `new_path`, taking what the workspace stages
-/// for `path` when it stages a change, else the base commit's file, along with any data frame edits
-/// the workspace holds for it. The copy shares the source's content, so nothing is uploaded. A copy
-/// with a different extension gets the type and metadata an upload of the same bytes to `new_path`
-/// would. Refused for a source staged for removal, a destination that is a directory or sits beneath
-/// a file, and a file at `new_path` unless `if_exists` is [`IfExists::Replace`].
+/// for `path` when it stages a change, else the base commit's file. A tabular copy also takes the
+/// data frame edits the workspace holds for `path`, and any other copy gets the file without them.
+/// The copy shares the source's content, so nothing is uploaded. A copy with a different extension
+/// gets the type and metadata an upload of the same bytes to `new_path` would. Refused for a source
+/// staged for removal, a destination that is a directory or sits beneath a file, and a file at
+/// `new_path` unless `if_exists` is [`IfExists::Replace`].
 pub async fn copy(
     workspace: &Workspace,
     path: &Path,
