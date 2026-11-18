@@ -209,7 +209,6 @@ pub fn get_meta_entry(
     }
 }
 
-/// A file or directory directly inside a listed directory.
 #[derive(Clone, Copy)]
 enum Child<'a> {
     Dir(&'a DirNode),
@@ -236,7 +235,7 @@ impl Child<'_> {
     }
 }
 
-/// The files and directories directly inside `dir`, through its vnodes.
+/// Vnodes are buckets of a directory's own children, assigned by a hash of each path.
 fn child_nodes(dir: &MerkleTreeNode) -> Vec<Child<'_>> {
     dir.children
         .iter()
@@ -249,9 +248,9 @@ fn child_nodes(dir: &MerkleTreeNode) -> Vec<Child<'_>> {
         .collect()
 }
 
-/// The files and directories directly inside `dir`, in the order a listing shows them. Sorting
-/// reads no more than each child's name, or the commit it last changed in when sorting by date,
-/// so a caller can cut a page from the result before building any entry.
+/// The files and directories directly inside `dir`, in the order a listing shows them.
+/// Sorting reads only each child's kind and name, plus the commit it last changed in when
+/// sorting by date, so a caller can cut a page before building any entry.
 fn sorted_children<'a>(
     repo: &LocalRepository,
     dir: &'a MerkleTreeNode,
@@ -288,8 +287,7 @@ fn sorted_children<'a>(
     Ok(keyed.into_iter().map(|(child, _)| child).collect())
 }
 
-/// The entry for each child of the directory at `directory`, in order. Each directory's entry
-/// holds its own sorted children, `depth` levels down.
+/// Each directory's entry holds its own sorted children, `depth` levels down.
 fn child_entries(
     repo: &LocalRepository,
     children: &[Child],
@@ -324,8 +322,7 @@ fn child_entries(
         .collect()
 }
 
-/// The sorted entries inside the directory at `path`, `depth` levels down, or None when it holds
-/// nothing.
+/// The sorted entries in the directory at `path`, `depth` levels down, or None when it's empty.
 fn nested_entries(
     repo: &LocalRepository,
     path: &Path,
@@ -359,8 +356,8 @@ fn nested_entries(
     Ok((!entries.is_empty()).then_some(entries))
 }
 
-/// The commit an entry last changed in, read once per commit across a listing. A commit the
-/// repository doesn't have is logged and comes back as None.
+/// The commit an entry last changed in, read once per commit across a listing.
+/// A commit the repository doesn't have is logged and comes back as None.
 fn latest_commit(
     repo: &LocalRepository,
     commit_id: MerkleHash,

@@ -518,7 +518,6 @@ mod tests {
             assert_eq!((smaller.total_pages, smaller.entries.len()), (2, total - 1));
 
             // A newer commit to one directory and one file puts each last among its kind by date.
-            // Each page of every sort is the matching slice of the whole listing.
             test::modify_txt_file(repo.path.join("dir_050").join("data_0.txt"), "changed")?;
             test::modify_txt_file(repo.path.join("file_7.txt"), "changed")?;
             repositories::add(&repo, &repo.path).await?;
@@ -558,8 +557,7 @@ mod tests {
                         serde_json::to_value(&whole).expect("entries serialize"),
                         "{case}: the pages hold the whole listing's entries, field for field"
                     );
-                    // Reversing flips the order within directories and within files, but
-                    // directories still list first.
+                    // Reversing keeps directories first and flips the order within each kind.
                     let (dir_at, file_at) = if reverse {
                         (0, num_dirs)
                     } else {
