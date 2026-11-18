@@ -78,6 +78,10 @@ pub const OXEN_COLS: [&str; 2] = [OXEN_ID_COL, OXEN_ROW_ID_COL];
 /// changes in extra columns, or left by an interrupted index) must be
 /// rebuilt. A table, unlike a column, can never collide with user data.
 pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
+/// Table holding the hash of the file a workspace data frame's staged table was built from, so an
+/// index of a file the workspace has since replaced at the path is told apart from a current one.
+/// An index built before this table existed has none.
+pub(crate) const INDEX_SOURCE_TABLE: &str = "_oxen_index_source";
 /// Oxen's internal columns to exclude from dfs
 pub const EXCLUDE_OXEN_COLS: [&str; 5] = [
     OXEN_ID_COL,

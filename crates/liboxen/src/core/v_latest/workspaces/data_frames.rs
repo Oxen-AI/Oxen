@@ -220,28 +220,33 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
+/// The file the workspace has at `path`: what it stages there, which may have replaced the
+/// committed file, or the base commit's file when it stages nothing there or stages the path for
+/// removal. `None` when neither has a file there.
+pub(crate) fn workspace_file(
+    workspace: &Workspace,
+    path: &Path,
+) -> Result<Option<FileNode>, OxenError> {
+    let staged = get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(path)?;
+    match staged {
+        Some(staged) if staged.status != StagedEntryStatus::Removed => {
+            let EMerkleTreeNode::File(file_node) = staged.node.node else {
+                return Err(OxenError::NotAFile(path.to_path_buf().into()));
+            };
+            Ok(Some(file_node))
+        }
+        _ => repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path),
+    }
+}
+
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     let (file_hash, extension, db_path, parent) = {
         let workspace = workspace.clone();
         let path = path.to_path_buf();
         tasks::spawn_blocking(move || -> Result<_, OxenError> {
             let path = path.as_path();
-            // What the workspace stages for the path, which may have replaced the committed file.
-            let staged = get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(path)?;
-            let file_node = match staged {
-                Some(staged) if staged.status != StagedEntryStatus::Removed => {
-                    let EMerkleTreeNode::File(file_node) = staged.node.node else {
-                        return Err(OxenError::NotAFile(path.to_path_buf().into()));
-                    };
-                    file_node
-                }
-                _ => repositories::tree::get_file_by_path(
-                    &workspace.base_repo,
-                    &workspace.commit,
-                    path,
-                )?
-                .ok_or_else(|| OxenError::path_does_not_exist(path))?,
-            };
+            let file_node = workspace_file(&workspace, path)?
+                .ok_or_else(|| OxenError::path_does_not_exist(path))?;
             if *file_node.data_type() != EntryDataType::Tabular {
                 return Err(OxenError::basic_str(
                     "File format not supported, must be tabular.",
@@ -305,6 +310,7 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
                 conn.execute_batch("BEGIN TRANSACTION")?;
                 let build = (|| -> Result<(), DataFrameError> {
                     df_db::index_file_with_id(&version_path, conn, &extension)?;
+                    df_db::record_index_source(conn, file_hash)?;
                     Ok(())
                 })();
                 match build {
@@ -388,11 +394,10 @@ const LEGACY_AND_CURRENT_INTERNAL_COLS: [&str; 7] = [
 /// appended and modified rows kept, deleted rows gone — re-keyed in the current
 /// index format (fresh `_oxen_id`/`_oxen_row_id` and the index marker).
 ///
-/// Call only for a table that exists but fails
-/// [`is_indexed`](crate::repositories::workspaces::data_frames::is_indexed);
-/// afterward it passes that gate and exports/commits like any freshly indexed
-/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no
-/// user columns to recover.
+/// Call only for a table whose `IndexStatus` is `Unfinished`, since one built from another file
+/// holds that file's rows. Afterward it is complete and exports/commits like any freshly indexed
+/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no user columns to
+/// recover.
 pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let extension = util::fs::extension_from_path(path);

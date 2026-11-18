@@ -13,12 +13,15 @@ use crate::core::db::data_frames::df_db::{with_df_db_manager, with_hardened_quer
 use crate::core::db::data_frames::{DataFrameError, df_db};
 use crate::core::df::sql;
 use crate::error::OxenError;
-use crate::model::{Branch, Commit, EntryDataType, LocalRepository, NewCommitBody, Workspace};
+use crate::model::{
+    Branch, Commit, EntryDataType, LocalRepository, MerkleHash, NewCommitBody, Workspace,
+};
 use crate::opts::DFOpts;
 use crate::{repositories, util};
 
 use crate::core::db::data_frames::columns::polar_insert_column;
 use duckdb::arrow::array::RecordBatch;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 pub mod columns;
@@ -26,30 +29,93 @@ pub mod embeddings;
 pub mod rows;
 pub mod schemas;
 
-pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, DataFrameError> {
-    log::debug!("checking dataset is indexed for {path:?}");
+/// Whether the data frame at `path` has a staged table that can be queried and edited, built from
+/// the file the workspace has at the path. An index of a file the workspace has replaced there
+/// since does not count, so a caller re-indexes rather than showing or editing the old rows.
+pub fn is_indexed(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
+    Ok(index_status(workspace, path)? == IndexStatus::Current)
+}
+
+/// How a workspace data frame's staged table stands against the file the workspace has at its
+/// path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum IndexStatus {
+    /// No staged table.
+    Missing,
+    /// A table an older version of oxen wrote, or an interrupted index left, which
+    /// [`reindex_preserving_rows`] recovers from its own rows.
+    Unfinished,
+    /// A complete table built from a file other than the one at the path now, such as one an upload
+    /// or a copy replaced after the table was built. Its rows and edits belong to that file.
+    OtherFile,
+    /// A complete table of the file at the path. A table built before sources were recorded counts
+    /// as current.
+    Current,
+}
+
+/// [`IndexStatus`] of the data frame at `path` against the file the workspace has there.
+pub(crate) fn index_status(workspace: &Workspace, path: &Path) -> Result<IndexStatus, OxenError> {
+    let source = match indexed_source(workspace, path)? {
+        ControlFlow::Break(status) => return Ok(status),
+        ControlFlow::Continue(None) => return Ok(IndexStatus::Current),
+        ControlFlow::Continue(Some(source)) => source,
+    };
+    let file = core::v_latest::workspaces::data_frames::workspace_file(workspace, path)?;
+    Ok(source_status(source, file.map(|file| *file.hash())))
+}
+
+/// [`IndexStatus`] of the data frame at `path` against the file whose hash is `file_hash`, such as
+/// the staged node a commit is writing.
+pub(crate) fn index_status_against(
+    workspace: &Workspace,
+    path: &Path,
+    file_hash: MerkleHash,
+) -> Result<IndexStatus, OxenError> {
+    Ok(match indexed_source(workspace, path)? {
+        ControlFlow::Break(status) => status,
+        ControlFlow::Continue(None) => IndexStatus::Current,
+        ControlFlow::Continue(Some(source)) => source_status(source, Some(file_hash)),
+    })
+}
+
+/// The hash of the file a complete staged table was built from, `None` for one built before sources
+/// were recorded, or the table's status when it is missing or unfinished.
+fn indexed_source(
+    workspace: &Workspace,
+    path: &Path,
+) -> Result<ControlFlow<IndexStatus, Option<MerkleHash>>, OxenError> {
     let db_path = duckdb_path(workspace, path);
     if !db_path.exists() {
-        return Ok(false);
+        return Ok(ControlFlow::Break(IndexStatus::Missing));
     }
-    log::debug!("getting conn at path {db_path:?}");
-
-    with_df_db_manager(&db_path, |manager| {
+    Ok(with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
-            // A partially-indexed table (missing some OXEN_COLS) can't be queried,
-            // so report it as not indexed and let callers rebuild it.
-            let fully_indexed = df_db::table_is_fully_indexed(conn, TABLE_NAME)?;
-            log::debug!("dataset_is_indexed() got fully_indexed: {fully_indexed:?}");
-            Ok(fully_indexed)
+            // A partially-indexed table (missing some OXEN_COLS) can't be queried, so it is not
+            // current, and callers rebuild it.
+            if df_db::table_is_fully_indexed(conn, TABLE_NAME)? {
+                Ok(ControlFlow::Continue(df_db::index_source(conn)?))
+            } else if df_db::table_exists(conn, TABLE_NAME)? {
+                Ok(ControlFlow::Break(IndexStatus::Unfinished))
+            } else {
+                Ok(ControlFlow::Break(IndexStatus::Missing))
+            }
         })
-    })
+    })?)
+}
+
+fn source_status(source: MerkleHash, file_hash: Option<MerkleHash>) -> IndexStatus {
+    if file_hash == Some(source) {
+        IndexStatus::Current
+    } else {
+        IndexStatus::OtherFile
+    }
 }
 
 /// [`is_indexed`], off the async worker.
 pub async fn is_indexed_async(workspace: &Workspace, path: &Path) -> Result<bool, OxenError> {
     let workspace = workspace.clone();
     let path = path.to_path_buf();
-    Ok(tasks::spawn_blocking(move || is_indexed(&workspace, &path)).await??)
+    tasks::spawn_blocking(move || is_indexed(&workspace, &path)).await?
 }
 
 /// Whether a staged DuckDB table exists on disk for this data frame,

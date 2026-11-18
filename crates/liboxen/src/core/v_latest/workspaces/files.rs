@@ -1295,24 +1295,23 @@ fn p_modify_file(
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     staged_db_manager.edit_staged_node(path, |staged| {
-        let (mut file_node, status) = match (committed, staged) {
-            (Some(mut file_node), staged) => {
+        let (mut file_node, status) = match (staged, committed) {
+            // The edit applies to what the workspace stages, which may have replaced the committed
+            // file (an upload or a copy) or edited its metadata, and keeps its content hash, which
+            // the data frame's index was built from. `edit_staged_node` refuses a path staged for
+            // removal. A path the commit has is staged as modified, and one only the workspace has,
+            // such as a copy, stays staged as it was added.
+            (Some(staged), committed) => {
+                let status = match committed {
+                    Some(_) => StagedEntryStatus::Modified,
+                    None => staged.status,
+                };
+                (staged.node.file()?, status)
+            }
+            (None, Some(mut file_node)) => {
                 file_node.set_name(&path.to_string_lossy());
-                // The committed node knows nothing of workspace metadata edits. When
-                // the staged node holds the same content with different metadata,
-                // carry that metadata over so re-staging doesn't discard it.
-                if let Some(staged) = staged
-                    && let Ok(staged_file) = staged.node.file()
-                    && staged_file.hash() == file_node.hash()
-                    && let Some(metadata) = staged_file.metadata()
-                {
-                    file_node.set_metadata(Some(metadata));
-                    file_node.recompute_metadata_hashes()?;
-                }
                 (file_node, StagedEntryStatus::Modified)
             }
-            // A file only the workspace has, such as a copy, stays staged as it was added.
-            (None, Some(staged)) => (staged.node.file()?, staged.status),
             (None, None) => return Err(OxenError::basic_str("file not found in head commit")),
         };
         file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
