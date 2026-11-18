@@ -56,10 +56,10 @@ fn get_by_longest_prefix(
 }
 
 /// Split a `revision/path` string at the longest leading run of `/`-separated components that
-/// names a revision (a branch name, which may itself contain `/`, a commit id, or `HEAD`), and
-/// return that revision's commit with the rest of the string as a path, off the async worker. The
-/// path is empty when the whole string names a revision. Returns Ok(None) if no leading run names a
-/// revision.
+/// resolves to a revision (a branch name, which may itself contain `/`, a commit id, or `HEAD`),
+/// and return that revision's commit with the rest of the string as a path, off the async worker.
+/// The path is empty when the whole string is a revision. Returns Ok(None) if no leading run
+/// resolves to a revision.
 pub async fn get_by_longest_prefix_async(
     repo: &LocalRepository,
     revision_path: &str,
@@ -120,7 +120,7 @@ mod tests {
                 })
             };
 
-            // Both `feature` and `feature/x` name branches, so the longer one takes the path's
+            // Both `feature` and `feature/x` are branches, so the longer one takes the path's
             // second component.
             assert_eq!(
                 split("feature/x/data/train.csv")?,

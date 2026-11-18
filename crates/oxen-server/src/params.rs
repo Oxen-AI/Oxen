@@ -272,7 +272,8 @@ pub fn resolve_base_head_branches(
 }
 
 /// Resolve the base and head strings (each a commit id, a branch name, or `HEAD`) to their commits,
-/// off the async worker. A string that names no revision is a `RevisionNotFound`, base's first.
+/// off the async worker. A string that resolves to no revision is a `RevisionNotFound`, base's
+/// first.
 pub async fn resolve_base_head(
     repo: &LocalRepository,
     base: &str,
