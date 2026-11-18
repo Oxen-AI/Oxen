@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::get_repo_async;
 use crate::middleware::with_repo_exclusive_for_client;
 use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -41,11 +41,11 @@ pub async fn prune(
     body: web::Json<PruneRequest>,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
 
     // Get the repository
-    let repository = get_repo(app_data, &namespace, &repo_name)?;
+    let repository = get_repo_async(app_data, namespace, repo_name).await?;
 
     let dry_run = body.dry_run;
 

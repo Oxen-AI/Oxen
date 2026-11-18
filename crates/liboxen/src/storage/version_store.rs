@@ -8,8 +8,7 @@ use std::time::SystemTime;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures_util::StreamExt;
-use futures_util::stream;
+use futures_util::{StreamExt, TryStreamExt, stream};
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
@@ -572,6 +571,19 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version to delete
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
+
+    /// Delete the version file of every hash in `hashes`, with its chunks and derived versions,
+    /// skipping any hash the store does not hold.
+    ///
+    /// The default implementation deletes each hash with `delete_version` in parallel, bounded by
+    /// `MAX_CONCURRENT_VERSION_PROBES`.
+    async fn delete_versions(&self, hashes: Vec<String>) -> Result<(), OxenError> {
+        stream::iter(hashes)
+            .map(|hash| async move { self.delete_version(&hash).await })
+            .buffer_unordered(MAX_CONCURRENT_VERSION_PROBES)
+            .try_collect()
+            .await
+    }
 
     /// Delete every version file this store holds, including chunks and derived versions.
     /// After this call the store is empty. Call when the repository itself is being deleted.
