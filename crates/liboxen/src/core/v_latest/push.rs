@@ -106,7 +106,15 @@ async fn push_to_new_branch(
     let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
 
     // Push the commits
-    push_commits(repo, remote_repo, latest_remote_commit, history, opts).await?;
+    push_commits(
+        repo,
+        remote_repo,
+        latest_remote_commit,
+        commit,
+        history,
+        opts,
+    )
+    .await?;
 
     // Create the remote branch from the commit
     api::client::branches::create_from_commit(remote_repo, &branch.name, commit).await?;
@@ -142,7 +150,15 @@ async fn push_to_existing_branch(
                     repositories::commits::list_between(repo, &latest_remote_commit, commit)?;
                 commits.reverse();
 
-                push_commits(repo, remote_repo, Some(latest_remote_commit), commits, opts).await?;
+                push_commits(
+                    repo,
+                    remote_repo,
+                    Some(latest_remote_commit),
+                    commit,
+                    commits,
+                    opts,
+                )
+                .await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else if opts.force {
                 // Force push: push the full history and update the branch pointer
@@ -154,7 +170,15 @@ async fn push_to_existing_branch(
                 let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
                 let history = repositories::commits::list_from(repo, &commit.id)?;
 
-                push_commits(repo, remote_repo, latest_remote_commit, history, opts).await?;
+                push_commits(
+                    repo,
+                    remote_repo,
+                    latest_remote_commit,
+                    commit,
+                    history,
+                    opts,
+                )
+                .await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
             } else {
                 // Behind and not forcing
@@ -179,7 +203,7 @@ async fn revalidate_and_push_missing_files(
     opts: &PushOpts,
     remote_repo: &RemoteRepository,
     latest_remote_commit: &Option<Commit>,
-    commits: &[Commit],
+    head_commit: &Commit,
 ) -> Result<(), OxenError> {
     println!("🐂 revalidating the remote repo...");
     let response = api::client::versions::clean(remote_repo).await?;
@@ -200,22 +224,17 @@ async fn revalidate_and_push_missing_files(
     // Re-push regardless of the corrupted count: `clean` only turns corrupt-but-present blobs into
     // absent ones, and a blob that was absent to begin with needs the same re-push.
     println!("🐂 checking for missing files...");
-    push_missing_files(repo, opts, remote_repo, latest_remote_commit, commits).await
+    push_missing_files(repo, opts, remote_repo, latest_remote_commit, head_commit).await
 }
 
+/// Repairs what the remote is missing for `head_commit`, the commit this push is advancing to.
 async fn push_missing_files(
     repo: &LocalRepository,
     opts: &PushOpts,
     remote_repo: &RemoteRepository,
     latest_remote_commit: &Option<Commit>,
-    commits: &[Commit],
+    head_commit: &Commit,
 ) -> Result<(), OxenError> {
-    let Some(head_commit) = commits.last() else {
-        return Err(OxenError::basic_str(
-            "Cannot push missing files without a head commit",
-        ));
-    };
-
     if let Some(commit_id) = &opts.missing_files_commit_id {
         let commit = repositories::commits::get_by_id(repo, commit_id)?
             .ok_or_else(|| OxenError::commit_id_does_not_exist(commit_id))?;
@@ -413,6 +432,7 @@ async fn push_commits(
     repo: &LocalRepository,
     remote_repo: &RemoteRepository,
     latest_remote_commit: Option<Commit>,
+    head_commit: &Commit,
     commits: Vec<Commit>,
     opts: &PushOpts,
 ) -> Result<(), OxenError> {
@@ -422,12 +442,13 @@ async fn push_commits(
             opts,
             remote_repo,
             &latest_remote_commit,
-            &commits,
+            head_commit,
         )
         .await;
     }
     if opts.missing_files {
-        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, &commits).await;
+        return push_missing_files(repo, opts, remote_repo, &latest_remote_commit, head_commit)
+            .await;
     }
 
     // We need to find all the commits that need to be pushed
