@@ -1,5 +1,5 @@
 use crate::errors::OxenHttpError;
-use crate::helpers::get_repo;
+use crate::helpers::get_repo_async;
 use crate::params::{app_data, path_param};
 use actix_web::{HttpRequest, HttpResponse};
 use liboxen::repositories;
@@ -33,9 +33,9 @@ pub async fn completed(req: HttpRequest) -> actix_web::Result<HttpResponse, Oxen
 /// held for maintenance reports 429 with a `Retry-After` instead of a completed push.
 pub async fn completed_push(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(app_data, &namespace, &name)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     log::debug!("push action completed");
     repositories::size::update_size(&repository)?;
