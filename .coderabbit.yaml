@@ -40,3 +40,42 @@ reviews:
     auto_pause_after_reviewed_commits: 0
     base_branches:
       - ".*"
+
+  # approve a pull request rated minimal risk, unless it touches a path that
+  # always needs a person
+  # authors can't approve their own pull request with `@coderabbitai approve`
+  # the paths mirror the "Oxen merge requirements" rulesets on this repository,
+  # which are what enforce the human review, so change both together
+  auto_approvals:
+    enabled: true
+    max_merge_risk: minimal
+    allow_author_approval: false
+    overrides:
+      - enabled: false
+        paths:
+          - ".github/**"
+          - ".coderabbit.yaml"
+          - "crates/liboxen/**/*merkle*"
+          - "crates/liboxen/**/*merkle*/**"
+          - "crates/liboxen/src/util/hasher.rs"
+          - "crates/liboxen/src/core/db.rs"
+          - "crates/liboxen/src/core/db/**"
+          - "crates/liboxen/src/core/staged.rs"
+          - "crates/liboxen/src/core/staged/**"
+          - "crates/liboxen/src/core/refs.rs"
+          - "crates/liboxen/src/core/refs/**"
+          - "crates/liboxen/src/core/merge.rs"
+          - "crates/liboxen/src/core/merge/**"
+          - "crates/liboxen/src/core/repo_locks.rs"
+          - "crates/liboxen/src/storage.rs"
+          - "crates/liboxen/src/storage/**"
+          - "crates/liboxen/src/util/fs/atomic_file.rs"
+          - "crates/**/migrations.rs"
+          - "crates/liboxen/src/command/migrate.rs"
+          - "crates/liboxen/src/command/migrate/**"
+          - "crates/liboxen/src/repositories/placement.rs"
+          - "crates/liboxen/src/repositories/name_table.rs"
+          - "crates/liboxen/src/repositories/name_table/**"
+          - "crates/oxen-server/src/middleware.rs"
+          - "crates/oxen-server/src/routes.rs"
+          - "crates/oxen-server/src/tasks.rs"
