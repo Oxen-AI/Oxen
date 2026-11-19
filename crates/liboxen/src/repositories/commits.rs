@@ -147,7 +147,7 @@ pub async fn list_missing(
         let mut missing = HashSet::new();
         for hash in hashes {
             if !store.exists(&hash)?
-                || !dir_hash_db_path_from_commit_id(&repo, hash.to_string()).exists()
+                || !dir_hash_db_path_from_commit_id(&repo, hash.to_string()).is_dir()
             {
                 missing.insert(hash);
             }
@@ -1925,6 +1925,26 @@ A: Oxen.ai
             );
             assert_eq!(merge_count, 5, "should be 5, got {merge_count}");
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// A commit is missing until both its node and a `dir_hashes` directory are present.
+    #[tokio::test]
+    async fn test_list_missing_needs_node_and_dir_hashes_directory() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
+            let unknown = MerkleHash::new(1);
+
+            let missing = list_missing(&repo, HashSet::from([head, unknown])).await?;
+            assert_eq!(missing, HashSet::from([unknown]));
+
+            let dir_hashes = dir_hash_db_path_from_commit_id(&repo, head.to_string());
+            util::fs::remove_dir_all(&dir_hashes)?;
+            util::fs::write_to_path(&dir_hashes, "not a directory")?;
+            let missing = list_missing(&repo, HashSet::from([head])).await?;
+            assert_eq!(missing, HashSet::from([head]));
             Ok(())
         })
         .await
