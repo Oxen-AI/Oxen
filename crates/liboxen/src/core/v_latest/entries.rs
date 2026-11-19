@@ -227,7 +227,8 @@ impl Child<'_> {
     }
 }
 
-/// Vnodes are buckets of a directory's own children, assigned by a hash of each path.
+/// Files and named directories directly inside `dir`, which must be loaded with its vnodes.
+/// Vnodes are buckets of a directory's own children, so their children count as its own.
 fn child_nodes(dir: &MerkleTreeNode) -> Vec<Child<'_>> {
     let mut children = Vec::new();
     let mut pending = vec![dir.children.iter()];
@@ -322,7 +323,7 @@ fn child_entries(
         .collect()
 }
 
-/// The sorted entries in the directory at `path`, `depth` levels down, or None when it's empty.
+/// The sorted entries at `path`, `depth` levels down, or None when it's missing or empty.
 fn nested_entries(
     repo: &LocalRepository,
     path: &Path,
