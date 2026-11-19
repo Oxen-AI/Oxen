@@ -83,6 +83,10 @@ const DUCKDB_THREADS: i64 = 5;
 /// fails once it outgrows the ceiling. Byte sizes only, no percentages.
 const DUCKDB_MAX_MEMORY: &str = "512MiB";
 
+/// Memory ceiling while a connection exports a whole data frame to a file, so an export that
+/// sorts every row in one statement fits: 2 GiB.
+const DUCKDB_EXPORT_MAX_MEMORY: &str = "2GiB";
+
 // Process-wide connection registry, one live connection per database file.
 static DF_DB_INSTANCES: LazyLock<WeakDuckCache> =
     LazyLock::new(|| WeakDuckCache::new(DF_DB_CACHE_SIZE));
@@ -202,6 +206,24 @@ impl DfDBManager {
         let result = operation(&conn);
         *slot = Some(conn);
         result
+    }
+
+    /// Like [`Self::with_conn`], with the memory ceiling raised to `DUCKDB_EXPORT_MAX_MEMORY`
+    /// while `export` runs. The ceiling goes back to `DUCKDB_MAX_MEMORY` afterward, even when
+    /// `export` fails.
+    pub(crate) fn with_export_conn<F, T>(&self, export: F) -> Result<T, DataFrameError>
+    where
+        F: FnOnce(&duckdb::Connection) -> Result<T, DataFrameError>,
+    {
+        self.with_conn(|conn| {
+            conn.execute_batch(&format!("SET memory_limit = '{DUCKDB_EXPORT_MAX_MEMORY}'"))?;
+            let result = export(conn);
+            let restored = conn.execute_batch(&format!("SET memory_limit = '{DUCKDB_MAX_MEMORY}'"));
+            // A failed export's error says more than a failed restore's, so it wins.
+            let value = result?;
+            restored?;
+            Ok(value)
+        })
     }
 
     /// Execute an operation with mutable access to the database connection, opening
@@ -1248,6 +1270,13 @@ mod tests {
     fn test_connections_cap_the_duckdb_thread_pool() -> Result<(), OxenError> {
         test::run_empty_dir_test(|dir| {
             let db_file = dir.join("data.db");
+            let memory_limit = |conn: &duckdb::Connection| -> Result<String, DataFrameError> {
+                Ok(
+                    conn.query_row("SELECT current_setting('memory_limit')", [], |row| {
+                        row.get(0)
+                    })?,
+                )
+            };
 
             let conn = get_connection(&db_file)?;
             conn.execute_batch("CREATE TABLE df AS SELECT 42 AS x")?;
@@ -1262,12 +1291,9 @@ mod tests {
             );
             // DuckDB echoes the limit in MiB with one decimal, so this literal tracks
             // `DUCKDB_MAX_MEMORY` and must change with it.
-            let rw_memory: String =
-                conn.query_row("SELECT current_setting('memory_limit')", [], |row| {
-                    row.get(0)
-                })?;
             assert_eq!(
-                rw_memory, "512.0 MiB",
+                memory_limit(&conn)?,
+                "512.0 MiB",
                 "read-write connections must cap memory"
             );
             drop(conn);
@@ -1284,14 +1310,28 @@ mod tests {
                 hardened_threads, DUCKDB_THREADS,
                 "hardened connections must cap the thread pool"
             );
-            let hardened_memory: String =
-                hardened.query_row("SELECT current_setting('memory_limit')", [], |row| {
-                    row.get(0)
-                })?;
             assert_eq!(
-                hardened_memory, "512.0 MiB",
+                memory_limit(&hardened)?,
+                "512.0 MiB",
                 "hardened connections must cap memory"
             );
+            drop(hardened);
+
+            with_df_db_manager(&db_file, |manager| {
+                let during = manager.with_export_conn(memory_limit)?;
+                assert_eq!(during, "2.0 GiB", "an export runs under the raised ceiling");
+                let failed = manager.with_export_conn(|conn| {
+                    Ok(conn.execute_batch("SELECT * FROM no_such_table")?)
+                });
+                assert!(failed.is_err(), "the export fails on a missing table");
+                let after = manager.with_conn(memory_limit)?;
+                assert_eq!(
+                    after, "512.0 MiB",
+                    "a failed export still restores the ceiling"
+                );
+                Ok(())
+            })?;
+            with_db_closed(&db_file, || {});
 
             Ok(())
         })

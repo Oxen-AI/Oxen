@@ -284,7 +284,7 @@ pub fn export(
     // read-only connection and is serialized in Rust, never reaching the COPY path.
     if let Some(embedding_opts) = opts.get_sort_by_embedding_query() {
         with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| {
+            manager.with_export_conn(|conn| {
                 let sql =
                     embeddings::similarity_query_with_conn(conn, workspace, &embedding_opts, true)?;
                 sql::export_df(conn, sql, Some(opts), temp_file)?;
@@ -304,7 +304,7 @@ pub fn export(
         write_df(&mut df, temp_file)?;
     } else {
         with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| {
+            manager.with_export_conn(|conn| {
                 // Ordered for the same reason as query(): an exported file must
                 // carry the stable row order, not DuckDB's physical order.
                 let sql = add_exclude_to_sql(&format!(
