@@ -1,13 +1,16 @@
 use indicatif::{ProgressBar, ProgressStyle};
-use parking_lot::Mutex;
 use std::{
     borrow::Cow,
+    fmt,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::sync::watch;
+use tokio::{sync::watch, task::JoinHandle};
+
+use crate::error::OxenError;
+use crate::tasks;
 
 /// How far a push or pull has got.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -23,64 +26,64 @@ pub struct SyncProgressUpdate {
     pub total_bytes: Option<u64>,
 }
 
-/// Sends a transfer's latest [`SyncProgressUpdate`] to the [`ProgressReceiver`]s subscribed to it,
-/// for a caller that shows progress somewhere other than the terminal. A receiver can delay a send
-/// only by the time it takes to copy one update out.
+/// Called with a transfer's latest [`SyncProgressUpdate`], for a caller that shows progress
+/// somewhere other than the terminal.
 ///
-/// It serves one transfer, which takes the channel's sending end out of it when it starts and
-/// closes the channel when it ends. A clone shares the same channel, so a second transfer given
-/// this sender or a clone of it sends nothing.
-#[derive(Debug, Clone)]
-pub struct ProgressSender {
-    sender: Arc<Mutex<Option<watch::Sender<SyncProgressUpdate>>>>,
-    receiver: watch::Receiver<SyncProgressUpdate>,
-}
+/// It runs on a blocking-pool thread of its own, never on the threads doing the transfer, so it may
+/// block. Updates that arrive while it runs replace one another rather than queue, so each call
+/// gets the latest and a slow observer never holds the transfer back. Updates arrive in order, and
+/// a transfer's counts never go down.
+#[derive(Clone)]
+pub struct ProgressObserver(Arc<dyn Fn(SyncProgressUpdate) + Send + Sync>);
 
-impl ProgressSender {
-    /// A sender whose updates start at zero files and bytes, with no totals.
-    pub fn new() -> Self {
-        let (sender, receiver) = watch::channel(SyncProgressUpdate::default());
-        Self {
-            sender: Arc::new(Mutex::new(Some(sender))),
-            receiver,
-        }
+impl ProgressObserver {
+    pub fn new(on_update: impl Fn(SyncProgressUpdate) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(on_update))
     }
 
-    /// A receiver for this sender's updates. One subscribed after the transfer ends still gets its
-    /// last update before learning the channel closed.
-    pub fn subscribe(&self) -> ProgressReceiver {
-        ProgressReceiver(self.receiver.clone())
-    }
-
-    /// The channel's sending end, for the transfer this sender serves. Returns `None` once a
-    /// transfer has taken it. The channel closes when the returned sender and its clones drop.
-    pub(crate) fn take(&self) -> Option<watch::Sender<SyncProgressUpdate>> {
-        self.sender.lock().take()
+    /// Start calling this observer, on a blocking-pool thread, with each update sent through the
+    /// returned [`Observation`].
+    pub(crate) fn observe(&self) -> Observation {
+        let (sender, mut receiver) = watch::channel(SyncProgressUpdate::default());
+        let on_update = Arc::clone(&self.0);
+        let observer = tasks::spawn_blocking(move || {
+            // Waiting on the channel needs only a thread to park, not a runtime, and this thread
+            // is the observer's alone.
+            while futures::executor::block_on(receiver.changed()).is_ok() {
+                let update = *receiver.borrow_and_update();
+                on_update(update);
+            }
+        });
+        Observation { sender, observer }
     }
 }
 
-impl Default for ProgressSender {
-    fn default() -> Self {
-        Self::new()
+impl fmt::Debug for ProgressObserver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("ProgressObserver")
     }
 }
 
-/// Reads the updates a [`ProgressSender`] sends. It keeps only the latest one, so a receiver that
-/// reads less often than the transfer sends skips the updates in between.
-#[derive(Debug)]
-pub struct ProgressReceiver(watch::Receiver<SyncProgressUpdate>);
+/// A transfer's progress on its way to a [`ProgressObserver`].
+pub(crate) struct Observation {
+    sender: watch::Sender<SyncProgressUpdate>,
+    observer: JoinHandle<()>,
+}
 
-impl ProgressReceiver {
-    /// The latest update.
-    pub fn latest(&self) -> SyncProgressUpdate {
-        *self.0.borrow()
+impl Observation {
+    /// Where the transfer sends its progress, through [`SyncProgress::set_sender`].
+    pub(crate) fn sender(&self) -> &watch::Sender<SyncProgressUpdate> {
+        &self.sender
     }
 
-    /// Waits for an update newer than the last one this returned, and returns it. Returns `None`
-    /// once the transfer has ended and the receiver has seen its last update.
-    pub async fn changed(&mut self) -> Option<SyncProgressUpdate> {
-        self.0.changed().await.ok()?;
-        Some(*self.0.borrow_and_update())
+    /// Waits for the observer to return from the transfer's last update. Call it once the transfer
+    /// has ended, since the observer stops only when every clone of the sender is dropped.
+    pub(crate) async fn finish(self) -> Result<(), OxenError> {
+        drop(self.sender);
+        self.observer.await.map_err(|cause| OxenError::JoinError {
+            context: "progress observer panicked: ".to_string(),
+            cause,
+        })
     }
 }
 
@@ -256,17 +259,26 @@ impl SyncProgress {
 mod tests {
     use super::*;
     use futures::FutureExt;
+    use parking_lot::Mutex;
+    use std::sync::mpsc::{self, RecvTimeoutError};
+    use std::time::Duration;
 
-    // Each update is sent before the call that made it returns, so `changed` is polled once rather
-    // than awaited: a missing update fails the assertion instead of hanging the test.
+    /// The update `receiver` has not seen, `Some(None)` once every sender is gone, or `None` when
+    /// nothing new was sent. Each update is sent before the call that made it returns, so `changed`
+    /// is polled once rather than awaited: a missing update fails an assertion instead of hanging
+    /// the test.
+    fn next(
+        receiver: &mut watch::Receiver<SyncProgressUpdate>,
+    ) -> Option<Option<SyncProgressUpdate>> {
+        let changed = receiver.changed().now_or_never()?;
+        Some(changed.ok().map(|()| *receiver.borrow_and_update()))
+    }
+
     #[test]
-    fn test_receiver_sees_each_change_in_the_counts() {
-        let sender = ProgressSender::new();
-        let mut receiver = sender.subscribe();
-        let channel = sender.take().expect("nothing has taken the channel yet");
-        assert!(sender.take().is_none(), "a sender serves one transfer");
+    fn test_progress_sends_each_change_in_the_counts() {
+        let (sender, mut receiver) = watch::channel(SyncProgressUpdate::default());
         let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
-        progress.set_sender(channel.clone());
+        progress.set_sender(sender.clone());
 
         let update = |files, bytes, total_bytes| SyncProgressUpdate {
             files,
@@ -275,47 +287,81 @@ mod tests {
             total_bytes: Some(total_bytes),
         };
         assert_eq!(
-            receiver.latest(),
+            *receiver.borrow(),
             update(0, 0, 30),
             "the starting counts, sent as soon as the sender is set"
         );
         progress.add_bytes(10);
         assert_eq!(
-            receiver.changed().now_or_never().flatten(),
-            Some(update(0, 10, 30)),
+            next(&mut receiver),
+            Some(Some(update(0, 10, 30))),
             "the newest of the updates not yet seen"
         );
         progress.add_files(1);
-        assert_eq!(
-            receiver.changed().now_or_never().flatten(),
-            Some(update(1, 10, 30))
-        );
+        assert_eq!(next(&mut receiver), Some(Some(update(1, 10, 30))));
         progress.inc_total_bytes(5);
-        assert_eq!(
-            receiver.changed().now_or_never().flatten(),
-            Some(update(1, 10, 35))
-        );
+        assert_eq!(next(&mut receiver), Some(Some(update(1, 10, 35))));
 
         // Without totals there is nothing to report progress against.
         let mut spinner = SyncProgress::new(SyncType::Pull);
-        spinner.set_sender(channel);
+        spinner.set_sender(sender);
         spinner.add_bytes(7);
         assert_eq!(
-            receiver.changed().now_or_never().flatten(),
-            Some(SyncProgressUpdate {
+            next(&mut receiver),
+            Some(Some(SyncProgressUpdate {
                 files: 0,
                 total_files: None,
                 bytes: 7,
                 total_bytes: None,
-            })
+            }))
         );
 
-        // The channel closes though `sender` is still in scope, as it is in a caller's `PushOpts`.
         drop((progress, spinner));
+        assert_eq!(next(&mut receiver), Some(None), "every sender is gone");
+    }
+
+    #[tokio::test]
+    async fn test_observer_may_block_and_returns_from_the_last_update_before_finish() {
+        // The observer blocks until the transfer below has sent everything, which the transfer
+        // could not do if the observer ran on its thread.
+        let (release, gate) = mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let observer = ProgressObserver::new({
+            let seen = Arc::clone(&seen);
+            move |update| {
+                let waited = gate.lock().recv_timeout(Duration::from_secs(10));
+                seen.lock()
+                    .push((update, waited == Err(RecvTimeoutError::Disconnected)));
+            }
+        });
+
+        let observation = observer.observe();
+        let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
+        progress.set_sender(observation.sender().clone());
+        progress.add_files(1);
+        progress.add_bytes(30);
+        progress.add_files(1);
+        drop((progress, release));
+        observation
+            .finish()
+            .await
+            .expect("the observer did not panic");
+
+        let seen = seen.lock();
+        assert!(
+            seen.iter().all(|(_, released)| *released),
+            "each call waited for the transfer to finish sending: {seen:?}"
+        );
         assert_eq!(
-            receiver.changed().now_or_never(),
-            Some(None),
-            "the transfers holding the channel are gone"
+            seen.last().map(|(update, _)| *update),
+            Some(SyncProgressUpdate {
+                files: 2,
+                total_files: Some(2),
+                bytes: 30,
+                total_bytes: Some(30),
+            }),
+            "the last update, seen before `finish` returned"
         );
     }
 }

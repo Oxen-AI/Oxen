@@ -49,7 +49,7 @@ mod tests {
     use crate::constants;
     use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
     use crate::core::progress::push_progress::PushProgress;
-    use crate::core::progress::sync_progress::ProgressSender;
+    use crate::core::progress::sync_progress::ProgressObserver;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
     use crate::opts::RmOpts;
@@ -60,7 +60,7 @@ mod tests {
     use crate::util;
     use crate::util::fs::AtomicFile;
     use crate::view::entries::EMetadataEntry;
-    use futures::FutureExt;
+    use parking_lot::Mutex;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -121,17 +121,23 @@ mod tests {
                 let commit = repositories::commit(&repo, "Adding rest of data")?;
 
                 let remote_repo = test::connect_remote_repo(&mut repo).await?;
-                let progress = ProgressSender::new();
-                let mut receiver = progress.subscribe();
+                let seen = Arc::new(Mutex::new(Vec::new()));
+                let observer = ProgressObserver::new({
+                    let seen = Arc::clone(&seen);
+                    move |update| seen.lock().push(update)
+                });
                 let opts = PushOpts {
                     remote: DEFAULT_REMOTE_NAME.to_string(),
                     branch: DEFAULT_BRANCH_NAME.to_string(),
-                    progress: Some(progress),
+                    progress: Some(observer),
                     ..Default::default()
                 };
                 repositories::push::push_remote_branch(&repo, &opts).await?;
 
-                let uploaded = receiver.latest();
+                let uploaded = *seen
+                    .lock()
+                    .last()
+                    .expect("the push reported its progress before it returned");
                 assert_eq!(
                     (uploaded.files, uploaded.total_files),
                     (10, Some(10)),
@@ -139,31 +145,19 @@ mod tests {
                 );
                 assert!(uploaded.bytes > 0);
                 assert!(Some(uploaded.bytes) <= uploaded.total_bytes);
-                assert_eq!(
-                    receiver.changed().now_or_never(),
-                    Some(Some(uploaded)),
-                    "the last update, not yet seen"
-                );
-                assert_eq!(
-                    receiver.changed().now_or_never(),
-                    Some(None),
-                    "the push closed the channel, though the opts still hold its sender"
-                );
 
-                // A push with nothing to upload sends no update and closes the channel, whether the
-                // branch is up to date or new with every commit already on the remote
+                // A push with nothing to upload never calls the observer, whether the branch is up
+                // to date or new with every commit already on the remote
+                seen.lock().clear();
                 repositories::branches::create(&repo, "already-pushed", &commit.id)?;
                 for branch in [DEFAULT_BRANCH_NAME, "already-pushed"] {
-                    let progress = ProgressSender::new();
-                    let mut receiver = progress.subscribe();
                     let opts = PushOpts {
                         branch: branch.to_string(),
-                        progress: Some(progress),
                         ..opts.clone()
                     };
                     repositories::push::push_remote_branch(&repo, &opts).await?;
-                    assert_eq!(receiver.changed().now_or_never(), Some(None), "{branch}");
                 }
+                assert!(seen.lock().is_empty());
 
                 let entries =
                     api::client::dir::list(&remote_repo, &commit.id, ".", 1, num_root_entries + 10)

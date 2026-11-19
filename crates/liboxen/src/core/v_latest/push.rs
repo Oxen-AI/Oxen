@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, watch};
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::constants::stream_segment_size;
 use crate::core::progress::push_progress::PushProgress;
-use crate::core::progress::sync_progress::SyncProgressUpdate;
+use crate::core::progress::sync_progress::{Observation, ProgressObserver, SyncProgressUpdate};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
@@ -38,10 +38,26 @@ pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
 ) -> Result<Branch, OxenError> {
+    let observation = opts.progress.as_ref().map(ProgressObserver::observe);
+    let pushed = push_branch(repo, opts, observation.as_ref().map(Observation::sender)).await;
+    // Waited for even when the push failed, so the observer has returned from the last update
+    // before the caller learns how the push went
+    let observed = match observation {
+        Some(observation) => observation.finish().await,
+        None => Ok(()),
+    };
+    let branch = pushed?;
+    observed?;
+    Ok(branch)
+}
+
+async fn push_branch(
+    repo: &LocalRepository,
+    opts: &PushOpts,
+    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+) -> Result<Branch, OxenError> {
     // start a timer
     let start = std::time::Instant::now();
-    // Taken before anything can return, so the channel closes on every way out of the push.
-    let progress_sender = opts.progress.as_ref().and_then(|progress| progress.take());
 
     let local_branch = repositories::branches::get_by_name(repo, &opts.branch)?;
 
@@ -56,14 +72,8 @@ pub async fn push_remote_branch(
 
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
-    push_local_branch_to_remote_repo(
-        repo,
-        &remote_repo,
-        &local_branch,
-        opts,
-        progress_sender.as_ref(),
-    )
-    .await?;
+    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts, progress_sender)
+        .await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
     println!(
         "🐂 push complete 🎉 took {}",
