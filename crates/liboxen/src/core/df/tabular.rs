@@ -2,6 +2,8 @@ use bytes::Bytes;
 use duckdb::ToSql;
 use polars::io::cloud::CloudOptions;
 use polars::io::csv::read::count_rows_from_slice_par;
+use polars::io::json::remove_bom;
+use polars::io::mmap::ReaderBytes;
 use polars::polars_utils::slice_enum::Slice;
 use polars::prelude::DataType as PolarsDataType;
 use polars::prelude::*;
@@ -34,10 +36,12 @@ use comfy_table::Table;
 use indicatif::ProgressBar;
 use serde_json::Value;
 use std::ffi::OsStr;
+use std::fmt::Display;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use super::filter::{DFFilterExp, DFFilterOp, DFFilterVal};
+use super::json_cells;
 
 const READ_ERROR: &str = "Could not read tabular data";
 
@@ -45,6 +49,8 @@ const READ_ERROR: &str = "Could not read tabular data";
 const CSV_INFER_SCHEMA_LENGTH: usize = 10_000;
 /// The most of a stored CSV fetched into memory to infer its schema from, 64 MiB.
 const MAX_CSV_HEAD_LEN: u64 = 64 * 1024 * 1024;
+/// How many rows a JSON or JSON lines file's schema is inferred from.
+const JSON_INFER_SCHEMA_LENGTH: NonZeroUsize = NonZeroUsize::new(10_000).unwrap();
 
 impl ByteSource<'_> {
     fn scan_sources(&self) -> Result<ScanSources, OxenError> {
@@ -111,21 +117,29 @@ pub fn new_df() -> DataFrame {
 
 fn lazy_jsonl_reader(sources: ScanSources) -> LazyJsonLineReader {
     LazyJsonLineReader::new_with_sources(sources)
-        .with_infer_schema_length(Some(NonZeroUsize::new(10000).unwrap()))
+        .with_infer_schema_length(Some(JSON_INFER_SCHEMA_LENGTH))
 }
 
-/// Read a JSON array, which cannot be scanned lazily, so the whole array is read.
+/// Read a JSON array, which cannot be scanned lazily, so the whole array is read. Fails without
+/// decoding a document that would fill more than `constants::MAX_JSON_CELLS` cells.
 fn read_json(source: &ByteSource) -> Result<LazyFrame, OxenError> {
-    let reader = match source {
+    let mut reader = match source {
         ByteSource::Stored(version) => Box::new(Cursor::new(version.read_all()?)),
         ByteSource::Path(_) | ByteSource::Memory(_) => source.open()?,
     };
-    let df = JsonReader::new(reader)
-        .infer_schema_len(Some(NonZeroUsize::new(10000).unwrap()))
+    let bytes = ReaderBytes::from(&mut reader);
+    let read_error = |e: &dyn Display| {
+        OxenError::internal_error(format!("Could not read json data from {source:?}: {e}"))
+    };
+    let json = remove_bom(&bytes).map_err(|e| read_error(&e))?;
+    json_cells::check(json).map_err(|e| match e {
+        OxenError::JsonCellsOverLimit { .. } => e,
+        e => read_error(&e),
+    })?;
+    let df = JsonReader::new(Cursor::new(&*bytes))
+        .infer_schema_len(Some(JSON_INFER_SCHEMA_LENGTH))
         .finish()
-        .map_err(|e| {
-            OxenError::internal_error(format!("Could not read json data from {source:?}: {e}"))
-        })?;
+        .map_err(|e| read_error(&e))?;
     Ok(df.lazy())
 }
 
@@ -442,8 +456,11 @@ pub fn parse_str_to_df(data: impl AsRef<str>) -> Result<DataFrame, OxenError> {
     }
 }
 
+/// A data frame of the row `data`. Fails without decoding a row that would fill more than
+/// `constants::MAX_JSON_CELLS` cells.
 pub fn parse_json_to_df(data: &serde_json::Value) -> Result<DataFrame, OxenError> {
     let data = serde_json::to_string(data)?;
+    json_cells::check(data.as_bytes())?;
     parse_str_to_df(data)
 }
 
@@ -1646,6 +1663,7 @@ pub async fn show_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::MAX_JSON_CELLS;
     use crate::core::df::{filter, tabular};
     use crate::test::{self, TEST_DATA_DIR};
     use crate::util::fs;
@@ -1867,6 +1885,16 @@ mod tests {
 │ 1   ┆ I hate it ┆ negative │
 └─────┴───────────┴──────────┘",
             format!("{df}")
+        );
+
+        // A row whose array of `side` objects has `side` distinct keys fills a cell more than
+        // `side` squared.
+        let side = MAX_JSON_CELLS.isqrt() + 1;
+        let wide = json!({"a": (0..side).map(|i| json!({format!("k{i}"): 0})).collect_vec()});
+        let refused = parse_json_to_df(&wide);
+        assert!(
+            matches!(refused, Err(OxenError::JsonCellsOverLimit { .. })),
+            "a row that would fill too many cells is refused before it is decoded: {refused:?}"
         );
 
         Ok(())

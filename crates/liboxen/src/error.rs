@@ -318,6 +318,14 @@ pub enum OxenError {
     )]
     InvalidResizeDimension { param: &'static str, value: u32 },
 
+    /// Decoding a JSON document into a data frame would fill more cells than the server allows.
+    /// Carries how many it would fill.
+    #[error(
+        "The JSON would fill {cells} data frame cells, over the limit of {max}",
+        max = crate::constants::MAX_JSON_CELLS
+    )]
+    JsonCellsOverLimit { cells: u64 },
+
     /// A move or rename targeted its own source path or a path inside it.
     #[error("Cannot move {0} into itself")]
     MoveIntoItself(PathBufError),
@@ -1165,6 +1173,7 @@ impl OxenError {
             | OxenError::DataFrameError(DataFrameError::InvalidFileType { .. }) => true,
             OxenError::PathOutsideWorkingTree { .. } | OxenError::EmptyPath => true,
             OxenError::InvalidResizeDimension { .. } => true,
+            OxenError::JsonCellsOverLimit { .. } => true,
             OxenError::InvalidTreePath(_) => true,
             OxenError::InvalidCommitArchiveEntry(_) => true,
             OxenError::InvalidRepoName(_) | OxenError::InvalidNamespaceName(_) => true,

@@ -223,6 +223,9 @@ pub const MAX_ZIP_DOWNLOAD_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
 /// The most pixels an image resize or a video thumbnail has on each side. It bounds the output
 /// buffer a request can have the server allocate.
 pub(crate) const MAX_RESIZE_DIMENSION: u32 = 2048;
+/// The most cells, values and nulls alike, a JSON document may fill when decoded into a data frame,
+/// which take on the order of a gigabyte.
+pub(crate) const MAX_JSON_CELLS: u64 = 50_000_000;
 // Retry and back off of upload tasks N times
 /// Retry and back off of upload tasks N times
 #[cfg(test)]

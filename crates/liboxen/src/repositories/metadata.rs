@@ -577,6 +577,7 @@ fn settle(
 #[cfg(test)]
 mod tests {
     use super::{inspect_bytes, inspect_file};
+    use crate::constants::MAX_JSON_CELLS;
     use crate::core::df::tabular;
     use crate::error::OxenError;
     use crate::model::EntryDataType;
@@ -637,6 +638,17 @@ mod tests {
                     "{file:?} gets the same metadata from memory as from the file"
                 );
             }
+
+            // One row whose array of `side` objects has `side` distinct keys fills a cell more than
+            // `side` squared.
+            let side = MAX_JSON_CELLS.isqrt() + 1;
+            let elements: Vec<String> = (0..side).map(|i| format!(r#"{{"k{i}": 0}}"#)).collect();
+            let wide = format!(r#"[{{"a": [{}]}}]"#, elements.join(","));
+            let (_, _, metadata) = inspect_bytes(Bytes::from(wide), Path::new("wide.json"))?;
+            assert!(
+                metadata.is_none(),
+                "a JSON array that would fill too many cells gets no tabular metadata"
+            );
             Ok(())
         })
     }
