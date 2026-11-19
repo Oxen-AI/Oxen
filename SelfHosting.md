@@ -53,7 +53,7 @@ The `--config` flag is optional. When omitted, the server uses a conservative de
 $ oxen-server start --config /etc/oxen/server.toml
 ```
 
-The only table a self-hosted server configures is `[storage]`, and it is optional. A table the server does not recognize stops startup with an error rather than being skipped, so a misspelled section cannot leave the server quietly running a default you meant to replace.
+The only table a self-hosted server configures is `[storage]`, and it is optional. The server ignores a table or key it does not recognize, so a misspelled `[storage]` leaves the server running the default policy.
 
 ```toml
 [storage]
