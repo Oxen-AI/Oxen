@@ -106,13 +106,9 @@ pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Data
     })
 }
 
-pub async fn restore(
-    _repo: &LocalRepository,
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
+pub async fn restore(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     // TODO: we could do this more granularly without a full reset
-    core::v_latest::workspaces::data_frames::restore(workspace, path.as_ref()).await
+    core::v_latest::workspaces::data_frames::restore(workspace, path).await
 }
 
 pub fn count(workspace: &Workspace, path: &Path) -> Result<usize, DataFrameError> {
@@ -689,7 +685,7 @@ mod tests {
                 committed_rows + 1,
                 "indexing a fully indexed frame keeps the rows staged in it"
             );
-            restore(&repo, &workspace, &path).await?;
+            restore(&workspace, &path).await?;
             assert_eq!(
                 count(&workspace, &path)?,
                 committed_rows,
