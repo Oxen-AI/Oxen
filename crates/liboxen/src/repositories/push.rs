@@ -129,10 +129,10 @@ mod tests {
                 let opts = PushOpts {
                     remote: DEFAULT_REMOTE_NAME.to_string(),
                     branch: DEFAULT_BRANCH_NAME.to_string(),
-                    progress: Some(observer),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&repo, &opts).await?;
+                repositories::push::push_remote_branch(&repo, &opts, Some(observer.clone()))
+                    .await?;
 
                 let uploaded = *seen
                     .lock()
@@ -155,7 +155,8 @@ mod tests {
                         branch: branch.to_string(),
                         ..opts.clone()
                     };
-                    repositories::push::push_remote_branch(&repo, &opts).await?;
+                    repositories::push::push_remote_branch(&repo, &opts, Some(observer.clone()))
+                        .await?;
                 }
                 assert!(seen.lock().is_empty());
 
@@ -347,7 +348,7 @@ mod tests {
                     revalidate: true,
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&repo, &opts).await?;
+                repositories::push::push_remote_branch(&repo, &opts, None).await?;
                 assert!(
                     server.version_store().version_exists(&readme_hash).await?,
                     "revalidate must re-push the missing blob"
@@ -376,7 +377,7 @@ mod tests {
                     missing_files: true,
                     ..Default::default()
                 };
-                super::push_remote_branch(&repo, &opts).await?;
+                super::push_remote_branch(&repo, &opts, None).await?;
                 assert!(
                     server
                         .version_store()
@@ -402,7 +403,7 @@ mod tests {
                     missing_files: true,
                     ..Default::default()
                 };
-                let result = repositories::push::push_remote_branch(&repo, &opts).await;
+                let result = repositories::push::push_remote_branch(&repo, &opts, None).await;
                 assert!(
                     matches!(&result, Err(OxenError::CannotPushShallowClone { .. })),
                     "expected CannotPushShallowClone, got {result:?}"
@@ -443,7 +444,7 @@ mod tests {
                     branch: new_branch_name.to_string(),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&user_a_repo, &opts).await?;
+                repositories::push::push_remote_branch(&user_a_repo, &opts, None).await?;
                 let remote_branches = api::client::branches::list(&remote_repo).await?;
                 assert_eq!(remote_branches.len(), 2, "main and the pushed branch");
                 repositories::checkout(&user_a_repo, DEFAULT_BRANCH_NAME).await?;
@@ -653,7 +654,7 @@ mod tests {
                     force: true,
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&user_c_repo, &opts).await?;
+                repositories::push::push_remote_branch(&user_c_repo, &opts, None).await?;
                 let remote_branch =
                     api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
                         .await?
@@ -759,7 +760,7 @@ mod tests {
                 branch: new_branch_name.to_string(),
                 ..Default::default()
             };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push::push_remote_branch(&local_repo, &opts, None).await?;
 
             // Should now have 6 commits on remote on new branch
             let history_new =

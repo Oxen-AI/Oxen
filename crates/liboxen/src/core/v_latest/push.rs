@@ -31,14 +31,22 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
         branch: current_branch.name,
         ..Default::default()
     };
-    push_remote_branch(repo, &opts).await
+    push_remote_branch(repo, &opts, None).await
 }
 
+/// Push `opts.branch` to the remote `opts.remote`, telling `progress` how many files and bytes it
+/// has uploaded as it uploads them, as [`ProgressObserver`] lays out.
+///
+/// The push returns only after the observer has returned from the last update, whether or not the
+/// push succeeded. A push dropped partway keeps calling it until the uploads it started have
+/// stopped. A push with nothing to upload, or with `missing_files` or `revalidate` set, never calls
+/// it.
 pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
+    progress: Option<ProgressObserver>,
 ) -> Result<Branch, OxenError> {
-    let observation = opts.progress.as_ref().map(ProgressObserver::observe);
+    let observation = progress.map(ProgressObserver::observe);
     let pushed = push_branch(repo, opts, observation.as_ref().map(Observation::sender)).await;
     // Waited for even when the push failed, so the observer has returned from the last update
     // before the caller learns how the push went

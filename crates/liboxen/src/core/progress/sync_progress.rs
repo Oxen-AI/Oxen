@@ -1,7 +1,6 @@
 use indicatif::{ProgressBar, ProgressStyle};
 use std::{
     borrow::Cow,
-    fmt,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -44,9 +43,9 @@ impl ProgressObserver {
 
     /// Start calling this observer, on a blocking-pool thread, with each update sent through the
     /// returned [`Observation`].
-    pub(crate) fn observe(&self) -> Observation {
+    pub(crate) fn observe(self) -> Observation {
         let (sender, mut receiver) = watch::channel(SyncProgressUpdate::default());
-        let on_update = Arc::clone(&self.0);
+        let on_update = self.0;
         let observer = tasks::spawn_blocking(move || {
             // Waiting on the channel needs only a thread to park, not a runtime, and this thread
             // is the observer's alone.
@@ -56,12 +55,6 @@ impl ProgressObserver {
             }
         });
         Observation { sender, observer }
-    }
-}
-
-impl fmt::Debug for ProgressObserver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("ProgressObserver")
     }
 }
 
