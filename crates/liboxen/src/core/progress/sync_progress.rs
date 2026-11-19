@@ -30,9 +30,10 @@ pub struct SyncProgressUpdate {
 /// somewhere other than the terminal.
 ///
 /// It runs on a blocking-pool thread of its own, never on the threads doing the transfer, so it may
-/// block. Updates that arrive while it runs replace one another rather than queue, so each call
-/// gets the latest and a slow observer never holds the transfer back. Updates arrive in order, and
-/// a transfer's counts never go down.
+/// block. Updates sent between two calls, or before the first, replace one another rather than
+/// queue, so each call gets the latest and a slow observer never holds the transfer back. The
+/// first call may already show files or bytes transferred, and every call carries whatever totals
+/// the transfer knows. Updates arrive in order, and a transfer's counts never go down.
 #[derive(Clone)]
 pub struct ProgressObserver(Arc<dyn Fn(SyncProgressUpdate) + Send + Sync>);
 
