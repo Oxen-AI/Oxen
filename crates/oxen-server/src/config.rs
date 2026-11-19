@@ -14,7 +14,8 @@ use serde::Deserialize;
 /// TOML deserialization target for the server's `--config` flag.
 ///
 /// Future top-level keys (auth options, telemetry settings, etc.) land here without restructuring.
-/// A table or key this build doesn't parse is ignored, so a newer build's config starts it.
+/// Tables and keys this build doesn't know are ignored.
+/// A value it can't parse for a key it knows still fails startup.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -87,11 +88,16 @@ mod tests {
         );
     }
 
-    /// Config written for a newer build still starts this one.
     #[test]
     fn ignores_an_unrecognized_section() {
-        let f: Config = toml::from_str("[storaje]\nbackends = [\"local\"]\n")
-            .expect("an unrecognized section is ignored");
-        assert_eq!(f.storage, StoragePolicy::default());
+        let f: Config = toml::from_str(
+            "[storaje]\nbackends = [\"s3\"]\ns3_bucket = \"b\"\ns3_region = \"r\"\n",
+        )
+        .expect("an unrecognized section is ignored");
+        assert_eq!(
+            f.storage,
+            StoragePolicy::default(),
+            "a misspelled [storage] leaves the default policy in place of the one it names"
+        );
     }
 }
