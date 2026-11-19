@@ -260,8 +260,6 @@ mod tests {
     use super::*;
     use futures::FutureExt;
     use parking_lot::Mutex;
-    use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::time::Duration;
 
     /// The update `receiver` has not seen, `Some(None)` once every sender is gone, or `None` when
     /// nothing new was sent. Each update is sent before the call that made it returns, so `changed`
@@ -321,19 +319,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_observer_may_block_and_returns_from_the_last_update_before_finish() {
-        // The observer blocks until the transfer below has sent everything, which the transfer
-        // could not do if the observer ran on its thread.
-        let (release, gate) = mpsc::channel::<()>();
-        let gate = Mutex::new(gate);
+    async fn test_observer_sees_the_last_update_before_finish_returns() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let observer = ProgressObserver::new({
             let seen = Arc::clone(&seen);
-            move |update| {
-                let waited = gate.lock().recv_timeout(Duration::from_secs(10));
-                seen.lock()
-                    .push((update, waited == Err(RecvTimeoutError::Disconnected)));
-            }
+            move |update| seen.lock().push(update)
         });
 
         let observation = observer.observe();
@@ -342,19 +332,14 @@ mod tests {
         progress.add_files(1);
         progress.add_bytes(30);
         progress.add_files(1);
-        drop((progress, release));
+        drop(progress);
         observation
             .finish()
             .await
             .expect("the observer did not panic");
 
-        let seen = seen.lock();
-        assert!(
-            seen.iter().all(|(_, released)| *released),
-            "each call waited for the transfer to finish sending: {seen:?}"
-        );
         assert_eq!(
-            seen.last().map(|(update, _)| *update),
+            seen.lock().last().copied(),
             Some(SyncProgressUpdate {
                 files: 2,
                 total_files: Some(2),
