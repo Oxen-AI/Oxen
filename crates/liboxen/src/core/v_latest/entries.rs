@@ -229,15 +229,23 @@ impl Child<'_> {
 
 /// Vnodes are buckets of a directory's own children, assigned by a hash of each path.
 fn child_nodes(dir: &MerkleTreeNode) -> Vec<Child<'_>> {
-    dir.children
-        .iter()
-        .flat_map(|child| match &child.node {
-            EMerkleTreeNode::VNode(_) => child_nodes(child),
-            EMerkleTreeNode::Directory(dir) if !dir.name().is_empty() => vec![Child::Dir(dir)],
-            EMerkleTreeNode::File(file) => vec![Child::File(file)],
-            _ => Vec::new(),
-        })
-        .collect()
+    let mut children = Vec::new();
+    let mut pending = vec![dir.children.iter()];
+    while let Some(nodes) = pending.last_mut() {
+        let Some(node) = nodes.next() else {
+            pending.pop();
+            continue;
+        };
+        match &node.node {
+            EMerkleTreeNode::VNode(_) => pending.push(node.children.iter()),
+            EMerkleTreeNode::Directory(child) if !child.name().is_empty() => {
+                children.push(Child::Dir(child))
+            }
+            EMerkleTreeNode::File(file) => children.push(Child::File(file)),
+            _ => {}
+        }
+    }
+    children
 }
 
 /// The files and directories directly inside `dir`, in the order a listing shows them.
@@ -350,14 +358,17 @@ fn nested_entries(
 
 /// The commit an entry last changed in, read once per commit across a listing.
 /// A commit the repository doesn't have is logged and comes back as None.
-fn latest_commit(
+fn latest_commit<'a>(
     repo: &LocalRepository,
     commit_id: MerkleHash,
     entry_name: &str,
-    found_commits: &mut HashMap<MerkleHash, Option<Commit>>,
-) -> Result<Option<Commit>, OxenError> {
+    found_commits: &'a mut HashMap<MerkleHash, Option<Commit>>,
+) -> Result<Option<&'a Commit>, OxenError> {
     match found_commits.entry(commit_id) {
-        Entry::Occupied(found) => Ok(found.get().clone()),
+        Entry::Occupied(found) => {
+            let found: &'a Option<Commit> = found.into_mut();
+            Ok(found.as_ref())
+        }
         Entry::Vacant(slot) => {
             let _perf = crate::perf_guard!("core::entries::get_commit_by_hash");
             let commit = repositories::commits::get_by_hash(repo, &commit_id)?;
@@ -368,7 +379,8 @@ fn latest_commit(
                     "Entry names a commit the repository does not have"
                 );
             }
-            Ok(slot.insert(commit).clone())
+            let inserted: &'a Option<Commit> = slot.insert(commit);
+            Ok(inserted.as_ref())
         }
     }
 }
@@ -389,7 +401,8 @@ fn dir_node_to_metadata_entry(
         *dir_node.last_commit_id(),
         dir_node.name(),
         found_commits,
-    )?;
+    )?
+    .cloned();
     let mut parsed_resource = parsed_resource.clone();
     if should_append_resource {
         parsed_resource.resource = parsed_resource.resource.join(dir_node.name());
@@ -427,7 +440,8 @@ fn file_node_to_metadata_entry(
         *file_node.last_commit_id(),
         file_node.name(),
         found_commits,
-    )?;
+    )?
+    .cloned();
     let data_type = file_node.data_type();
 
     let mut parsed_resource = parsed_resource.clone();
