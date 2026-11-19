@@ -138,8 +138,7 @@ pub struct FileQueryParams {
     responses(
         (status = 200, description = "File content stream", content_type = "application/octet-stream", body = Vec<u8>,
             headers(
-                ("oxen-revision-id" = String, description = "The ID of the last commit that changed the file"),
-                ("oxen-file-hash" = String, description = "The hash of the file's content in hex, as an upload session (POST /versions/uploads) takes it, the staged file's when the revision is a workspace. Sent only when the response carries the file, so never with a resized image or a video thumbnail")
+                ("oxen-revision-id" = String, description = "The ID of the last commit that changed the file")
             )
         ),
         (status = 400, description = "Width or height out of range"),
@@ -252,11 +251,6 @@ pub async fn get(
 
     log::debug!("did not hit the resize or thumbnail cache");
 
-    // Only a response carrying the file itself gives its hash, the staged file's for a workspace,
-    // so a caller can stage a copy of the file by its hash without downloading it.
-    let mut response = file_stream_response(mime_type, &last_commit_id, Some(num_bytes));
-    response.insert_header(("oxen-file-hash", hash_str.as_str()));
-
     // HTTP/1 actix still polls a HEAD response's body to the end and discards it, so streaming
     // the blob here would read the whole file (a full object download on S3) for nothing. Check
     // the blob exists instead, so a missing one is the same error GET returns, and answer with
@@ -265,13 +259,16 @@ pub async fn get(
         if !version_store.version_exists(&hash_str).await? {
             return Err(OxenError::VersionStoreBlobMissing { hash: hash_str }.into());
         }
-        return Ok(response.streaming(stream::empty::<Result<Bytes, std::io::Error>>()));
+        return Ok(
+            file_stream_response(mime_type, &last_commit_id, Some(num_bytes))
+                .streaming(stream::empty::<Result<Bytes, std::io::Error>>()),
+        );
     }
 
     // Stream the file
     let stream = version_store.get_version_stream(&hash_str).await?;
 
-    Ok(response.streaming(stream))
+    Ok(file_stream_response(mime_type, &last_commit_id, Some(num_bytes)).streaming(stream))
 }
 
 /// Upload files
@@ -876,7 +873,7 @@ mod tests {
         let notes_file = repo.path.join("notes/hero.md");
         util::fs::create_dir_all(notes_file.parent().unwrap())?;
         util::fs::write_to_path(&notes_file, "# Existing Hero")?;
-        // A 1x1 PNG, for the resized image's headers.
+        // A 1x1 PNG, for the resized image.
         let pixel_file = repo.path.join("data/pixel.png");
         image::RgbaImage::new(1, 1).save(&pixel_file)?;
         for path in [
@@ -928,7 +925,6 @@ mod tests {
         // HEAD answers with GET's status and headers for a file, a missing path and a directory,
         // and never streams the blob: its body is empty where GET's carries the file.
         let revision_header = HeaderName::from_static("oxen-revision-id");
-        let file_hash_header = HeaderName::from_static("oxen-file-hash");
         for (path, expected) in [
             ("data/hello.txt", StatusCode::OK),
             ("data/missing.txt", StatusCode::NOT_FOUND),
@@ -947,7 +943,6 @@ mod tests {
                 header::CONTENT_LENGTH,
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
                 revision_header.clone(),
-                file_hash_header.clone(),
             ] {
                 assert_eq!(
                     head_headers.get(&name),
@@ -963,19 +958,12 @@ mod tests {
                     "5"
                 );
                 assert!(get_headers.contains_key(&revision_header));
-                assert_eq!(
-                    get_headers
-                        .get(&file_hash_header)
-                        .expect("GET of a file should send its hash"),
-                    util::hasher::hash_buffer(b"Hello").as_str()
-                );
                 assert_eq!(get_body, "Hello");
                 assert!(head_body.is_empty(), "HEAD streamed {head_body:?}");
             }
         }
 
-        // Through a workspace, a file edited there is served with the staged content's hash, not
-        // the committed one's.
+        // Through a workspace, a file edited there is served as staged, not as committed.
         let workspace = repositories::workspaces::create(&repo, &commit, "edit-hello", true)?;
         let edited_file = workspace.workspace_repo.path.join("data/hello.txt");
         util::fs::write_to_path(&edited_file, "Hello again")?;
@@ -983,21 +971,20 @@ mod tests {
         // The workspace's repositories hold LMDB envs open, which the cleanup at the end refuses.
         drop(workspace);
         let uri = format!("/oxen/{namespace}/{repo_name}/file/edit-hello/data/hello.txt");
-        let (get_status, get_headers, get_body) =
-            call_file_route(&sync_dir, Method::GET, &uri).await;
-        let (head_status, head_headers, _) = call_file_route(&sync_dir, Method::HEAD, &uri).await;
+        let (get_status, _, get_body) = call_file_route(&sync_dir, Method::GET, &uri).await;
+        let (head_status, head_headers, head_body) =
+            call_file_route(&sync_dir, Method::HEAD, &uri).await;
         assert_eq!((get_status, head_status), (StatusCode::OK, StatusCode::OK));
         assert_eq!(get_body, "Hello again");
-        for headers in [&get_headers, &head_headers] {
-            assert_eq!(
-                headers
-                    .get(&file_hash_header)
-                    .expect("a workspace file should be sent with its hash"),
-                util::hasher::hash_buffer(b"Hello again").as_str()
-            );
-        }
+        assert_eq!(
+            head_headers
+                .get(header::CONTENT_LENGTH)
+                .expect("HEAD of a staged file should send its content length"),
+            "11"
+        );
+        assert!(head_body.is_empty(), "HEAD streamed {head_body:?}");
 
-        // A resized image is not the file, so it is sent without the file's hash.
+        // A width or height asks for the image resized, in the image's own format.
         let (status, headers, _) = call_file_route(
             &sync_dir,
             Method::GET,
@@ -1005,10 +992,11 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert!(
-            !headers.contains_key(&file_hash_header),
-            "a resized image carried {:?}",
-            headers.get(&file_hash_header)
+        assert_eq!(
+            headers
+                .get(header::CONTENT_TYPE)
+                .expect("a resized image should send its content type"),
+            "image/png"
         );
 
         let err = ensure_no_file_ancestors_in_tree(
