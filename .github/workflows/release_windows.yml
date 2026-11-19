@@ -26,7 +26,7 @@ on:
         required: true
 
 env:
-  EC2_IMAGE_ID: ami-0cfb2e47dd591ebdb
+  EC2_IMAGE_ID: ami-0b2391f4834bded97
   EC2_INSTANCE_TYPE: m7i.4xlarge
 
 jobs:

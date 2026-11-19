@@ -40,8 +40,8 @@ defaults:
     shell: bash -leo pipefail {0}
 
 env:
-  EC2_IMAGE_ID_X86_64: ami-0823857dea006a2fa
-  EC2_IMAGE_ID_ARM64: ami-05fa76c95fcf3d338
+  EC2_IMAGE_ID_X86_64: ami-0e83a11113878a5c5
+  EC2_IMAGE_ID_ARM64: ami-0fb8a27346f63cfee
   EC2_INSTANCE_TYPE_X86_64: m7i.4xlarge
   EC2_INSTANCE_TYPE_ARM64: m7g.4xlarge
 
