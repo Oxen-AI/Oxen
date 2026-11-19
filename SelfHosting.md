@@ -12,7 +12,9 @@ Start the server:
 $ oxen-server start
 ```
 
-`oxen-server` does not authenticate requests itself. To require authentication, run it behind a reverse proxy or gateway that checks each request before forwarding it. If the gateway checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
+Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer) rather than exposing it to clients directly. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a read timeout longer than 15 seconds rather than a limit on a request's total time, since `oxen-server` sends a byte every 15 seconds while it finishes a long push.
+
+If the proxy checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
 
 ```bash
 $ oxen config --auth <HOST> <TOKEN>
@@ -30,10 +32,10 @@ Syncing to directory: /Path/To/Data
 [2022-06-08T10:00:48Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
 ```
 
-If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters.
+If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so when the reverse proxy runs on the same host, bind it to `127.0.0.1` to keep clients from reaching it around the proxy:
 
 ```bash
-$ oxen-server start -i 0.0.0.0 -p 4321
+$ oxen-server start -i 127.0.0.1 -p 4321
 ```
 
 ## Storage Configuration
