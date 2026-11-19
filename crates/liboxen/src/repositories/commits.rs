@@ -10,7 +10,6 @@ use crate::model::User;
 use crate::model::{Commit, LocalRepository, MerkleHash};
 use crate::opts::PaginateOpts;
 use crate::tasks;
-use crate::util;
 use crate::view::{PaginatedCommits, PathHistoryPage, StatusMessage};
 
 use std::collections::{HashMap, HashSet};
@@ -186,21 +185,6 @@ pub use crate::core::v_latest::commits::list_all;
 
 // Source
 pub use crate::core::v_latest::commits::get_commit_or_head;
-
-pub fn list_all_paginated(
-    repo: &LocalRepository,
-    pagination: PaginateOpts,
-) -> Result<PaginatedCommits, OxenError> {
-    log::info!("list_all_paginated: {:?} {:?}", repo.path, pagination);
-    let commits = list_all(repo)?;
-    let commits: Vec<Commit> = commits.into_iter().collect();
-    let (commits, pagination) = util::paginate(commits, pagination.page_num, pagination.page_size);
-    Ok(PaginatedCommits {
-        status: StatusMessage::resource_found(),
-        commits,
-        pagination,
-    })
-}
 
 /// List the history for a specific branch or commit (revision)
 pub fn list_from(repo: &LocalRepository, revision: &str) -> Result<Vec<Commit>, OxenError> {

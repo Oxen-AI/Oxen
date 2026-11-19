@@ -1,5 +1,4 @@
 use liboxen::constants;
-use liboxen::constants::COMMITS_DIR;
 use liboxen::constants::DIR_HASHES_DIR;
 use liboxen::constants::DIRS_DIR;
 use liboxen::constants::HISTORY_DIR;
@@ -23,7 +22,7 @@ use liboxen::view::{
 };
 
 use crate::errors::OxenHttpError;
-use crate::helpers::{get_repo, get_repo_async};
+use crate::helpers::get_repo_async;
 use crate::params::PageNumQuery;
 use crate::params::parse_resource_async;
 use crate::params::{app_data, maybe_parse_two_dot, path_param};
@@ -169,40 +168,6 @@ pub async fn history(
             }
         }
     }
-}
-
-/// List all commits
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/all",
-    description = "List all commits in a repository",
-    tag = "Commits",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-        PageNumQuery
-    ),
-    responses(
-        (status = 200, description = "Paginated list of all commits", body = PaginatedCommits),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn list_all(
-    req: HttpRequest,
-    query: web::Query<PageNumQuery>,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let pagination = PaginateOpts {
-        page_num: query.page.unwrap_or(constants::DEFAULT_PAGE_NUM),
-        page_size: query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE),
-    };
-    let paginated_commits = repositories::commits::list_all_paginated(&repo, pagination)?;
-
-    Ok(HttpResponse::Ok().json(paginated_commits))
 }
 
 /// List missing commits
@@ -363,56 +328,6 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
         status: StatusMessage::resource_found(),
         commits: parents,
     }))
-}
-
-/// Download commits DB
-#[tracing::instrument(skip_all)]
-#[utoipa::path(
-    get,
-    path = "/api/repos/{namespace}/{repo_name}/commits_db",
-    tag = "Commits",
-    description = "Download the commits database as a compressed tarball for cloning.",
-    params(
-        ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
-        ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
-    ),
-    responses(
-        (status = 200, description = "Tarball of commits DB"),
-        (status = 404, description = "Repository not found")
-    )
-)]
-pub async fn download_commits_db(
-    req: HttpRequest,
-) -> actix_web::Result<HttpResponse, OxenHttpError> {
-    let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
-
-    let buffer = compress_commits_db(&repository)?;
-    Ok(HttpResponse::Ok().body(buffer))
-}
-
-/// Take the commits db and compress it into a tarball buffer we can return
-fn compress_commits_db(repository: &LocalRepository) -> Result<Vec<u8>, OxenError> {
-    // Tar and gzip the commit db directory
-    // zip up the rocksdb in history dir, and post to server
-    let commit_dir = util::fs::oxen_hidden_dir(&repository.path).join(COMMITS_DIR);
-    // This will be the subdir within the tarball
-    let tar_subdir = Path::new(COMMITS_DIR);
-
-    log::debug!("Compressing commit db from dir {commit_dir:?}");
-    let enc = GzEncoder::new(Vec::new(), Compression::default());
-    let mut tar = tar::Builder::new(enc);
-
-    tar.append_dir_all(tar_subdir, commit_dir)?;
-    tar.finish()?;
-
-    let buffer: Vec<u8> = tar.into_inner()?.finish()?;
-    let total_size: u64 = u64::try_from(buffer.len()).unwrap_or(u64::MAX);
-    log::debug!("Compressed commit dir size is {}", ByteSize::b(total_size));
-
-    Ok(buffer)
 }
 
 /// Download dir hashes DB
