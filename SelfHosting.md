@@ -32,7 +32,7 @@ Syncing to directory: /Path/To/Data
 [2022-06-08T10:00:48Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
 ```
 
-If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so keep clients from reaching it around the reverse proxy. If the proxy runs on the same host, bind the server to `127.0.0.1`. If it runs on another host, use a firewall or a private network so only the proxy can reach the server's port. For example, to bind to `127.0.0.1` on port 4321:
+If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so keep clients from reaching it around the reverse proxy. If the proxy and the server run on the same host and share its network (neither in a container with its own network), bind the server to `127.0.0.1`. Otherwise, use a firewall or a private network so only the proxy can reach the server's port. In a container, keep the default bind and either publish the port only on the host's loopback (`docker run -p 127.0.0.1:<host port>:<port>`) or put the proxy on the container's network and publish nothing. For example, to bind a server outside a container to `127.0.0.1` on port 4321:
 
 ```bash
 $ oxen-server start -i 127.0.0.1 -p 4321
