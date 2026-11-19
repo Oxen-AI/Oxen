@@ -240,7 +240,7 @@ pub(crate) fn workspace_file(
 }
 
 /// Build the workspace's DuckDB table for the data frame at `path` from its version file.
-/// A table that is already fully indexed is left as it is, with the edits staged in it.
+/// A complete table of the file the workspace has at `path` is kept along with its staged edits.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     build_table(workspace, path, false).await
 }
