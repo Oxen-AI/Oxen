@@ -1,5 +1,5 @@
 use std;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::metadata as sync_metadata;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
@@ -331,7 +331,7 @@ impl VersionStore for LocalVersionStore {
 
     async fn find_missing_versions(&self, hashes: &[String]) -> Result<Vec<String>, OxenError> {
         let store = LocalVersionStore::new(&self.root_path);
-        let hashes = hashes.to_vec();
+        let hashes: HashSet<String> = hashes.iter().cloned().collect();
         let missing = tasks::spawn_blocking(move || {
             hashes
                 .into_par_iter()
@@ -899,7 +899,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_find_missing_versions_returns_only_absent_hashes() {
+    async fn test_find_missing_versions_returns_each_absent_hash_once() {
         let (_temp_dir, store) = setup().await;
         let present_data = b"x";
         let also_present_data = b"y";
@@ -916,7 +916,13 @@ mod tests {
             .unwrap();
 
         let missing = store
-            .find_missing_versions(&[present.clone(), absent.to_string(), also_present.clone()])
+            .find_missing_versions(&[
+                present.clone(),
+                absent.to_string(),
+                also_present.clone(),
+                absent.to_string(),
+                present.clone(),
+            ])
             .await
             .unwrap();
         assert_eq!(missing, vec![absent.to_string()]);

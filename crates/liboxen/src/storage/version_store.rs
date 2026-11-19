@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::future;
 use std::ops::Deref;
@@ -533,9 +533,9 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash to check
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError>;
 
-    /// Returns the subset of `hashes` whose blobs are absent from this store. Used by
-    /// bulk endpoints that need to fail fast on missing content before committing to
-    /// a streaming response.
+    /// Returns the subset of `hashes` whose blobs are absent from this store, each hash once however
+    /// often `hashes` repeats it. Used by bulk endpoints that need to fail fast on missing content
+    /// before committing to a streaming response.
     ///
     /// The default implementation probes each hash with `version_exists` in parallel,
     /// bounded by `MAX_CONCURRENT_VERSION_PROBES`. Backends with cheaper batch-existence
@@ -547,9 +547,10 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
         if hashes.is_empty() {
             return Ok(Vec::new());
         }
+        let hashes: HashSet<&String> = hashes.iter().collect();
         let max_concurrent = MAX_CONCURRENT_VERSION_PROBES.min(hashes.len());
 
-        let mut probes = futures_util::stream::iter(hashes.iter().cloned())
+        let mut probes = futures_util::stream::iter(hashes.into_iter().cloned())
             .map(|hash| async move {
                 let exists = self.version_exists(&hash).await?;
                 Ok::<_, OxenError>((hash, exists))
