@@ -78,7 +78,12 @@ pub fn list_directory_w_version(
         version: PathBuf::from(&revision_str),
         resource: PathBuf::from(&revision_str).join(directory.as_ref()),
     };
-    core::v_latest::entries::list_directory(repo, directory, &parsed_resource, paginate_opts)
+    core::v_latest::entries::list_directory(
+        repo,
+        directory.as_ref(),
+        &parsed_resource,
+        paginate_opts,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -115,7 +120,7 @@ pub fn list_directory_w_workspace_depth(
 
     core::v_latest::entries::list_directory_with_depth(
         repo,
-        directory,
+        directory.as_ref(),
         &parsed_resource,
         paginate_opts,
         sort_opts,

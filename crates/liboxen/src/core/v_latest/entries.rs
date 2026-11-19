@@ -51,7 +51,7 @@ pub fn get_file(
 
 pub fn list_directory(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
+    directory: &Path,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
@@ -67,7 +67,7 @@ pub fn list_directory(
 
 pub fn list_directory_with_depth(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
+    directory: &Path,
     parsed_resource: &ParsedResource,
     paginate_opts: &PaginateOpts,
     sort_opts: &SortOpts,
@@ -75,13 +75,12 @@ pub fn list_directory_with_depth(
 ) -> Result<PaginatedDirEntries, OxenError> {
     let _perf = crate::perf_guard!("core::entries::list_directory");
 
-    let directory = directory.as_ref();
     let revision = parsed_resource.version.to_str().unwrap_or("").to_string();
     let page = paginate_opts.page_num;
     let page_size = paginate_opts.page_size;
 
     let resource = Some(ResourceVersion {
-        path: directory.to_str().unwrap().to_string(),
+        path: directory.to_string_lossy().into_owned(),
         version: revision.clone(),
     });
 
@@ -128,7 +127,7 @@ pub fn list_directory_with_depth(
 
     let _perf_paginate = crate::perf_guard!("core::entries::paginate_entries");
     let (children, pagination) = util::paginate(children, page, page_size);
-    let metadata: Option<MetadataDir> = Some(MetadataDir::new(dir_node.data_types()));
+    let metadata = Some(MetadataDir::new(dir_node.data_types()));
     drop(_perf_paginate);
 
     let _perf_entries = crate::perf_guard!("core::entries::collect_dir_entries");
@@ -182,10 +181,7 @@ pub fn get_meta_entry(
     log::debug!("get_meta_entry node: {node:?}");
 
     if let Some(node) = node {
-        log::debug!(
-            "get_meta_entry dir path found: {:?}",
-            path.to_str().unwrap()
-        );
+        log::debug!("get_meta_entry dir path found: {path:?}");
         dir_node_to_metadata_entry(
             repo,
             &node.dir()?,
@@ -194,17 +190,13 @@ pub fn get_meta_entry(
             false,
         )
     } else {
-        log::debug!("get_meta_entry file path: {:?}", path.to_str().unwrap());
+        log::debug!("get_meta_entry file path: {path:?}");
         let file_node = get_file(repo, &commit, path)?;
         if let Some(file_node) = file_node {
-            // log::debug!("get_meta_entry file node found: {:?}", file_node);
             file_node_to_metadata_entry(repo, &file_node, parsed_resource, &mut HashMap::new())
         } else {
-            log::debug!(
-                "get_meta_entry path not found: {:?}",
-                path.to_str().unwrap()
-            );
-            Err(OxenError::resource_not_found(path.to_str().unwrap()))
+            log::debug!("get_meta_entry path not found: {path:?}");
+            Err(OxenError::resource_not_found(path.to_string_lossy()))
         }
     }
 }
@@ -331,10 +323,10 @@ fn nested_entries(
     sort_opts: &SortOpts,
     depth: usize,
 ) -> Result<Option<Vec<MetadataEntry>>, OxenError> {
-    let commit = parsed_resource
-        .commit
-        .as_ref()
-        .ok_or_else(|| OxenError::basic_str("No commit in parsed resource"))?;
+    let Some(commit) = parsed_resource.commit.as_ref() else {
+        let revision = parsed_resource.version.to_string_lossy().into_owned();
+        return Err(OxenError::RevisionNotFound(revision.into()));
+    };
     let Some(dir) = repositories::tree::get_dir_with_children(repo, commit, path, None)? else {
         return Ok(None);
     };
