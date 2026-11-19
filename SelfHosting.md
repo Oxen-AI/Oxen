@@ -12,7 +12,9 @@ Start the server:
 $ oxen-server start
 ```
 
-`oxen-server` does not authenticate requests itself. To require authentication, run it behind a reverse proxy or gateway that checks each request before forwarding it. If the gateway checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
+Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer), and make sure clients can reach it only through the proxy. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a long read timeout and no limit on a request's total time, since some requests, such as committing a workspace, merging a branch, or importing a file from a URL, send nothing until their work is done, for longer the more data they cover.
+
+If the proxy checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
 
 ```bash
 $ oxen config --auth <HOST> <TOKEN>
@@ -30,7 +32,7 @@ Syncing to directory: /Path/To/Data
 [2022-06-08T10:00:48Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
 ```
 
-If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters.
+If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default.
 
 ```bash
 $ oxen-server start -i 0.0.0.0 -p 4321
@@ -183,17 +185,17 @@ Once you have committed data locally and are ready to share them with colleagues
 You can either create a remote through the web UI on [OxenHub](https://oxen.ai) or if you have setup a server your self, you will have to run the `create-remote` command.
 
 ```bash
-$ oxen create-remote --name MyNamespace/MyRepoName --host 0.0.0.0:3001 --scheme http
+$ oxen create-remote --name MyNamespace/MyRepoName --host <HOST> --scheme https
 ```
 
-Repositories that live on an Oxen Server have the idea of a `namespace` and a `name` to help you organize your repositories.
+`<HOST>` is your reverse proxy's host, here and below. Repositories that live on an Oxen Server have the idea of a `namespace` and a `name` to help you organize your repositories.
 
 Once you know your remote repository URL you can add it as a remote. Setting a remote reads the
 repository from the server and records the identifier it reports, so the server has to be reachable
 and the repository has to exist by this point.
 
 ```bash
-$ oxen config --set-remote origin http://<HOST>/MyNamespace/MyRepoName
+$ oxen config --set-remote origin https://<HOST>/MyNamespace/MyRepoName
 ```
 
 Once a remote is set you can push
@@ -209,5 +211,5 @@ You can change the remote (origin) and the branch (main) to whichever remote and
 To clone a repository from remote server you can use the URL you provided previously, and pull the changes to a new machine.
 
 ```bash
-$ oxen clone http://<HOST>/MyNamespace/MyRepoName
+$ oxen clone https://<HOST>/MyNamespace/MyRepoName
 ```
