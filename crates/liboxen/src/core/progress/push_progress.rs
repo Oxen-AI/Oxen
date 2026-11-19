@@ -1,4 +1,4 @@
-use crate::core::progress::sync_progress::{SyncProgress, SyncType};
+use crate::core::progress::sync_progress::{ProgressReporter, SyncProgress, SyncType};
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 
@@ -22,6 +22,13 @@ impl PushProgress {
     pub fn new_with_totals(total_files: u64, total_bytes: u64) -> Self {
         PushProgress {
             sync_progress: SyncProgress::new_with_totals(SyncType::Push, total_files, total_bytes),
+        }
+    }
+
+    /// Send every change in the counts to `reporter`, as [`SyncProgress::reporting_to`] does.
+    pub(crate) fn reporting_to(self, reporter: ProgressReporter) -> Self {
+        PushProgress {
+            sync_progress: self.sync_progress.reporting_to(reporter),
         }
     }
 

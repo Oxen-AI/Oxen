@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::sync::watch;
 
 use crate::error::OxenError;
 use crate::tasks;
@@ -41,12 +41,21 @@ impl ProgressObserver {
         Self(Arc::new(on_update))
     }
 
-    /// Start calling this observer, on a blocking-pool thread, with each update sent through the
-    /// returned [`Observation`].
-    pub(crate) fn observe(self) -> Observation {
+    /// Run `transfer`, calling `observer`, if there is one, on a blocking-pool thread with each
+    /// update sent to the [`ProgressReporter`] `transfer` is given. Returns only after the observer
+    /// has returned from the last update, whether or not the transfer succeeded, and gives the
+    /// transfer's error ahead of an observer's panic. Nothing `transfer` starts may keep the
+    /// reporter, or a [`SyncProgress`] reporting to it, past its return, or this waits for it.
+    pub(crate) async fn observe_while<T>(
+        observer: Option<Self>,
+        transfer: impl AsyncFnOnce(ProgressReporter) -> Result<T, OxenError>,
+    ) -> Result<T, OxenError> {
+        let Some(observer) = observer else {
+            return transfer(ProgressReporter(None)).await;
+        };
         let (sender, mut receiver) = watch::channel(SyncProgressUpdate::default());
-        let on_update = self.0;
-        let observer = tasks::spawn_blocking(move || {
+        let on_update = observer.0;
+        let observing = tasks::spawn_blocking(move || {
             // Waiting on the channel needs only a thread to park, not a runtime, and this thread
             // is the observer's alone.
             while futures::executor::block_on(receiver.changed()).is_ok() {
@@ -54,32 +63,22 @@ impl ProgressObserver {
                 on_update(update);
             }
         });
-        Observation { sender, observer }
-    }
-}
-
-/// A transfer's progress on its way to a [`ProgressObserver`].
-pub(crate) struct Observation {
-    sender: watch::Sender<SyncProgressUpdate>,
-    observer: JoinHandle<()>,
-}
-
-impl Observation {
-    /// Where the transfer sends its progress, through [`SyncProgress::set_sender`].
-    pub(crate) fn sender(&self) -> &watch::Sender<SyncProgressUpdate> {
-        &self.sender
-    }
-
-    /// Waits for the observer to return from the transfer's last update. Call it once the transfer
-    /// has ended, since the observer stops only when every clone of the sender is dropped.
-    pub(crate) async fn finish(self) -> Result<(), OxenError> {
-        drop(self.sender);
-        self.observer.await.map_err(|cause| OxenError::JoinError {
+        // The transfer's future, and with it every sender, is dropped once it completes, which
+        // ends the observer's loop after the last update.
+        let transferred = transfer(ProgressReporter(Some(sender))).await;
+        let observed = observing.await.map_err(|cause| OxenError::JoinError {
             context: "progress observer panicked: ".to_string(),
             cause,
-        })
+        });
+        let value = transferred?;
+        observed?;
+        Ok(value)
     }
 }
+
+/// Where a transfer sends its progress: to the [`ProgressObserver`] that
+/// [`ProgressObserver::observe_while`] runs it under, or nowhere when there is none.
+pub(crate) struct ProgressReporter(Option<watch::Sender<SyncProgressUpdate>>);
 
 pub enum SyncType {
     Push,
@@ -144,10 +143,11 @@ impl SyncProgress {
         }
     }
 
-    /// Send every change in the counts to `sender`, starting with where they stand now.
-    pub(crate) fn set_sender(&mut self, sender: watch::Sender<SyncProgressUpdate>) {
-        self.sender = Some(sender);
+    /// Send every change in the counts to `reporter`, starting with where they stand now.
+    pub(crate) fn reporting_to(mut self, reporter: ProgressReporter) -> Self {
+        self.sender = reporter.0;
         self.send_update();
+        self
     }
 
     fn send_update(&self) {
@@ -269,8 +269,8 @@ mod tests {
     #[test]
     fn test_progress_sends_each_change_in_the_counts() {
         let (sender, mut receiver) = watch::channel(SyncProgressUpdate::default());
-        let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
-        progress.set_sender(sender.clone());
+        let progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30)
+            .reporting_to(ProgressReporter(Some(sender.clone())));
 
         let update = |files, bytes, total_bytes| SyncProgressUpdate {
             files,
@@ -295,8 +295,8 @@ mod tests {
         assert_eq!(next(&mut receiver), Some(Some(update(1, 10, 35))));
 
         // Without totals there is nothing to report progress against.
-        let mut spinner = SyncProgress::new(SyncType::Pull);
-        spinner.set_sender(sender);
+        let spinner =
+            SyncProgress::new(SyncType::Pull).reporting_to(ProgressReporter(Some(sender)));
         spinner.add_bytes(7);
         assert_eq!(
             next(&mut receiver),
@@ -313,24 +313,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_observer_sees_the_last_update_before_finish_returns() {
+    async fn test_observer_sees_the_last_update_before_observe_while_returns() {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let observer = ProgressObserver::new({
             let seen = Arc::clone(&seen);
             move |update| seen.lock().push(update)
         });
 
-        let observation = observer.observe();
-        let mut progress = SyncProgress::new_with_totals(SyncType::Push, 2, 30);
-        progress.set_sender(observation.sender().clone());
-        progress.add_files(1);
-        progress.add_bytes(30);
-        progress.add_files(1);
-        drop(progress);
-        observation
-            .finish()
-            .await
-            .expect("the observer did not panic");
+        ProgressObserver::observe_while(Some(observer), async |reporter| {
+            let progress =
+                SyncProgress::new_with_totals(SyncType::Push, 2, 30).reporting_to(reporter);
+            progress.add_files(1);
+            progress.add_bytes(30);
+            progress.add_files(1);
+            Ok(())
+        })
+        .await
+        .expect("neither the transfer failed nor the observer panicked");
 
         assert_eq!(
             seen.lock().last().copied(),
@@ -340,7 +339,7 @@ mod tests {
                 bytes: 30,
                 total_bytes: Some(30),
             }),
-            "the last update, seen before `finish` returned"
+            "the last update, seen before `observe_while` returned"
         );
     }
 }

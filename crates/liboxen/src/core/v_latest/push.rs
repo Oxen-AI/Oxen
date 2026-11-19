@@ -3,12 +3,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::Mutex;
 
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::constants::stream_segment_size;
 use crate::core::progress::push_progress::PushProgress;
-use crate::core::progress::sync_progress::{Observation, ProgressObserver, SyncProgressUpdate};
+use crate::core::progress::sync_progress::{ProgressObserver, ProgressReporter};
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
@@ -46,23 +46,13 @@ pub async fn push_remote_branch(
     opts: &PushOpts,
     progress: Option<ProgressObserver>,
 ) -> Result<Branch, OxenError> {
-    let observation = progress.map(ProgressObserver::observe);
-    let pushed = push_branch(repo, opts, observation.as_ref().map(Observation::sender)).await;
-    // Waited for even when the push failed, so the observer has returned from the last update
-    // before the caller learns how the push went
-    let observed = match observation {
-        Some(observation) => observation.finish().await,
-        None => Ok(()),
-    };
-    let branch = pushed?;
-    observed?;
-    Ok(branch)
+    ProgressObserver::observe_while(progress, |reporter| push_branch(repo, opts, reporter)).await
 }
 
 async fn push_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
-    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+    reporter: ProgressReporter,
 ) -> Result<Branch, OxenError> {
     // start a timer
     let start = std::time::Instant::now();
@@ -80,8 +70,7 @@ async fn push_branch(
 
     let remote_repo = api::client::repositories::get_by_remote(&remote).await?;
 
-    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts, progress_sender)
-        .await?;
+    push_local_branch_to_remote_repo(repo, &remote_repo, &local_branch, opts, reporter).await?;
     let duration = std::time::Duration::from_millis(start.elapsed().as_millis() as u64);
     println!(
         "🐂 push complete 🎉 took {}",
@@ -95,7 +84,7 @@ async fn push_local_branch_to_remote_repo(
     remote_repo: &RemoteRepository,
     local_branch: &Branch,
     opts: &PushOpts,
-    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+    reporter: ProgressReporter,
 ) -> Result<(), OxenError> {
     // Get the commit from the branch
     let Some(commit) = repositories::commits::get_by_id(repo, &local_branch.commit_id)? else {
@@ -110,26 +99,11 @@ async fn push_local_branch_to_remote_repo(
     // Check if the remote branch exists, and either push to it or create a new one
     match api::client::branches::get_by_name(remote_repo, &local_branch.name).await? {
         Some(remote_branch) => {
-            push_to_existing_branch(
-                repo,
-                &commit,
-                remote_repo,
-                &remote_branch,
-                opts,
-                progress_sender,
-            )
-            .await?
+            push_to_existing_branch(repo, &commit, remote_repo, &remote_branch, opts, reporter)
+                .await?
         }
         None => {
-            push_to_new_branch(
-                repo,
-                remote_repo,
-                local_branch,
-                &commit,
-                opts,
-                progress_sender,
-            )
-            .await?
+            push_to_new_branch(repo, remote_repo, local_branch, &commit, opts, reporter).await?
         }
     }
 
@@ -145,7 +119,7 @@ async fn push_to_new_branch(
     branch: &Branch,
     commit: &Commit,
     opts: &PushOpts,
-    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+    reporter: ProgressReporter,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
     let history = repositories::commits::list_from(repo, &commit.id)?;
@@ -161,7 +135,7 @@ async fn push_to_new_branch(
         commit,
         history,
         opts,
-        progress_sender,
+        reporter,
     )
     .await?;
 
@@ -177,7 +151,7 @@ async fn push_to_existing_branch(
     remote_repo: &RemoteRepository,
     remote_branch: &Branch,
     opts: &PushOpts,
-    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+    reporter: ProgressReporter,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
     if remote_branch.commit_id == commit.id && !opts.missing_files && !opts.revalidate {
@@ -207,7 +181,7 @@ async fn push_to_existing_branch(
                     commit,
                     commits,
                     opts,
-                    progress_sender,
+                    reporter,
                 )
                 .await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
@@ -228,7 +202,7 @@ async fn push_to_existing_branch(
                     commit,
                     history,
                     opts,
-                    progress_sender,
+                    reporter,
                 )
                 .await?;
                 api::client::branches::update(remote_repo, &remote_branch.name, commit).await?;
@@ -487,7 +461,7 @@ async fn push_commits(
     head_commit: &Commit,
     commits: Vec<Commit>,
     opts: &PushOpts,
-    progress_sender: Option<&watch::Sender<SyncProgressUpdate>>,
+    reporter: ProgressReporter,
 ) -> Result<(), OxenError> {
     if opts.revalidate {
         return revalidate_and_push_missing_files(
@@ -560,11 +534,9 @@ async fn push_commits(
     log::debug!("got commit info {num_commits}");
     let errors = Arc::new(Mutex::new(Vec::new()));
 
-    let mut progress = PushProgress::new_with_totals(num_files as u64, total_bytes);
-    if let Some(sender) = progress_sender {
-        progress.set_sender(sender.clone());
-    }
-    let progress = Arc::new(progress);
+    let progress = Arc::new(
+        PushProgress::new_with_totals(num_files as u64, total_bytes).reporting_to(reporter),
+    );
 
     stream::iter(commits_with_info)
         .for_each_concurrent(
