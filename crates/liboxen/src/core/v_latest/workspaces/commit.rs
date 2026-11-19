@@ -23,6 +23,7 @@ use crate::model::{
 };
 use crate::repositories;
 use crate::repositories::size;
+use crate::repositories::workspaces::data_frames::IndexStatus;
 use crate::tasks;
 use crate::util;
 use crate::util::progress_bar::FinishOnDropProgressBar;
@@ -399,34 +400,30 @@ async fn export_tabular_data_frames(
                     // Recompute the metadata for tabular data frames that carry
                     // a staged DuckDB index (editable df and eval).
                     let is_tabular = *file_node.data_type() == EntryDataType::Tabular;
-                    let (indexed, staged_table) = if is_tabular {
+                    // An index of a file other than the one being committed
+                    // (one the workspace replaced since) holds that file's
+                    // rows, so the staged file commits as it is.
+                    let index_status = if is_tabular {
                         let (workspace, node_path) = (workspace.clone(), node_path.clone());
-                        tasks::spawn_blocking(move || -> Result<_, OxenError> {
-                            let indexed = repositories::workspaces::data_frames::is_indexed(
-                                &workspace, &node_path,
-                            )?;
-                            let staged_table = !indexed
-                                && repositories::workspaces::data_frames::has_staged_table(
-                                    &workspace, &node_path,
-                                )?;
-                            Ok((indexed, staged_table))
+                        let file_hash = *file_node.hash();
+                        tasks::spawn_blocking(move || {
+                            repositories::workspaces::data_frames::index_status_against(
+                                &workspace, &node_path, file_hash,
+                            )
                         })
                         .await??
                     } else {
-                        (false, false)
+                        IndexStatus::Missing
                     };
-                    let mut should_export = indexed;
+                    let mut should_export = index_status == IndexStatus::Current;
 
-                    // A staged table that exists but fails the indexed gate was
-                    // written by an older version of oxen (or left by an
-                    // interrupted index). Rather than committing the base file
-                    // and silently dropping the staged edits, recover the table
-                    // from its own rows — preserving the staged edits and
-                    // honoring the old tombstone deletes — then export it like
+                    // An unfinished staged table was written by an older version of oxen (or left
+                    // by an interrupted index). Rather than committing the base file and silently
+                    // dropping the staged edits, recover the table from its own rows — preserving
+                    // the staged edits and honoring the old tombstone deletes — then export it like
                     // any indexed table. reindex_preserving_rows only errors
-                    // (WorkspaceStaleStagedIndex) when there is no user data to
-                    // recover.
-                    if staged_table {
+                    // (WorkspaceStaleStagedIndex) when there is no user data to recover.
+                    if index_status == IndexStatus::Unfinished {
                         log::warn!(
                             "workspace commit recovering stale staged data frame {node_path:?} before export"
                         );

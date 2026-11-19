@@ -50,6 +50,7 @@ mod tests {
         Commit, EntryDataType, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace,
     };
     use crate::repositories::size;
+    use crate::repositories::workspaces::data_frames::IndexStatus;
     use crate::repositories::workspaces::files::{Copied, IfExists};
     use crate::repositories::{self, workspaces};
     use crate::test;
@@ -528,8 +529,9 @@ mod tests {
                 );
             }
 
-            // A data frame indexed after a copy replaced it indexes the copy, not the committed file.
-            let workspace = repositories::workspaces::create(&repo, &commit, "replaced", true)?;
+            // A data frame indexed after a copy replaced it indexes the copy, not the committed file,
+            // and a row added to it keeps the copy staged, so the row commits on the copy's rows.
+            let workspace = committing_workspace(&repo, &commit, "replaced")?;
             let rows_csv = workspace.workspace_repo.path.join("rows.csv");
             fs::write_to_path(&rows_csv, "x,y\n5,6\n7,8\n")?;
             workspaces::files::add(&workspace, &rows_csv).await?;
@@ -541,6 +543,54 @@ mod tests {
                 workspaces::data_frames::count(&workspace, table)?,
                 2,
                 "table.csv indexes the copy's two rows, not the committed file's one"
+            );
+            workspaces::data_frames::rows::add(&repo, &workspace, table, &json!({"x": 9, "y": 9}))?;
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, table)?,
+                "the row added to table.csv keeps the copy it was indexed from staged"
+            );
+            // A data frame edited and then replaced commits the replacement, not the edits, and its
+            // index stops counting as indexed. A copy over a path whose index is being built, or a
+            // copy of an index whose source is replaced as it is copied, leaves the same state.
+            let replaced = Path::new("replaced.csv");
+            let replaced_file = workspace.workspace_repo.path.join(replaced);
+            fs::write_to_path(&replaced_file, "x,y\n1,1\n")?;
+            workspaces::files::add(&workspace, &replaced_file).await?;
+            workspaces::data_frames::index(&repo, &workspace, replaced).await?;
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                replaced,
+                &json!({"x": 2, "y": 2}),
+            )?;
+            fs::write_to_path(&replaced_file, "x,y\n3,3\n4,4\n5,5\n")?;
+            workspaces::files::add(&workspace, &replaced_file).await?;
+            assert_eq!(
+                workspaces::data_frames::index_status(&workspace, replaced)?,
+                IndexStatus::OtherFile,
+                "replaced.csv keeps its index of the file it held before the upload"
+            );
+            let committed = workspaces::commit(
+                &workspace,
+                &NewCommitBody::from_config(&user, "Edit replaced data frames"),
+                "replaced",
+            )
+            .await?;
+            let rows = |path: &str| match repositories::tree::get_file_by_path(
+                &repo, &committed, path,
+            )
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} should be in the commit"))
+            .metadata()
+            {
+                Some(GenericMetadata::MetadataTabular(m)) => m.tabular.height,
+                other => panic!("{path} should have tabular metadata, got {other:?}"),
+            };
+            assert_eq!(
+                (rows("table.csv"), rows("replaced.csv")),
+                (3, 3),
+                "table.csv commits the copy's rows and the added one, and replaced.csv the upload's \
+                 rows without the one added before it"
             );
 
             // A committed directory moves with its nested subdirectory, and retrying the move

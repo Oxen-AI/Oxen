@@ -32,8 +32,8 @@
 //!
 
 use crate::constants::{
-    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, OXEN_COLS, OXEN_ID_COL,
-    OXEN_ROW_ID_COL, OXEN_ROW_ID_SEQ, TABLE_NAME,
+    DEFAULT_PAGE_SIZE, DUCKDB_DF_TABLE_NAME, INDEX_META_TABLE, INDEX_SOURCE_TABLE, OXEN_COLS,
+    OXEN_ID_COL, OXEN_ROW_ID_COL, OXEN_ROW_ID_SEQ, TABLE_NAME,
 };
 
 use crate::core::db::data_frames::weak_duck_cache::{CachedConn, WeakDuckCache};
@@ -44,6 +44,7 @@ use crate::core::v_latest::workspaces::data_frames::{
 };
 use crate::error::OxenError;
 
+use crate::model::MerkleHash;
 use crate::model::data_frame::schema::Field;
 use crate::model::data_frame::schema::Schema;
 use crate::opts::DFOpts;
@@ -1166,6 +1167,41 @@ pub fn index_file_with_id(
     conn.execute_batch(&meta_query)?;
 
     Ok(())
+}
+
+/// Record `file_hash` as the hash of the file the data frame table was built from, replacing any
+/// earlier record.
+pub(crate) fn record_index_source(
+    conn: &duckdb::Connection,
+    file_hash: MerkleHash,
+) -> Result<(), duckdb::Error> {
+    conn.execute_batch(&format!(
+        "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR)"
+    ))?;
+    conn.execute(
+        &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?)"),
+        params![file_hash.to_string()],
+    )?;
+    Ok(())
+}
+
+/// The hash [`record_index_source`] recorded, or `None` for an index built before sources were
+/// recorded.
+pub(crate) fn index_source(conn: &duckdb::Connection) -> Result<Option<MerkleHash>, duckdb::Error> {
+    if !table_exists(conn, INDEX_SOURCE_TABLE)? {
+        return Ok(None);
+    }
+    conn.query_row(
+        &format!("SELECT file_hash FROM \"{INDEX_SOURCE_TABLE}\""),
+        [],
+        |row| {
+            let hash: String = row.get(0)?;
+            hash.parse().map_err(|err: OxenError| {
+                duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(err))
+            })
+        },
+    )
+    .map(Some)
 }
 
 pub fn preview(conn: &duckdb::Connection, table_name: &str) -> Result<DataFrame, DataFrameError> {
