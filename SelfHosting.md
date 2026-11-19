@@ -12,7 +12,7 @@ Start the server:
 $ oxen-server start
 ```
 
-Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer) rather than exposing it to clients directly. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a read timeout longer than 15 seconds rather than a limit on a request's total time, since `oxen-server` sends a byte every 15 seconds while it finishes a long push.
+Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer) rather than exposing it to clients directly. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a long read timeout and no limit on a request's total time, since some requests, such as committing a workspace, merging a branch, or importing a file from a URL, send nothing until their work is done, for longer the more data they cover.
 
 If the proxy checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
 
@@ -32,7 +32,7 @@ Syncing to directory: /Path/To/Data
 [2022-06-08T10:00:48Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
 ```
 
-If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so when the reverse proxy runs on the same host, bind it to `127.0.0.1` to keep clients from reaching it around the proxy:
+If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so keep clients from reaching it around the reverse proxy. If the proxy runs on the same host, bind the server to `127.0.0.1`. If it runs on another host, use a firewall or a private network so only the proxy can reach the server's port. For example, to bind to `127.0.0.1` on port 4321:
 
 ```bash
 $ oxen-server start -i 127.0.0.1 -p 4321
@@ -185,17 +185,17 @@ Once you have committed data locally and are ready to share them with colleagues
 You can either create a remote through the web UI on [OxenHub](https://oxen.ai) or if you have setup a server your self, you will have to run the `create-remote` command.
 
 ```bash
-$ oxen create-remote --name MyNamespace/MyRepoName --host 0.0.0.0:3001 --scheme http
+$ oxen create-remote --name MyNamespace/MyRepoName --host <HOST> --scheme https
 ```
 
-Repositories that live on an Oxen Server have the idea of a `namespace` and a `name` to help you organize your repositories.
+`<HOST>` is your reverse proxy's host, here and below. Repositories that live on an Oxen Server have the idea of a `namespace` and a `name` to help you organize your repositories.
 
 Once you know your remote repository URL you can add it as a remote. Setting a remote reads the
 repository from the server and records the identifier it reports, so the server has to be reachable
 and the repository has to exist by this point.
 
 ```bash
-$ oxen config --set-remote origin http://<HOST>/MyNamespace/MyRepoName
+$ oxen config --set-remote origin https://<HOST>/MyNamespace/MyRepoName
 ```
 
 Once a remote is set you can push
@@ -211,5 +211,5 @@ You can change the remote (origin) and the branch (main) to whichever remote and
 To clone a repository from remote server you can use the URL you provided previously, and pull the changes to a new machine.
 
 ```bash
-$ oxen clone http://<HOST>/MyNamespace/MyRepoName
+$ oxen clone https://<HOST>/MyNamespace/MyRepoName
 ```
