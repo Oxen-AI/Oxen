@@ -330,11 +330,21 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
-        let version_dir = self.version_dir(hash);
-        if version_dir.exists() {
-            fs::remove_dir_all(&version_dir).await?;
-        }
-        Ok(())
+        self.delete_versions(vec![hash.to_string()]).await
+    }
+
+    async fn delete_versions(&self, hashes: Vec<String>) -> Result<(), OxenError> {
+        let store = LocalVersionStore::new(&self.root_path);
+        tasks::spawn_blocking(move || -> Result<(), OxenError> {
+            for hash in hashes {
+                match std::fs::remove_dir_all(store.version_dir(&hash)) {
+                    Err(e) if e.kind() == ErrorKind::NotFound => {}
+                    result => result?,
+                }
+            }
+            Ok(())
+        })
+        .await?
     }
 
     async fn destroy(&self) -> Result<(), OxenError> {
@@ -347,38 +357,40 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn list_versions(&self) -> Result<Vec<String>, OxenError> {
-        let mut versions = Vec::new();
+        let root_path = self.root_path.clone();
+        tasks::spawn_blocking(move || -> Result<_, OxenError> {
+            let mut versions = Vec::new();
 
-        // Walk through the two-level directory structure
-        let mut top_entries = fs::read_dir(&self.root_path).await?;
-        while let Some(top_entry) = top_entries.next_entry().await? {
-            let file_type = top_entry.file_type().await?;
-            if !file_type.is_dir() {
-                continue;
-            }
-
-            let top_name = top_entry.file_name();
-            let mut sub_entries = fs::read_dir(top_entry.path()).await?;
-            while let Some(sub_entry) = sub_entries.next_entry().await? {
-                let file_type = sub_entry.file_type().await?;
-                if !file_type.is_dir() {
+            // Walk through the two-level directory structure
+            for top_entry in std::fs::read_dir(&root_path)? {
+                let top_entry = top_entry?;
+                if !top_entry.file_type()?.is_dir() {
                     continue;
                 }
 
-                let sub_name = sub_entry.file_name();
-                let hash = format!(
-                    "{}{}",
-                    top_name.to_string_lossy(),
-                    sub_name.to_string_lossy()
-                );
-                versions.push(hash);
-            }
-        }
+                let top_name = top_entry.file_name();
+                for sub_entry in std::fs::read_dir(top_entry.path())? {
+                    let sub_entry = sub_entry?;
+                    if !sub_entry.file_type()?.is_dir() {
+                        continue;
+                    }
 
-        // `read_dir` order is platform/filesystem dependent, so sort for a deterministic
-        // UTF-8 byte order result as documented on the trait.
-        versions.sort();
-        Ok(versions)
+                    let sub_name = sub_entry.file_name();
+                    let hash = format!(
+                        "{}{}",
+                        top_name.to_string_lossy(),
+                        sub_name.to_string_lossy()
+                    );
+                    versions.push(hash);
+                }
+            }
+
+            // `read_dir` order is platform/filesystem dependent, so sort for a deterministic
+            // UTF-8 byte order result as documented on the trait.
+            versions.sort_unstable();
+            Ok(versions)
+        })
+        .await?
     }
 
     async fn store_version_chunk(
@@ -921,6 +933,23 @@ mod tests {
         store.delete_version(&hash).await.unwrap();
         assert!(!store.version_exists(&hash).await.unwrap());
         assert!(!store.version_dir(&hash).exists());
+
+        // The bulk delete removes every stored hash it gets and skips one the store lacks.
+        let payloads: [&[u8]; 3] = [b"alpha", b"bravo", b"charlie"];
+        let hashes: Vec<_> = payloads.into_iter().map(hasher::hash_buffer).collect();
+        for (payload, hash) in payloads.iter().zip(&hashes) {
+            store
+                .store_version(hash, Bytes::from_static(payload))
+                .await
+                .unwrap();
+        }
+        let mut doomed = hashes[..2].to_vec();
+        doomed.push("nonexistent".to_string());
+        store.delete_versions(doomed).await.unwrap();
+        assert_eq!(
+            store.list_versions().await.unwrap(),
+            vec![hashes[2].clone()]
+        );
     }
 
     #[tokio::test]

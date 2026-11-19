@@ -9,9 +9,11 @@ use crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path;
 use crate::core::refs::with_ref_manager;
 use crate::core::v_latest::branches::OnConflict;
 use crate::error::OxenError;
-use crate::model::{Branch, Commit, CommitEntry, LocalRepository};
+use crate::model::metadata::generic_metadata::GenericMetadata;
+use crate::model::{Branch, Commit, CommitEntry, EntryDataType, LocalRepository};
 use crate::repositories;
 use crate::tasks;
+use crate::view::entries::{CommitEntryVersion, PaginatedEntryVersions, ResourceVersion};
 use crate::{core, util};
 
 /// List all the local branches within a repo.
@@ -98,6 +100,18 @@ pub fn create(
     }
 }
 
+/// [`create`], off the async worker.
+pub async fn create_async(
+    repo: &LocalRepository,
+    name: &str,
+    commit_id: &str,
+) -> Result<Branch, OxenError> {
+    let repo = repo.clone();
+    let name = name.to_string();
+    let commit_id = commit_id.to_string();
+    tasks::spawn_blocking(move || create(&repo, &name, &commit_id)).await?
+}
+
 /// # Create a branch and check it out in one go
 /// This creates a branch with name,
 /// then switches HEAD to point to the branch
@@ -140,6 +154,18 @@ pub fn update(
     })
 }
 
+/// [`update`], off the async worker.
+pub async fn update_async(
+    repo: &LocalRepository,
+    name: &str,
+    commit_id: &str,
+) -> Result<Branch, OxenError> {
+    let repo = repo.clone();
+    let name = name.to_string();
+    let commit_id = commit_id.to_string();
+    tasks::spawn_blocking(move || update(&repo, &name, &commit_id)).await?
+}
+
 /// Reject the ref advance unless the server can fully serve `head`: every merkle node and version
 /// blob it adds relative to `base` is present (else `ReachableObjectsMissing`), every path it adds
 /// is one a working tree can hold (else `InvalidTreePath`), and its directory-hash index — needed
@@ -180,14 +206,24 @@ pub async fn verify_advance_to(
     commit_id: &str,
     base_branch: &str,
 ) -> Result<(), OxenError> {
-    let Some(head_commit) = repositories::commits::get_by_id(repo, commit_id)? else {
+    let lookup_repo = repo.clone();
+    let commit_id = commit_id.to_string();
+    let base_branch = base_branch.to_string();
+    let commits = tasks::spawn_blocking(move || -> Result<_, OxenError> {
+        let Some(head_commit) = repositories::commits::get_by_id(&lookup_repo, &commit_id)? else {
+            return Ok(None);
+        };
+        // Only an absent base branch falls back to a whole-tree check; real lookup errors surface.
+        let base_commit = match get_by_name(&lookup_repo, &base_branch) {
+            Ok(branch) => repositories::commits::get_by_id(&lookup_repo, &branch.commit_id)?,
+            Err(OxenError::BranchNotFound(_)) => None,
+            Err(e) => return Err(e),
+        };
+        Ok(Some((head_commit, base_commit)))
+    })
+    .await??;
+    let Some((head_commit, base_commit)) = commits else {
         return Ok(());
-    };
-    // Only an absent base branch falls back to a whole-tree check; real lookup errors surface.
-    let base_commit = match get_by_name(repo, base_branch) {
-        Ok(branch) => repositories::commits::get_by_id(repo, &branch.commit_id)?,
-        Err(OxenError::BranchNotFound(_)) => None,
-        Err(e) => return Err(e),
     };
     verify_reachable_objects(repo, base_commit.as_ref(), &head_commit).await
 }
@@ -225,6 +261,13 @@ pub fn force_delete(repo: &LocalRepository, name: impl AsRef<str>) -> Result<Bra
     }
 
     with_ref_manager(repo, |manager| manager.delete_branch(name))
+}
+
+/// [`force_delete`], off the async worker.
+pub async fn force_delete_async(repo: &LocalRepository, name: &str) -> Result<Branch, OxenError> {
+    let repo = repo.clone();
+    let name = name.to_string();
+    tasks::spawn_blocking(move || force_delete(&repo, &name)).await?
 }
 
 /// Check if a branch is checked out
@@ -316,19 +359,95 @@ pub fn rename_current_branch(repo: &LocalRepository, new_name: &str) -> Result<(
     }
 }
 
-// Traces through a branches history to list all unique versions of a file
-pub fn list_entry_versions_on_branch(
+// Traces through a branch's history to list all unique versions of a file, and returns the branch
+fn list_entry_versions_on_branch(
     local_repo: &LocalRepository,
     branch_name: &str,
     path: &Path,
-) -> Result<Vec<(Commit, CommitEntry)>, OxenError> {
+) -> Result<(Branch, Vec<(Commit, CommitEntry)>), OxenError> {
     let branch = repositories::branches::get_by_name(local_repo, branch_name)?;
     log::debug!(
         "get branch commits for branch {:?} -> {}",
         branch.name,
         branch.commit_id
     );
-    core::v_latest::branches::list_entry_versions_for_commit(local_repo, &branch.commit_id, path)
+    let versions = core::v_latest::branches::list_entry_versions_for_commit(
+        local_repo,
+        &branch.commit_id,
+        path,
+    )?;
+    Ok((branch, versions))
+}
+
+/// The sync core of [`list_entry_versions_page_async`].
+fn list_entry_versions_page(
+    repo: &LocalRepository,
+    branch_name: &str,
+    path: &Path,
+    page: usize,
+    page_size: usize,
+) -> Result<(Branch, PaginatedEntryVersions), OxenError> {
+    let (branch, commits_with_versions) = list_entry_versions_on_branch(repo, branch_name, path)?;
+    let (page_versions, pagination) = util::paginate(commits_with_versions, page, page_size);
+
+    let mut versions = Vec::with_capacity(page_versions.len());
+    for (commit, _entry) in page_versions {
+        // The schema hash of a data frame's version, from the type its commit recorded.
+        // Use the original path, not the entry path, to get the full path
+        let node = repositories::tree::get_file_by_path(repo, &commit, path)?;
+        let schema_hash = match node
+            .as_ref()
+            .map(|node| (node.data_type(), node.metadata()))
+        {
+            Some((_, Some(GenericMetadata::MetadataTabular(metadata)))) => {
+                Some(metadata.tabular.schema.hash)
+            }
+            Some((EntryDataType::Tabular, _)) => {
+                tracing::error!(
+                    oxen.file_path = %path.display(),
+                    oxen.commit_id = %commit.id,
+                    "A committed data frame version has no tabular metadata"
+                );
+                None
+            }
+            _ => None,
+        };
+
+        versions.push(CommitEntryVersion {
+            resource: ResourceVersion {
+                version: commit.id.clone(),
+                path: path.to_string_lossy().into(),
+            },
+            commit,
+            schema_hash,
+        });
+    }
+    Ok((
+        branch,
+        PaginatedEntryVersions {
+            versions,
+            pagination,
+        },
+    ))
+}
+
+/// One page of the distinct versions of the file or directory at `path` on `branch_name`, newest
+/// first, off the async worker: each with the commit that first had it, and its schema hash where
+/// it is a data frame. Returns the branch too, and `BranchNotFound` when there is no such branch.
+pub async fn list_entry_versions_page_async(
+    repo: &LocalRepository,
+    branch_name: &str,
+    path: &Path,
+    page: usize,
+    page_size: usize,
+) -> Result<(Branch, PaginatedEntryVersions), OxenError> {
+    let repo = repo.clone();
+    let branch_name = branch_name.to_string();
+    let path = path.to_path_buf();
+    tasks::spawn_blocking(move || {
+        list_entry_versions_page(&repo, &branch_name, &path, page, page_size)
+    })
+    .await?
 }
 
 pub use crate::core::v_latest::branches::set_working_repo_to_commit;
@@ -384,13 +503,15 @@ mod tests {
             let _branch = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
 
             let file_versions =
-                repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?;
+                repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?.1;
 
             let file_2_versions =
-                repositories::branches::list_entry_versions_on_branch(&repo, "main", file_path_2)?;
+                repositories::branches::list_entry_versions_on_branch(&repo, "main", file_path_2)?
+                    .1;
 
             let file_3_versions =
-                repositories::branches::list_entry_versions_on_branch(&repo, "main", file_path_3)?;
+                repositories::branches::list_entry_versions_on_branch(&repo, "main", file_path_3)?
+                    .1;
 
             assert_eq!(file_versions.len(), 2);
             assert_eq!(file_versions[0].0.id, commit_3.id);
@@ -470,13 +591,14 @@ mod tests {
             let _main = repositories::branches::get_by_name(&repo, DEFAULT_BRANCH_NAME)?;
             let _branch = repositories::branches::get_by_name(&repo, "test_branch")?;
             let main_versions =
-                repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?;
+                repositories::branches::list_entry_versions_on_branch(&repo, "main", &file_path)?.1;
 
             let branch_versions = repositories::branches::list_entry_versions_on_branch(
                 &repo,
                 "test_branch",
                 &file_path.to_path_buf(),
-            )?;
+            )?
+            .1;
 
             for v in &main_versions {
                 println!("main: {:?} -> {:?}", v.0, v.1);

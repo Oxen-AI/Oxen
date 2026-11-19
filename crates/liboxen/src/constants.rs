@@ -78,6 +78,10 @@ pub const OXEN_COLS: [&str; 2] = [OXEN_ID_COL, OXEN_ROW_ID_COL];
 /// changes in extra columns, or left by an interrupted index) must be
 /// rebuilt. A table, unlike a column, can never collide with user data.
 pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
+/// Table holding the hash of the file a workspace data frame's staged table was built from, so an
+/// index of a file the workspace has since replaced at the path is told apart from a current one.
+/// An index built before this table existed has none.
+pub(crate) const INDEX_SOURCE_TABLE: &str = "_oxen_index_source";
 /// Oxen's internal columns to exclude from dfs
 pub const EXCLUDE_OXEN_COLS: [&str; 5] = [
     OXEN_ID_COL,
@@ -209,9 +213,9 @@ pub const MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024 * 1024;
 // Allow up to N concurrent upload tasks
 /// Allow up to N concurrent upload tasks
 pub const MAX_CONCURRENT_UPLOADS: usize = 30;
-/// Cap on parallel version-store probes (existence or size) used when bulk operations need to
-/// check many hashes at once. Sized for network HEAD operations rather than
-/// CPU work, so it's higher than `DEFAULT_NUM_WORKERS`.
+/// Cap on parallel version-store calls (an existence or size probe, or a deletion) used when bulk
+/// operations act on many hashes at once. Sized for network requests rather than CPU work, so it's
+/// higher than `DEFAULT_NUM_WORKERS`.
 pub const MAX_CONCURRENT_VERSION_PROBES: usize = 32;
 // Limit zip file downloads to batches of size N
 /// Limit zip file downloads to batches of size N

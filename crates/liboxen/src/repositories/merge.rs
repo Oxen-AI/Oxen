@@ -72,7 +72,8 @@ pub use crate::core::v_latest::merge::merge_commit_into_base_server_safe;
 pub use crate::core::v_latest::merge::merge_commit_into_base;
 
 /// Abandon an interrupted or in-conflict client-side merge. Clears `MERGE_IN_PROGRESS`,
-/// `MERGE_HEAD`, `ORIG_HEAD`, and the merge-conflicts DB, and restores the working tree to HEAD.
+/// `MERGE_HEAD`, `ORIG_HEAD`, and the merge-conflicts DB, restores the working tree to HEAD, and
+/// unstages everything.
 pub use crate::core::v_latest::merge::abort_merge;
 
 pub use crate::core::v_latest::merge::merge_commit_into_base_on_branch;
@@ -1728,9 +1729,37 @@ mod tests {
         Ok(())
     }
 
+    // Merges "feature" while notes.txt's version file cannot be stored, and checks the merge stops
+    // in progress, recording both of its parents.
+    async fn assert_merge_stops_on_add_failure(
+        repo: &LocalRepository,
+        base_tip: &Commit,
+        merge_tip: &Commit,
+    ) -> Result<(), OxenError> {
+        let result = repositories::merge::merge(repo, "feature").await;
+        let Err(OxenError::MergeAddFailed { failures }) = result else {
+            panic!("expected MergeAddFailed, got {result:?}");
+        };
+        let failed_paths: Vec<_> = failures.iter().map(|(path, _)| path.to_string()).collect();
+        assert_eq!(failed_paths, ["notes.txt"]);
+        let hidden = util::fs::oxen_hidden_dir(&repo.path);
+        assert_eq!(
+            util::fs::read_from_path(hidden.join(constants::MERGE_HEAD_FILE))?,
+            merge_tip.id,
+            "the merge records the commit it merges"
+        );
+        assert_eq!(
+            util::fs::read_from_path(hidden.join(constants::ORIG_HEAD_FILE))?,
+            base_tip.id,
+            "the merge records the commit it merges into"
+        );
+        Ok(())
+    }
+
     // A conflict-free merge that cannot store a file's version file stops with the merge in
-    // progress, and adding that file and committing makes the merge commit.
-    async fn case_merge_add_failure_leaves_merge_to_commit(
+    // progress. Aborting it unstages what it staged, and after it stops again, adding that file
+    // and committing makes the merge commit.
+    async fn case_merge_add_failure_leaves_merge_to_commit_or_abort(
         repo: &LocalRepository,
     ) -> Result<(), OxenError> {
         let base_branch = repositories::branches::current_branch(repo)?.unwrap().name;
@@ -1765,23 +1794,25 @@ mod tests {
         util::fs::write_to_path(&notes_file, contents)?;
         util::fs::write_to_path(&blocker, "not a directory")?;
 
-        let result = repositories::merge::merge(repo, "feature").await;
-        let Err(OxenError::MergeAddFailed { failures }) = result else {
-            panic!("expected MergeAddFailed, got {result:?}");
-        };
-        let failed_paths: Vec<_> = failures.iter().map(|(path, _)| path.to_string()).collect();
-        assert_eq!(failed_paths, ["notes.txt"]);
-        assert_eq!(
-            util::fs::read_from_path(hidden.join(constants::MERGE_HEAD_FILE))?,
-            merge_tip.id,
-            "the merge records the commit it merges"
+        assert_merge_stops_on_add_failure(repo, &base_tip, &merge_tip).await?;
+        repositories::merge::abort_merge(repo).await?;
+        let status = repositories::status(repo).await?;
+        assert!(
+            status.staged_files.is_empty(),
+            "the abort leaves nothing staged: {:?}",
+            status.staged_files
         );
-        assert_eq!(
-            util::fs::read_from_path(hidden.join(constants::ORIG_HEAD_FILE))?,
-            base_tip.id,
-            "the merge records the commit it merges into"
+        assert!(status.staged_dirs.is_empty());
+        assert_eq!(repositories::commits::head_commit(repo)?.id, base_tip.id);
+        assert!(!feature_file.exists());
+        assert!(
+            notes_file.exists(),
+            "the uncommitted file stays in the working tree"
         );
+        assert!(!hidden.join(constants::MERGE_HEAD_FILE).exists());
+        assert!(!hidden.join(constants::ORIG_HEAD_FILE).exists());
 
+        assert_merge_stops_on_add_failure(repo, &base_tip, &merge_tip).await?;
         util::fs::remove_file(&blocker)?;
         repositories::add(repo, &notes_file).await?;
         let merged = repositories::commit(repo, "finish the merge")?;
@@ -2130,10 +2161,10 @@ mod tests {
             start_case(
                 &repo,
                 &fixture_entries,
-                "merge-add-failure-leaves-merge-to-commit",
+                "merge-add-failure-leaves-merge-to-commit-or-abort",
             )
             .await?;
-            case_merge_add_failure_leaves_merge_to_commit(&repo).await?;
+            case_merge_add_failure_leaves_merge_to_commit_or_abort(&repo).await?;
 
             start_case(&repo, &fixture_entries, "merge-abort-clears-conflict-state").await?;
             case_merge_abort_clears_conflict_state(&repo).await?;

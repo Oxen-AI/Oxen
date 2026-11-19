@@ -1,6 +1,7 @@
 //! Revisions can either be commits by id or head commits on branches by name
 
-use std::path::Path;
+use std::iter;
+use std::path::{Path, PathBuf};
 
 use crate::api;
 use crate::api::client::file::GetFileOpts;
@@ -34,6 +35,38 @@ pub async fn get_async(
     let repo = repo.clone();
     let revision = revision.to_string();
     tasks::spawn_blocking(move || get(&repo, &revision)).await?
+}
+
+/// The sync core of [`get_by_longest_prefix_async`].
+fn get_by_longest_prefix(
+    repo: &LocalRepository,
+    revision_path: &str,
+) -> Result<Option<(Commit, PathBuf)>, OxenError> {
+    let prefix_ends = revision_path
+        .match_indices('/')
+        .map(|(end, _)| end)
+        .chain(iter::once(revision_path.len()));
+    for end in prefix_ends.rev() {
+        if let Some(commit) = get(repo, &revision_path[..end])? {
+            let path = revision_path.get(end + 1..).unwrap_or_default();
+            return Ok(Some((commit, PathBuf::from(path))));
+        }
+    }
+    Ok(None)
+}
+
+/// Split a `revision/path` string at the longest leading run of `/`-separated components that
+/// resolves to a revision (a branch name, which may itself contain `/`, a commit id, or `HEAD`),
+/// and return that revision's commit with the rest of the string as a path, off the async worker.
+/// The path is empty when the whole string is a revision. Returns Ok(None) if no leading run
+/// resolves to a revision.
+pub async fn get_by_longest_prefix_async(
+    repo: &LocalRepository,
+    revision_path: &str,
+) -> Result<Option<(Commit, PathBuf)>, OxenError> {
+    let repo = repo.clone();
+    let revision_path = revision_path.to_string();
+    tasks::spawn_blocking(move || get_by_longest_prefix(&repo, &revision_path)).await?
 }
 
 /// Streams the raw bytes of `path` as it existed at `revision`.
@@ -73,6 +106,42 @@ mod tests {
     use crate::error::OxenError;
     use crate::{repositories, test, util};
     use tokio_stream::StreamExt;
+
+    #[tokio::test]
+    async fn test_get_by_longest_prefix_splits_at_the_longest_revision() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            for branch in ["feature", "feature/x", "a"] {
+                repositories::branches::create_from_head(&repo, branch)?;
+            }
+            let split = |revision_path: &str| {
+                repositories::revisions::get_by_longest_prefix(&repo, revision_path).map(|found| {
+                    found.map(|(commit, path)| (commit.id, path.to_string_lossy().into_owned()))
+                })
+            };
+
+            // Both `feature` and `feature/x` are branches, so the longer one takes the path's
+            // second component.
+            assert_eq!(
+                split("feature/x/data/train.csv")?,
+                Some((head.id.clone(), "data/train.csv".to_string()))
+            );
+            // The revision's name appearing again later in the path stays in the path.
+            assert_eq!(
+                split("a/x/a.txt")?,
+                Some((head.id.clone(), "x/a.txt".to_string()))
+            );
+            assert_eq!(
+                split(&format!("{}/README.md", head.id))?,
+                Some((head.id.clone(), "README.md".to_string()))
+            );
+            assert_eq!(split("feature/x")?, Some((head.id.clone(), String::new())));
+            assert_eq!(split("missing/data/train.csv")?, None);
+
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test]
     async fn test_get_version_stream_reads_committed_bytes_without_touching_worktree()

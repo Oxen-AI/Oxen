@@ -58,895 +58,517 @@ mod tests {
     use crate::test::append_line_txt_file;
     use crate::util;
 
+    /// Each case works on paths of its own in one repository, in an order that keeps the
+    /// repository-wide status counts each case asserts: a case that leaves a path modified,
+    /// untracked, staged, or removed runs after every case whose counts that path would change.
     #[tokio::test]
-    async fn test_command_restore_removed_file_from_head() -> Result<(), OxenError> {
+    async fn test_restore_files_dirs_and_staged_paths() -> Result<(), OxenError> {
         test::run_empty_local_repo_test_async(|repo| async move {
-            // Write to file
-            let hello_filename = "hello.txt";
-            let hello_file = repo.path.join(hello_filename);
-            util::fs::write_to_path(&hello_file, "Hello World")?;
+            // A modified file, restored from its commit, on a repository that is otherwise clean.
+            {
+                let file = Path::new("annotations.txt");
+                let path = repo.path.join(file);
+                util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
+                repositories::add(&repo, &path).await?;
+                let commit = repositories::commit(&repo, "add annotations.txt")?;
 
-            // Track the file
-            repositories::add(&repo, &hello_file).await?;
-            // Commit the file
-            repositories::commit(&repo, "My message")?;
+                let og_contents = util::fs::read_from_path(&path)?;
+                let new_contents = format!("{og_contents}\nnew 0");
+                util::fs::write_to_path(&path, new_contents)?;
 
-            // Remove the file from disk
-            util::fs::remove_file(&hello_file)?;
+                repositories::restore::restore(&repo, RestoreOpts::from_path_ref(file, commit.id))
+                    .await?;
+                let restored_contents = util::fs::read_from_path(&path)?;
+                assert_eq!(og_contents, restored_contents);
 
-            // Check that it doesn't exist, then it does after we restore it
-            assert!(!hello_file.exists());
-            // Restore takes the filename not the full path to the test repo
-            // ie: "hello.txt" instead of data/test/runs/repo_data/test/runs_fc1544ab-cd55-4344-aa13-5360dc91d0fe/hello.txt
-            repositories::restore::restore(&repo, RestoreOpts::from_path(hello_filename)).await?;
-            assert!(hello_file.exists());
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.modified_files.len(), 0);
+                assert!(status.is_clean());
+            }
 
-            Ok(())
-        })
-        .await
-    }
+            // This is a regression test for ENG-1003: `restore_dir` only iterates File children
+            // and silently no-ops on empty directories.
+            //
+            // Oxen tracks directories as first-class. After `oxen rm` removes the only file in a
+            // directory and the removal is committed, the now-empty parent directory remains
+            // tracked in the merkle tree. If the user then loses that directory on disk (e.g.
+            // manual `rmdir`), `oxen status` correctly reports it as `removed` and
+            // `oxen restore <dir>` is the documented way to bring the working tree back in line
+            // with HEAD.
+            {
+                let subdir_rel = PathBuf::from("subdir");
+                let subdir = repo.path.join(&subdir_rel);
+                util::fs::create_dir_all(&subdir)?;
+                util::fs::write_to_path(subdir.join("a.txt"), "AAAA")?;
+                repositories::add(&repo, &subdir).await?;
+                repositories::commit(&repo, "Add subdir/a.txt")?;
 
-    #[tokio::test]
-    async fn test_command_restore_file_from_commit_id() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Write to file
-            let hello_filename = "hello.txt";
-            let hello_file = repo.path.join(hello_filename);
-            util::fs::write_to_path(&hello_file, "Hello World")?;
-
-            // Track the file
-            repositories::add(&repo, &hello_file).await?;
-            // Commit the file
-            repositories::commit(&repo, "My message")?;
-
-            // Modify the file once
-            let first_modification = "Hola Mundo";
-            let hello_file = test::modify_txt_file(hello_file, first_modification)?;
-            repositories::add(&repo, &hello_file).await?;
-            let first_mod_commit = repositories::commit(&repo, "Changing to spanish")?;
-
-            // Modify again
-            let second_modification = "Bonjour le monde";
-            let hello_file = test::modify_txt_file(hello_file, second_modification)?;
-            repositories::add(&repo, &hello_file).await?;
-            repositories::commit(&repo, "Changing to french")?;
-
-            // Restore from the first commit
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(hello_filename, first_mod_commit.id),
-            )
-            .await?;
-            let content = util::fs::read_from_path(&hello_file)?;
-            assert!(hello_file.exists());
-            assert_eq!(content, first_modification);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_command_restore_removed_file_from_branch_with_commits_between()
-    -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            // (file already created in helper)
-            let file_to_remove = repo.path.join("labels.txt");
-
-            // Commit the file
-            repositories::add(&repo, &file_to_remove).await?;
-            repositories::commit(&repo, "Adding labels file")?;
-
-            let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
-
-            let train_dir = repo.path.join("train");
-            repositories::add(&repo, train_dir).await?;
-            repositories::commit(&repo, "Adding train dir")?;
-
-            // Branch
-            repositories::branches::create_checkout(&repo, "remove-labels")?;
-
-            // Delete the file
-            util::fs::remove_file(&file_to_remove)?;
-
-            // We should recognize it as missing now
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.removed_files.len(), 1);
-
-            // Commit removed file
-            repositories::add(&repo, &file_to_remove).await?;
-            repositories::commit(&repo, "Removing labels file")?;
-
-            // Make sure file is not there
-            assert!(!file_to_remove.exists());
-
-            // Switch back to main branch
-            repositories::checkout(&repo, orig_branch.name).await?;
-            // Make sure we restore file
-            assert!(file_to_remove.exists());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_aggregates_per_file_failures() -> Result<(), OxenError> {
-        // `oxen restore .` was silently swallowing per-file failures, so when a previous
-        // interrupted pull left the working tree in a state where the version store no longer had
-        // the data needed to restore HEAD's expected content, the user got a misleading successful
-        // return code with nothing changed on disk. Restore must now surface an
-        // `OxenError::RestoreFailed` whose Display lists every failed file with its underlying
-        // error, so the user can see all the broken paths at once and the CLI hint can point them
-        // at `oxen fetch --missing-files`.
-        //
-        // Three branches of behavior in one restore call:
-        //   succeeds.txt    — blob present, working file removed       → restore writes it back
-        //   missing_blob    — blob removed, working file removed       → VersionStoreDataMissing
-        //   other_error     — blob present, dir replaces working file  → non-missing-data error
-        // This covers (1) the mixed-success case (RestoreFailed must not be raised when zero
-        // files failed, and a successful restore in the same call must still happen) and
-        // (2) the path where a RestoreFailed wraps a non-missing-data error — important
-        // because the CLI hint logic must not assume every failure is a missing blob.
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let succeeds = repo.path.join("succeeds.txt");
-            let missing_blob = repo.path.join("missing_blob.txt");
-            let other_error = repo.path.join("other_error.txt");
-            let succeeds_content = "alpha alpha alpha";
-            util::fs::write_to_path(&succeeds, succeeds_content)?;
-            util::fs::write_to_path(&missing_blob, "beta beta beta")?;
-            util::fs::write_to_path(&other_error, "gamma gamma gamma")?;
-            repositories::add(&repo, &succeeds).await?;
-            repositories::add(&repo, &missing_blob).await?;
-            repositories::add(&repo, &other_error).await?;
-            repositories::commit(&repo, "Add three files")?;
-
-            // Locate and delete the blob backing missing_blob.txt only — leave the other
-            // two blobs alone so succeeds.txt can be restored and other_error.txt's failure
-            // is forced by the destination state, not the source.
-            let head = repositories::commits::head_commit(&repo)?;
-            let node = repositories::tree::get_node_by_path(&repo, &head, "missing_blob.txt")?
-                .expect("missing_blob.txt must be in HEAD's tree");
-            let missing_hash = node.hash.to_string();
-            let missing_blob_data = repo
-                .path
-                .join(crate::constants::OXEN_HIDDEN_DIR)
-                .join("versions")
-                .join("files")
-                .join(&missing_hash[..2])
-                .join(&missing_hash[2..])
-                .join("data");
-            assert!(
-                missing_blob_data.exists(),
-                "test setup expected blob to exist: {missing_blob_data:?}"
-            );
-            util::fs::remove_file(&missing_blob_data)?;
-
-            // Working-tree mutations:
-            //   succeeds and missing_blob: removed so restore takes the copy path
-            //     (succeeds restores cleanly, missing_blob hits VersionStoreDataMissing).
-            //   other_error: replaced by a directory of the same name. The blob is intact,
-            //     but tokio::fs::copy will fail with EISDIR when restore_file tries to
-            //     write the file content to a path that's now a directory — surfacing a
-            //     non-VersionStoreDataMissing error inside the same RestoreFailed.
-            util::fs::remove_file(&succeeds)?;
-            util::fs::remove_file(&missing_blob)?;
-            util::fs::remove_file(&other_error)?;
-            std::fs::create_dir(&other_error)?;
-
-            let mut paths = HashSet::new();
-            paths.insert(PathBuf::from("succeeds.txt"));
-            paths.insert(PathBuf::from("missing_blob.txt"));
-            paths.insert(PathBuf::from("other_error.txt"));
-            let result = repositories::restore::restore(
-                &repo,
-                RestoreOpts {
-                    paths,
+                // `oxen rm` the only file, then commit. Under Oxen's first-class-directory
+                // model the empty `subdir` remains tracked in the merkle tree.
+                let rm_opts = RmOpts {
+                    paths: vec![PathBuf::from("subdir/a.txt")],
+                    recursive: false,
                     staged: false,
-                    is_remote: false,
-                    source_ref: None,
-                },
-            )
-            .await;
-
-            let Err(OxenError::RestoreFailed { failures }) = result else {
-                panic!("expected RestoreFailed, got: {result:?}");
-            };
-
-            // succeeds.txt is not in the failure list — it was actually restored.
-            assert_eq!(failures.len(), 2, "failures: {failures:#?}");
-            let by_path = |name: &str| -> &OxenError {
-                failures
-                    .iter()
-                    .find(|(p, _)| p.to_string() == name)
-                    .map(|(_, e)| e.as_ref())
-                    .unwrap_or_else(|| panic!("{name} should be in failures: {failures:#?}"))
-            };
-
-            assert!(
-                matches!(
-                    by_path("missing_blob.txt"),
-                    OxenError::VersionStoreDataMissing { .. }
-                ),
-                "missing_blob.txt: expected VersionStoreDataMissing, got: {:?}",
-                by_path("missing_blob.txt")
-            );
-            assert!(
-                !matches!(
-                    by_path("other_error.txt"),
-                    OxenError::VersionStoreDataMissing { .. }
-                ),
-                "other_error.txt: expected a non-missing-data error, got: {:?}",
-                by_path("other_error.txt")
-            );
-
-            // Display lists both failed files, exactly one of them as missing-data.
-            let rendered = OxenError::RestoreFailed { failures }.to_string();
-            assert!(
-                rendered.starts_with("Failed to restore 2 file(s):"),
-                "rendered did not lead with the count summary: {rendered}"
-            );
-            assert!(
-                rendered.contains("missing_blob.txt"),
-                "missing_blob.txt missing in:\n{rendered}"
-            );
-            assert!(
-                rendered.contains("other_error.txt"),
-                "other_error.txt missing in:\n{rendered}"
-            );
-            assert_eq!(
-                rendered.matches("version-store data missing").count(),
-                1,
-                "expected exactly one missing-data line in:\n{rendered}"
-            );
-
-            // succeeds.txt was restored from its still-present blob.
-            assert!(succeeds.exists(), "succeeds.txt should have been restored");
-            assert_eq!(util::fs::read_from_path(&succeeds)?, succeeds_content);
-            // The other two files remain in their pre-restore state.
-            assert!(!missing_blob.exists());
-            assert!(other_error.is_dir());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_directory() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let annotations_dir = Path::new("annotations");
-
-            // Commit a directory with two files: one to remove, one to modify.
-            let train_dir = repo.path.join(annotations_dir).join("train");
-            util::fs::create_dir_all(&train_dir)?;
-            let bbox_path = train_dir.join("bounding_box.csv");
-            util::fs::write_to_path(&bbox_path, "file,label\ntrain/dog_1.jpg,dog\n")?;
-            let readme_path = repo.path.join(annotations_dir).join("README.md");
-            util::fs::write_to_path(&readme_path, "# Annotations\n")?;
-
-            repositories::add(&repo, repo.path.join(annotations_dir)).await?;
-            let commit = repositories::commit(&repo, "add annotations dir")?;
-
-            let og_bbox_contents = util::fs::read_from_path(&bbox_path)?;
-            let og_readme_contents = util::fs::read_from_path(&readme_path)?;
-
-            // Remove one file, modify the other.
-            util::fs::remove_file(&bbox_path)?;
-            let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
-
-            // Restore the directory
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(annotations_dir, commit.id),
-            )
-            .await?;
-
-            // Make sure the removed file is restored
-            assert_eq!(og_bbox_contents, util::fs::read_from_path(&bbox_path)?);
-            // Make sure the modified file is restored
-            assert_eq!(og_readme_contents, util::fs::read_from_path(readme_path)?);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_recreates_tracked_empty_directory() -> Result<(), OxenError> {
-        // This is a regression test for ENG-1003: `restore_dir` only iterates File children and
-        // silently no-ops on empty directories.
-        //
-        // Oxen tracks directories as first-class. After `oxen rm` removes the only file in a
-        // directory and the removal is committed, the now-empty parent directory remains
-        // tracked in the merkle tree. If the user then loses that directory on disk (e.g. manual
-        // `rmdir`), `oxen status` correctly reports it as `removed` and `oxen restore <dir>` is the
-        // documented way to bring the working tree back in line with HEAD.
-        test::run_one_commit_local_repo_test_async(|repo| async move {
-            let subdir_rel = PathBuf::from("subdir");
-            let subdir = repo.path.join(&subdir_rel);
-            util::fs::create_dir_all(&subdir)?;
-            util::fs::write_to_path(subdir.join("a.txt"), "AAAA")?;
-            repositories::add(&repo, &subdir).await?;
-            repositories::commit(&repo, "Add subdir/a.txt")?;
-
-            // `oxen rm` the only file, then commit. Under Oxen's first-class-directory
-            // model the empty `subdir` remains tracked in the merkle tree.
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("subdir/a.txt")],
-                recursive: false,
-                staged: false,
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
-            repositories::commit(&repo, "Remove subdir/a.txt")?;
-
-            // Remove the empty directory to recreate the situation.
-            util::fs::remove_dir_all(&subdir)?;
-            assert!(
-                !subdir.exists(),
-                "test setup: subdir must be gone from disk"
-            );
-
-            // Sanity: status should correctly report subdir as removed (it IS missing
-            // relative to HEAD's tracked tree).
-            let status_before = repositories::status(&repo).await?;
-            assert!(
-                status_before.removed_files.contains(&subdir_rel),
-                "test setup: status should report subdir as removed before restore; \
-                 got removed_files={:?}",
-                status_before.removed_files
-            );
-
-            // The bug under test: `oxen restore <empty-dir>` should recreate the tracked
-            // empty directory on disk so the working tree matches HEAD.
-            repositories::restore::restore(&repo, RestoreOpts::from_path(&subdir_rel)).await?;
-
-            assert!(
-                subdir.exists(),
-                "oxen restore <empty-dir> must recreate the tracked empty directory on disk"
-            );
-
-            // After restore, status should be clean, and the directory should really exist again.
-            let status_after = repositories::status(&repo).await?;
-            assert!(
-                status_after.is_clean(),
-                "after restoring tracked empty dir, status should be clean; got {status_after:?}"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_directory_preserves_untracked_files() -> Result<(), OxenError> {
-        // `oxen restore <dir>` must not delete untracked files that happen to live
-        // inside the restored directory. It only overwrites tracked files.
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let history = repositories::commits::list(&repo)?;
-            let last_commit = history.first().unwrap();
-
-            let annotations_dir = Path::new("annotations");
-            let annotations_path = repo.path.join(annotations_dir);
-
-            let untracked_top_level = annotations_path.join("scratch.txt");
-            util::fs::write_to_path(&untracked_top_level, "top-level scratch")?;
-
-            let untracked_subdir = annotations_path.join("scratch_dir");
-            util::fs::create_dir_all(&untracked_subdir)?;
-            let untracked_in_subdir = untracked_subdir.join("nested.txt");
-            util::fs::write_to_path(&untracked_in_subdir, "nested scratch")?;
-
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
-            )
-            .await?;
-
-            assert!(
-                untracked_top_level.exists(),
-                "top-level untracked file must survive `oxen restore <dir>`"
-            );
-            assert!(
-                untracked_in_subdir.exists(),
-                "untracked file inside an untracked subdir must survive `oxen restore <dir>`"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_removed_tabular_data() -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let history = repositories::commits::list(&repo)?;
-            let last_commit = history.first().unwrap();
-
-            let bbox_file = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let bbox_path = repo.path.join(&bbox_file);
-
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
-            util::fs::remove_file(&bbox_path)?;
-
-            println!("restoring {bbox_file:?}");
-
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            )
-            .await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
-            assert_eq!(og_contents, restored_contents);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_modified_tabular_data() -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let history = repositories::commits::list(&repo)?;
-            let last_commit = history.first().unwrap();
-
-            let bbox_file = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let bbox_path = repo.path.join(&bbox_file);
-
-            let og_contents = util::fs::read_from_path(&bbox_path)?;
-
-            let mut opts = DFOpts::empty();
-            opts.add_row = Some("{\"file\": \"train/dog_99.jpg\", \"label\": \"dog\", \"min_x\": 101.5, \"min_y\": 32.0, \"width\": 385, \"height\": 330}".to_string());
-            let mut df = tabular::read_df(&bbox_path, opts).await?;
-            tabular::write_df(&mut df, &bbox_path)?;
-
-            repositories::restore::restore(
-                &repo,
-                RestoreOpts::from_path_ref(bbox_file, last_commit.id.clone()),
-            ).await?;
-            let restored_contents = util::fs::read_from_path(&bbox_path)?;
-            assert_eq!(og_contents, restored_contents);
-
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.modified_files.len(), 0);
-            assert!(status.is_clean());
-
-            Ok(())
-        }).await
-    }
-
-    #[tokio::test]
-    async fn test_restore_modified_text_data() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let file = Path::new("annotations.txt");
-            let path = repo.path.join(file);
-            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
-            repositories::add(&repo, &path).await?;
-            let commit = repositories::commit(&repo, "add annotations.txt")?;
-
-            let og_contents = util::fs::read_from_path(&path)?;
-            let new_contents = format!("{og_contents}\nnew 0");
-            util::fs::write_to_path(&path, new_contents)?;
-
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(file, commit.id))
-                .await?;
-            let restored_contents = util::fs::read_from_path(&path)?;
-            assert_eq!(og_contents, restored_contents);
-
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.modified_files.len(), 0);
-            assert!(status.is_clean());
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_fast_path_skips_when_mtime_and_size_match() -> Result<(), OxenError> {
-        // `restore_file` has a fast path that skips the copy when the on-disk file already
-        // matches the target by size + mtime (within the filesystem's measured rounding
-        // tolerance). We can observe that the fast path fired by setting up the state it
-        // checks for (matching size + matching mtime) with deliberately different content
-        // on disk, then asserting the content isn't rewritten.
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let filename = Path::new("annotations.txt");
-            let path = repo.path.join(filename);
-            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
-            repositories::add(&repo, &path).await?;
-            repositories::commit(&repo, "add annotations.txt")?;
-
-            // Step 1: normal restore, capture the expected mtime.
-            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
-            let meta = std::fs::metadata(&path)?;
-            let expected_mtime = meta.modified()?;
-            let size = meta.len();
-
-            // Step 2: overwrite with same-length garbage (distinct bytes).
-            let garbage: Vec<u8> = (0..size).map(|_| b'X').collect();
-            std::fs::write(&path, &garbage)?;
-
-            // Step 3: reset mtime to the recorded value.
-            filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(expected_mtime))?;
-
-            // Step 4: restore again — fast path should skip the copy.
-            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
-
-            // Step 5: garbage should still be there.
-            let after = std::fs::read(&path).expect("read back after fast-path restore");
-            assert_eq!(
-                after, garbage,
-                "fast path should have skipped the copy, leaving garbage in place"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_overwrites_when_mtime_differs_but_size_matches() -> Result<(), OxenError>
-    {
-        // Complement to the fast-path test above: if mtime doesn't match, restore should
-        // fall through to the full copy and fix the content even when size happens to match.
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let filename = Path::new("annotations.txt");
-            let path = repo.path.join(filename);
-            util::fs::write_to_path(&path, "line 0\nline 1\nline 2\n")?;
-            repositories::add(&repo, &path).await?;
-            repositories::commit(&repo, "add annotations.txt")?;
-
-            let og_contents = util::fs::read_from_path(&path)?;
-            let og_meta = std::fs::metadata(&path)?;
-            let size = og_meta.len();
-            let recorded_mtime = og_meta.modified()?;
-
-            // Overwrite with same-length garbage.
-            let garbage: Vec<u8> = (0..size).map(|_| b'X').collect();
-            std::fs::write(&path, &garbage)?;
-
-            // Set the mtime explicitly outside the fast-path tolerance window so the
-            // fast path can't fire even on coarse filesystems. Without this, a coarse FS
-            // (e.g. FAT/exFAT or some NFS mounts) might round the post-write "now" back
-            // to the same second as the recorded mtime, leaving the diff inside the 2s
-            // tolerance and making the test flaky.
-            let tolerance = repo.mtime_tolerance().await;
-            let outside_tolerance = recorded_mtime + tolerance + std::time::Duration::from_secs(1);
-            filetime::set_file_mtime(
-                &path,
-                filetime::FileTime::from_system_time(outside_tolerance),
-            )?;
-
-            repositories::restore::restore(&repo, RestoreOpts::from_path(filename)).await?;
-
-            let after = util::fs::read_from_path(&path)?;
-            assert_eq!(
-                og_contents, after,
-                "restore should overwrite when mtime differs, even if size matches"
-            );
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_staged_file() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let bbox_file = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let bbox_path = repo.path.join(&bbox_file);
-
-            // Stage file
-            repositories::add(&repo, bbox_path).await?;
-
-            // Make sure is staged
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 1);
-            status.print();
-
-            // Remove from staged
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(bbox_file)).await?;
-
-            // Make sure is unstaged
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_data_frame_with_duplicates() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            let ann_file = Path::new("annotations.csv");
-            let ann_path = repo.path.join(ann_file);
-            // Include duplicate rows so restore round-trips a data frame with dupes.
-            util::fs::write_to_path(&ann_path, "name,a,b,c\nfoo,1,2,3\nfoo,1,2,3\nbar,4,5,6\n")?;
-
-            let new_line = "new_data,123,456,789";
-            append_line_txt_file(&ann_path, new_line)?;
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
-            let og_contents = util::fs::read_from_path(&ann_path)?;
-
-            // Commit
-            repositories::add(&repo, &ann_path).await?;
-            let commit = repositories::commit(&repo, "adding data with duplicates")?;
-
-            // Remove
-            util::fs::remove_file(&ann_path)?;
-
-            // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))
-                .await?;
-
-            // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
-            assert_eq!(restored_df.height(), orig_df.height());
-            assert_eq!(restored_df.width(), orig_df.width());
-
-            let restored_contents = util::fs::read_from_path(&ann_path)?;
-            assert_eq!(og_contents, restored_contents);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_bounding_box_data_frame() -> Result<(), OxenError> {
-        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
-            let ann_file = Path::new("annotations")
-                .join("train")
-                .join("bounding_box.csv");
-            let ann_path = repo.path.join(&ann_file);
-
-            let new_line = "new_data,123,456,789";
-            append_line_txt_file(&ann_path, new_line)?;
-
-            let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
-
-            let og_contents = util::fs::read_from_path(&ann_path)?;
-
-            // Commit
-            repositories::add(&repo, &ann_path).await?;
-
-            let commit = repositories::commit(&repo, "adding data with duplicates")?;
-
-            // Remove
-            util::fs::remove_file(&ann_path)?;
-
-            // Restore from commit
-            repositories::restore::restore(&repo, RestoreOpts::from_path_ref(ann_file, commit.id))
-                .await?;
-
-            // Make sure is same size
-            let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
-
-            assert_eq!(restored_df.height(), orig_df.height());
-            assert_eq!(restored_df.width(), orig_df.width());
-
-            let restored_contents = util::fs::read_from_path(&ann_path)?;
-            assert_eq!(og_contents, restored_contents);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_staged_directory() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let relative_path = Path::new("annotations");
-            let annotations_dir = repo.path.join(relative_path);
-
-            // Stage file
-            repositories::add(&repo, annotations_dir).await?;
-
-            // Make sure is staged
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_dirs.len(), 3);
-            assert_eq!(status.staged_files.len(), 6);
-            status.print();
-
-            // Remove from staged
-            repositories::restore::restore(&repo, RestoreOpts::from_staged_path(relative_path))
-                .await?;
-
-            // Make sure is unstaged
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_dirs.len(), 0);
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_wildcard_restore_nested_nlp_dir() -> Result<(), OxenError> {
-        test::run_training_data_repo_test_no_commits_async(|repo| async move {
-            let dir = Path::new("nlp");
-            let repo_dir = repo.path.join(dir);
-            repositories::add(&repo, repo_dir).await?;
-
-            let status = repositories::status(&repo).await?;
-            status.print();
-
-            // Should add all the sub dirs
-            // nlp/
-            //   classification/
-            //     annotations/
-            assert_eq!(
-                status
-                    .staged_dirs
-                    .paths
-                    .get(Path::new("nlp"))
-                    .unwrap()
-                    .len(),
-                1
-            );
-            // Should add sub files
-            // nlp/classification/annotations/train.tsv
-            // nlp/classification/annotations/test.tsv
-            assert_eq!(status.staged_files.len(), 2);
-
-            repositories::commit(&repo, "Adding nlp dir")?;
-
-            // Remove the nlp dir
-            let dir = Path::new("nlp");
-            let repo_nlp_dir = repo.path.join(dir);
-            std::fs::remove_dir_all(repo_nlp_dir)?;
-
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.removed_files.len(), 1);
-            assert_eq!(status.staged_files.len(), 0);
-            // Add the removed nlp dir with a wildcard
-            repositories::add(&repo, "nlp/*").await?;
-
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_dirs.len(), 1);
-            assert_eq!(status.staged_files.len(), 2);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_wildcard_restore_deleted_and_present() -> Result<(), OxenError> {
-        test::run_empty_data_repo_test_no_commits_async(|repo| async move {
-            // create the images directory
-            let images_dir = repo.path.join("images");
-            util::fs::create_dir_all(&images_dir)?;
-
-            // Add and commit the cats
-            for i in 1..=3 {
-                let test_file = test::test_img_file_with_name(&format!("cat_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
+                    ..Default::default()
+                };
+                repositories::rm(&repo, &rm_opts).await?;
+                repositories::commit(&repo, "Remove subdir/a.txt")?;
+
+                // Remove the empty directory to recreate the situation.
+                util::fs::remove_dir_all(&subdir)?;
+                assert!(
+                    !subdir.exists(),
+                    "test setup: subdir must be gone from disk"
+                );
+
+                // Sanity: status should correctly report subdir as removed (it IS missing
+                // relative to HEAD's tracked tree).
+                let status_before = repositories::status(&repo).await?;
+                assert!(
+                    status_before.removed_files.contains(&subdir_rel),
+                    "test setup: status should report subdir as removed before restore; \
+                     got removed_files={:?}",
+                    status_before.removed_files
+                );
+
+                // The bug under test: `oxen restore <empty-dir>` should recreate the tracked
+                // empty directory on disk so the working tree matches HEAD.
+                repositories::restore::restore(&repo, RestoreOpts::from_path(&subdir_rel)).await?;
+
+                assert!(
+                    subdir.exists(),
+                    "oxen restore <empty-dir> must recreate the tracked empty directory on disk"
+                );
+
+                // After restore, status should be clean, and the directory should really exist
+                // again.
+                let status_after = repositories::status(&repo).await?;
+                assert!(
+                    status_after.is_clean(),
+                    "after restoring tracked empty dir, status should be clean; got {status_after:?}"
+                );
             }
 
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial cat images")?;
+            // If mtime doesn't match, restore should fall through to the full copy and fix the
+            // content even when size happens to match.
+            {
+                let file = Path::new("annotations.txt");
+                let path = repo.path.join(file);
+                let og_contents = util::fs::read_from_path(&path)?;
+                let og_meta = std::fs::metadata(&path)?;
+                let size = og_meta.len();
+                let recorded_mtime = og_meta.modified()?;
 
-            // Add and commit the dogs
-            for i in 1..=4 {
-                let test_file = test::test_img_file_with_name(&format!("dog_{i}.jpg"));
-                let repo_filepath = images_dir.join(test_file.file_name().unwrap());
-                util::fs::copy(&test_file, &repo_filepath)?;
-            }
+                // Overwrite with same-length garbage.
+                let garbage: Vec<u8> = (0..size).map(|_| b'X').collect();
+                std::fs::write(&path, &garbage)?;
 
-            repositories::add(&repo, &images_dir).await?;
-            repositories::commit(&repo, "Adding initial dog images")?;
-
-            // Remove all the things
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("images/*")],
-                ..Default::default()
-            };
-
-            repositories::rm(&repo, &rm_opts).await?;
-
-            // Should now have 7 staged for removal
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 7);
-            assert_eq!(status.removed_files.len(), 0);
-
-            let mut paths = HashSet::new();
-            paths.insert(PathBuf::from("images/*"));
-
-            // Restore staged with wildcard
-            let restore_opts = RestoreOpts {
-                paths,
-                staged: true,
-                source_ref: None,
-                is_remote: false,
-            };
-
-            repositories::restore::restore(&repo, restore_opts).await?;
-
-            let status = repositories::status(&repo).await?;
-
-            // Should now have unstaged the 7 ommissions, moving them to removed_files
-            assert_eq!(status.removed_files.len(), 7);
-            assert_eq!(status.staged_files.len(), 0);
-
-            let mut paths = HashSet::new();
-            paths.insert(PathBuf::from("images/*"));
-
-            let restore_opts = RestoreOpts {
-                paths,
-                staged: false,
-                source_ref: None,
-                is_remote: false,
-            };
-            repositories::restore::restore(&repo, restore_opts).await?;
-
-            let status = repositories::status(&repo).await?;
-
-            // Should now have restored the 7 files to the working directory, no staged changes
-            assert_eq!(status.removed_files.len(), 0);
-            assert_eq!(status.staged_files.len(), 0);
-
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_restore_wildcard_prefix_staged() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Commit 7 files in train/ — 3 cats, 4 dogs.
-            let train_dir = repo.path.join("train");
-            util::fs::create_dir_all(&train_dir)?;
-            for i in 1..=3 {
-                util::fs::write_to_path(
-                    train_dir.join(format!("cat_{i}.jpg")),
-                    format!("cat {i}"),
+                // Set the mtime explicitly outside the fast-path tolerance window so the
+                // fast path can't fire even on coarse filesystems. Without this, a coarse FS
+                // (e.g. FAT/exFAT or some NFS mounts) might round the post-write "now" back
+                // to the same second as the recorded mtime, leaving the diff inside the 2s
+                // tolerance and making the test flaky.
+                let tolerance = repo.mtime_tolerance().await;
+                let outside_tolerance =
+                    recorded_mtime + tolerance + std::time::Duration::from_secs(1);
+                filetime::set_file_mtime(
+                    &path,
+                    filetime::FileTime::from_system_time(outside_tolerance),
                 )?;
-            }
-            for i in 1..=4 {
-                util::fs::write_to_path(
-                    train_dir.join(format!("dog_{i}.jpg")),
-                    format!("dog {i}"),
+
+                repositories::restore::restore(&repo, RestoreOpts::from_path(file)).await?;
+
+                let after = util::fs::read_from_path(&path)?;
+                assert_eq!(
+                    og_contents, after,
+                    "restore should overwrite when mtime differs, even if size matches"
+                );
+
+                // `restore_file` has a fast path that skips the copy when the on-disk file
+                // already matches the target by size + mtime (within the filesystem's measured
+                // rounding tolerance). We can observe that the fast path fired by setting up the
+                // state it checks for (matching size + matching mtime) with deliberately
+                // different content on disk, then asserting the content isn't rewritten. This
+                // leaves annotations.txt holding garbage, which no later case reads.
+
+                // Step 1: capture the expected mtime, which the restore above just wrote.
+                let expected_mtime = std::fs::metadata(&path)?.modified()?;
+
+                // Step 2: overwrite with same-length garbage (distinct bytes).
+                std::fs::write(&path, &garbage)?;
+
+                // Step 3: reset mtime to the recorded value.
+                filetime::set_file_mtime(
+                    &path,
+                    filetime::FileTime::from_system_time(expected_mtime),
                 )?;
+
+                // Step 4: restore again — fast path should skip the copy.
+                repositories::restore::restore(&repo, RestoreOpts::from_path(file)).await?;
+
+                // Step 5: garbage should still be there.
+                let after = std::fs::read(&path).expect("read back after fast-path restore");
+                assert_eq!(
+                    after, garbage,
+                    "fast path should have skipped the copy, leaving garbage in place"
+                );
             }
-            repositories::add(&repo, &train_dir).await?;
-            repositories::commit(&repo, "add train images")?;
 
-            let rm_opts = RmOpts {
-                paths: vec![PathBuf::from("train/*")],
-                ..Default::default()
-            };
-            repositories::rm(&repo, &rm_opts).await?;
+            // A removed file, restored from HEAD, and then the same file restored from an older
+            // commit than HEAD, which leaves it modified against HEAD.
+            {
+                let hello_filename = "hello.txt";
+                let hello_file = repo.path.join(hello_filename);
+                util::fs::write_to_path(&hello_file, "Hello World")?;
 
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
+                // Track the file
+                repositories::add(&repo, &hello_file).await?;
+                // Commit the file
+                repositories::commit(&repo, "My message")?;
 
-            let mut paths = HashSet::new();
-            paths.insert(PathBuf::from("train/dog_*.jpg"));
+                // Remove the file from disk
+                util::fs::remove_file(&hello_file)?;
 
-            // Restore just the dogs from the stage
-            let restore_opts = RestoreOpts {
-                paths,
-                staged: true,
-                source_ref: None,
-                is_remote: false,
-            };
-            repositories::restore::restore(&repo, restore_opts).await?;
+                // Check that it doesn't exist, then it does after we restore it
+                assert!(!hello_file.exists());
+                // Restore takes the filename not the full path to the test repo
+                // ie: "hello.txt" instead of data/test/runs/repo_data/test/runs_fc1544ab-cd55-4344-aa13-5360dc91d0fe/hello.txt
+                repositories::restore::restore(&repo, RestoreOpts::from_path(hello_filename))
+                    .await?;
+                assert!(hello_file.exists());
 
-            let status = repositories::status(&repo).await?;
+                // Modify the file once
+                let first_modification = "Hola Mundo";
+                let hello_file = test::modify_txt_file(hello_file, first_modification)?;
+                repositories::add(&repo, &hello_file).await?;
+                let first_mod_commit = repositories::commit(&repo, "Changing to spanish")?;
 
-            assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
-            assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
+                // Modify again
+                let second_modification = "Bonjour le monde";
+                let hello_file = test::modify_txt_file(hello_file, second_modification)?;
+                repositories::add(&repo, &hello_file).await?;
+                repositories::commit(&repo, "Changing to french")?;
+
+                // Restore from the first commit
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(hello_filename, first_mod_commit.id),
+                )
+                .await?;
+                let content = util::fs::read_from_path(&hello_file)?;
+                assert!(hello_file.exists());
+                assert_eq!(content, first_modification);
+            }
+
+            // A directory with one file removed and one modified.
+            {
+                let annotations_dir = Path::new("annotations");
+
+                // Commit a directory with two files: one to remove, one to modify.
+                let train_dir = repo.path.join(annotations_dir).join("train");
+                util::fs::create_dir_all(&train_dir)?;
+                let bbox_path = train_dir.join("bounding_box.csv");
+                util::fs::write_to_path(&bbox_path, "file,label\ntrain/dog_1.jpg,dog\n")?;
+                let readme_path = repo.path.join(annotations_dir).join("README.md");
+                util::fs::write_to_path(&readme_path, "# Annotations\n")?;
+
+                repositories::add(&repo, repo.path.join(annotations_dir)).await?;
+                let commit = repositories::commit(&repo, "add annotations dir")?;
+
+                let og_bbox_contents = util::fs::read_from_path(&bbox_path)?;
+                let og_readme_contents = util::fs::read_from_path(&readme_path)?;
+
+                // Remove one file, modify the other.
+                util::fs::remove_file(&bbox_path)?;
+                let readme_path = test::append_line_txt_file(readme_path, "Adding s'more")?;
+
+                // Restore the directory
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(annotations_dir, commit.id),
+                )
+                .await?;
+
+                // Make sure the removed file is restored
+                assert_eq!(og_bbox_contents, util::fs::read_from_path(&bbox_path)?);
+                // Make sure the modified file is restored
+                assert_eq!(og_readme_contents, util::fs::read_from_path(readme_path)?);
+            }
+
+            // A removed data frame with duplicate rows.
+            {
+                let ann_file = Path::new("annotations.csv");
+                let ann_path = repo.path.join(ann_file);
+                // Include duplicate rows so restore round-trips a data frame with dupes.
+                util::fs::write_to_path(
+                    &ann_path,
+                    "name,a,b,c\nfoo,1,2,3\nfoo,1,2,3\nbar,4,5,6\n",
+                )?;
+
+                let new_line = "new_data,123,456,789";
+                append_line_txt_file(&ann_path, new_line)?;
+                let orig_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
+                let og_contents = util::fs::read_from_path(&ann_path)?;
+
+                // Commit
+                repositories::add(&repo, &ann_path).await?;
+                let commit = repositories::commit(&repo, "adding data with duplicates")?;
+
+                // Remove
+                util::fs::remove_file(&ann_path)?;
+
+                // Restore from commit
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(ann_file, commit.id),
+                )
+                .await?;
+
+                // Make sure is same size
+                let restored_df = tabular::read_df(&ann_path, DFOpts::empty()).await?;
+                assert_eq!(restored_df.height(), orig_df.height());
+                assert_eq!(restored_df.width(), orig_df.width());
+
+                let restored_contents = util::fs::read_from_path(&ann_path)?;
+                assert_eq!(og_contents, restored_contents);
+            }
+
+            // Staged schemas unstaged with a wildcard, which leaves both CSVs untracked.
+            {
+                // Two CSVs with distinct schemas in a new dir.
+                let new_annotations_dir = repo.path.join("new_annotations");
+                util::fs::create_dir_all(&new_annotations_dir)?;
+                util::fs::write_to_path(
+                    new_annotations_dir.join("bounding_box.csv"),
+                    "file,label,min_x,min_y,width,height\ntrain/dog_1.jpg,dog,101.5,32.0,385,330\n",
+                )?;
+                util::fs::write_to_path(
+                    new_annotations_dir.join("one_shot.csv"),
+                    "file,label\ntrain/dog_1.jpg,dog\n",
+                )?;
+
+                // Add both files
+                repositories::add(&repo, &new_annotations_dir).await?;
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_files.len(), 2);
+                assert_eq!(status.staged_schemas.len(), 2);
+
+                // Restore *.csv
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_staged_path(Path::new("new_annotations").join("*.csv")),
+                )
+                .await?;
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_files.len(), 0);
+                assert_eq!(status.staged_schemas.len(), 0);
+            }
+
+            // Staged removals restored with wildcards, first by a prefix, then all of them, and
+            // then the removed files restored to the working directory.
+            {
+                // Commit 7 files in train/ — 3 cats, then 4 dogs, adding the directory again so
+                // the second add skips the cats it already committed.
+                let train_dir = repo.path.join("train");
+                util::fs::create_dir_all(&train_dir)?;
+                for i in 1..=3 {
+                    util::fs::write_to_path(
+                        train_dir.join(format!("cat_{i}.jpg")),
+                        format!("cat {i}"),
+                    )?;
+                }
+                repositories::add(&repo, &train_dir).await?;
+                repositories::commit(&repo, "add train cats")?;
+                for i in 1..=4 {
+                    util::fs::write_to_path(
+                        train_dir.join(format!("dog_{i}.jpg")),
+                        format!("dog {i}"),
+                    )?;
+                }
+                repositories::add(&repo, &train_dir).await?;
+                repositories::commit(&repo, "add train dogs")?;
+
+                let rm_opts = RmOpts {
+                    paths: vec![PathBuf::from("train/*")],
+                    ..Default::default()
+                };
+                repositories::rm(&repo, &rm_opts).await?;
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_files.len(), 7); // 3 cats, 4 dogs
+                assert_eq!(status.removed_files.len(), 0);
+
+                // Restore just the dogs from the stage
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_staged_path("train/dog_*.jpg"),
+                )
+                .await?;
+
+                let status = repositories::status(&repo).await?;
+
+                assert_eq!(status.staged_files.len(), 3); // 3 cats should still be staged
+                assert_eq!(status.removed_files.len(), 4); // 4 dogs back in working dir
+
+                // Restore staged with wildcard
+                repositories::restore::restore(&repo, RestoreOpts::from_staged_path("train/*"))
+                    .await?;
+
+                let status = repositories::status(&repo).await?;
+
+                // Should now have unstaged the 7 ommissions, moving them to removed_files
+                assert_eq!(status.removed_files.len(), 7);
+                assert_eq!(status.staged_files.len(), 0);
+
+                repositories::restore::restore(&repo, RestoreOpts::from_path("train/*")).await?;
+
+                let status = repositories::status(&repo).await?;
+
+                // Should now have restored the 7 files to the working directory, no staged changes
+                assert_eq!(status.removed_files.len(), 0);
+                assert_eq!(status.staged_files.len(), 0);
+            }
+
+            // `oxen restore .` was silently swallowing per-file failures, so when a previous
+            // interrupted pull left the working tree in a state where the version store no longer
+            // had the data needed to restore HEAD's expected content, the user got a misleading
+            // successful return code with nothing changed on disk. Restore must now surface an
+            // `OxenError::RestoreFailed` whose Display lists every failed file with its underlying
+            // error, so the user can see all the broken paths at once and the CLI hint can point
+            // them at `oxen fetch --missing-files`.
+            //
+            // Three branches of behavior in one restore call:
+            //   succeeds.txt   — blob present, working file removed      → restore writes it back
+            //   missing_blob   — blob removed, working file removed      → VersionStoreDataMissing
+            //   other_error    — blob present, dir replaces working file → non-missing-data error
+            // This covers (1) the mixed-success case (RestoreFailed must not be raised when zero
+            // files failed, and a successful restore in the same call must still happen) and
+            // (2) the path where a RestoreFailed wraps a non-missing-data error — important
+            // because the CLI hint logic must not assume every failure is a missing blob.
+            //
+            // This case runs last, since it deletes a version file and leaves missing_blob.txt
+            // removed.
+            {
+                let succeeds = repo.path.join("succeeds.txt");
+                let missing_blob = repo.path.join("missing_blob.txt");
+                let other_error = repo.path.join("other_error.txt");
+                let succeeds_content = "alpha alpha alpha";
+                util::fs::write_to_path(&succeeds, succeeds_content)?;
+                util::fs::write_to_path(&missing_blob, "beta beta beta")?;
+                util::fs::write_to_path(&other_error, "gamma gamma gamma")?;
+                repositories::add(&repo, &succeeds).await?;
+                repositories::add(&repo, &missing_blob).await?;
+                repositories::add(&repo, &other_error).await?;
+                repositories::commit(&repo, "Add three files")?;
+
+                // Locate and delete the blob backing missing_blob.txt only — leave the other
+                // two blobs alone so succeeds.txt can be restored and other_error.txt's failure
+                // is forced by the destination state, not the source.
+                let head = repositories::commits::head_commit(&repo)?;
+                let node = repositories::tree::get_node_by_path(&repo, &head, "missing_blob.txt")?
+                    .expect("missing_blob.txt must be in HEAD's tree");
+                let missing_hash = node.hash.to_string();
+                let missing_blob_data = repo
+                    .path
+                    .join(crate::constants::OXEN_HIDDEN_DIR)
+                    .join("versions")
+                    .join("files")
+                    .join(&missing_hash[..2])
+                    .join(&missing_hash[2..])
+                    .join("data");
+                assert!(
+                    missing_blob_data.exists(),
+                    "test setup expected blob to exist: {missing_blob_data:?}"
+                );
+                util::fs::remove_file(&missing_blob_data)?;
+
+                // Working-tree mutations:
+                //   succeeds and missing_blob: removed so restore takes the copy path
+                //     (succeeds restores cleanly, missing_blob hits VersionStoreDataMissing).
+                //   other_error: replaced by a directory of the same name. The blob is intact,
+                //     but tokio::fs::copy will fail with EISDIR when restore_file tries to
+                //     write the file content to a path that's now a directory — surfacing a
+                //     non-VersionStoreDataMissing error inside the same RestoreFailed.
+                util::fs::remove_file(&succeeds)?;
+                util::fs::remove_file(&missing_blob)?;
+                util::fs::remove_file(&other_error)?;
+                std::fs::create_dir(&other_error)?;
+
+                let mut paths = HashSet::new();
+                paths.insert(PathBuf::from("succeeds.txt"));
+                paths.insert(PathBuf::from("missing_blob.txt"));
+                paths.insert(PathBuf::from("other_error.txt"));
+                let result = repositories::restore::restore(
+                    &repo,
+                    RestoreOpts {
+                        paths,
+                        staged: false,
+                        is_remote: false,
+                        source_ref: None,
+                    },
+                )
+                .await;
+
+                let Err(OxenError::RestoreFailed { failures }) = result else {
+                    panic!("expected RestoreFailed, got: {result:?}");
+                };
+
+                // succeeds.txt is not in the failure list — it was actually restored.
+                assert_eq!(failures.len(), 2, "failures: {failures:#?}");
+                let by_path = |name: &str| -> &OxenError {
+                    failures
+                        .iter()
+                        .find(|(p, _)| p.to_string() == name)
+                        .map(|(_, e)| e.as_ref())
+                        .unwrap_or_else(|| panic!("{name} should be in failures: {failures:#?}"))
+                };
+
+                assert!(
+                    matches!(
+                        by_path("missing_blob.txt"),
+                        OxenError::VersionStoreDataMissing { .. }
+                    ),
+                    "missing_blob.txt: expected VersionStoreDataMissing, got: {:?}",
+                    by_path("missing_blob.txt")
+                );
+                assert!(
+                    !matches!(
+                        by_path("other_error.txt"),
+                        OxenError::VersionStoreDataMissing { .. }
+                    ),
+                    "other_error.txt: expected a non-missing-data error, got: {:?}",
+                    by_path("other_error.txt")
+                );
+
+                // Display lists both failed files, exactly one of them as missing-data.
+                let rendered = OxenError::RestoreFailed { failures }.to_string();
+                assert!(
+                    rendered.starts_with("Failed to restore 2 file(s):"),
+                    "rendered did not lead with the count summary: {rendered}"
+                );
+                assert!(
+                    rendered.contains("missing_blob.txt"),
+                    "missing_blob.txt missing in:\n{rendered}"
+                );
+                assert!(
+                    rendered.contains("other_error.txt"),
+                    "other_error.txt missing in:\n{rendered}"
+                );
+                assert_eq!(
+                    rendered.matches("version-store data missing").count(),
+                    1,
+                    "expected exactly one missing-data line in:\n{rendered}"
+                );
+
+                // succeeds.txt was restored from its still-present blob.
+                assert!(succeeds.exists(), "succeeds.txt should have been restored");
+                assert_eq!(util::fs::read_from_path(&succeeds)?, succeeds_content);
+                // The other two files remain in their pre-restore state.
+                assert!(!missing_blob.exists());
+                assert!(other_error.is_dir());
+            }
 
             Ok(())
         })
@@ -954,48 +576,255 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_restore_staged_schemas_with_wildcard() -> Result<(), OxenError> {
-        test::run_empty_local_repo_test_async(|repo| async move {
-            // Two CSVs with distinct schemas to copy into a new dir.
-            let src_dir = repo.path.join("annotations").join("train");
-            util::fs::create_dir_all(&src_dir)?;
-            let bbox_path = src_dir.join("bounding_box.csv");
-            util::fs::write_to_path(
-                &bbox_path,
-                "file,label,min_x,min_y,width,height\ntrain/dog_1.jpg,dog,101.5,32.0,385,330\n",
-            )?;
-            let one_shot_path = src_dir.join("one_shot.csv");
-            util::fs::write_to_path(&one_shot_path, "file,label\ntrain/dog_1.jpg,dog\n")?;
+    async fn test_restore_training_data_paths() -> Result<(), OxenError> {
+        test::run_training_data_repo_test_no_commits_async(|repo| async move {
+            // A staged file, unstaged, on a repository with no commits.
+            {
+                let bbox_file = Path::new("annotations")
+                    .join("train")
+                    .join("bounding_box.csv");
+                let bbox_path = repo.path.join(&bbox_file);
 
-            // Make a new dir in the repo - new_annotations
-            let new_annotations_dir = repo.path.join("new_annotations");
-            util::fs::create_dir_all(&new_annotations_dir)?;
-            util::fs::copy(&bbox_path, new_annotations_dir.join("bounding_box.csv"))?;
-            util::fs::copy(&one_shot_path, new_annotations_dir.join("one_shot.csv"))?;
+                // Stage file
+                repositories::add(&repo, bbox_path).await?;
 
-            // Add both files
-            repositories::add(&repo, &new_annotations_dir).await?;
+                // Make sure is staged
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_files.len(), 1);
+                status.print();
 
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 2);
-            assert_eq!(status.staged_schemas.len(), 2);
+                // Remove from staged
+                repositories::restore::restore(&repo, RestoreOpts::from_staged_path(bbox_file))
+                    .await?;
 
-            // Restore *.csv
-            let mut paths = HashSet::new();
-            paths.insert(PathBuf::from("new_annotations").join(PathBuf::from("*.csv")));
+                // Make sure is unstaged
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_files.len(), 0);
+            }
 
-            let restore_opts = RestoreOpts {
-                paths,
-                staged: true,
-                source_ref: None,
-                is_remote: false,
-            };
+            // A staged directory, unstaged, on a repository with no commits.
+            {
+                let relative_path = Path::new("annotations");
+                let annotations_dir = repo.path.join(relative_path);
 
-            repositories::restore::restore(&repo, restore_opts).await?;
+                // Stage file
+                repositories::add(&repo, annotations_dir).await?;
 
-            let status = repositories::status(&repo).await?;
-            assert_eq!(status.staged_files.len(), 0);
-            assert_eq!(status.staged_schemas.len(), 0);
+                // Make sure is staged
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_dirs.len(), 3);
+                assert_eq!(status.staged_files.len(), 6);
+                status.print();
+
+                // Remove from staged
+                repositories::restore::restore(&repo, RestoreOpts::from_staged_path(relative_path))
+                    .await?;
+
+                // Make sure is unstaged
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_dirs.len(), 0);
+                assert_eq!(status.staged_files.len(), 0);
+            }
+
+            // A file removed on a branch with commits between, restored by checking out the
+            // original branch, which it ends on with labels.txt and train/ committed.
+            {
+                // (file already created in helper)
+                let file_to_remove = repo.path.join("labels.txt");
+
+                // Commit the file
+                repositories::add(&repo, &file_to_remove).await?;
+                repositories::commit(&repo, "Adding labels file")?;
+
+                let orig_branch = repositories::branches::current_branch(&repo)?.unwrap();
+
+                let train_dir = repo.path.join("train");
+                repositories::add(&repo, train_dir).await?;
+                repositories::commit(&repo, "Adding train dir")?;
+
+                // Branch
+                repositories::branches::create_checkout(&repo, "remove-labels")?;
+
+                // Delete the file
+                util::fs::remove_file(&file_to_remove)?;
+
+                // We should recognize it as missing now
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.removed_files.len(), 1);
+
+                // Commit removed file
+                repositories::add(&repo, &file_to_remove).await?;
+                repositories::commit(&repo, "Removing labels file")?;
+
+                // Make sure file is not there
+                assert!(!file_to_remove.exists());
+
+                // Switch back to main branch
+                repositories::checkout(&repo, orig_branch.name).await?;
+                // Make sure we restore file
+                assert!(file_to_remove.exists());
+            }
+
+            // A committed nested dir, removed and then staged with a wildcard.
+            {
+                let dir = Path::new("nlp");
+                let repo_dir = repo.path.join(dir);
+                repositories::add(&repo, repo_dir).await?;
+
+                let status = repositories::status(&repo).await?;
+                status.print();
+
+                // Should add all the sub dirs
+                // nlp/
+                //   classification/
+                //     annotations/
+                assert_eq!(
+                    status
+                        .staged_dirs
+                        .paths
+                        .get(Path::new("nlp"))
+                        .unwrap()
+                        .len(),
+                    1
+                );
+                // Should add sub files
+                // nlp/classification/annotations/train.tsv
+                // nlp/classification/annotations/test.tsv
+                assert_eq!(status.staged_files.len(), 2);
+
+                repositories::commit(&repo, "Adding nlp dir")?;
+
+                // Remove the nlp dir
+                let dir = Path::new("nlp");
+                let repo_nlp_dir = repo.path.join(dir);
+                std::fs::remove_dir_all(repo_nlp_dir)?;
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.removed_files.len(), 1);
+                assert_eq!(status.staged_files.len(), 0);
+                // Add the removed nlp dir with a wildcard
+                repositories::add(&repo, "nlp/*").await?;
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.staged_dirs.len(), 1);
+                assert_eq!(status.staged_files.len(), 2);
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_restore_bounding_box_csv() -> Result<(), OxenError> {
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let history = repositories::commits::list(&repo)?;
+            let last_commit = history.first().unwrap();
+
+            let bbox_file = test::test_bounding_box_csv();
+            let bbox_path = repo.path.join(&bbox_file);
+            let og_contents = util::fs::read_from_path(&bbox_path)?;
+
+            // Modified tabular data, restored on a repository that is otherwise clean.
+            {
+                let mut opts = DFOpts::empty();
+                opts.add_row = Some("{\"file\": \"train/dog_99.jpg\", \"label\": \"dog\", \"min_x\": 101.5, \"min_y\": 32.0, \"width\": 385, \"height\": 330}".to_string());
+                let mut df = tabular::read_df(&bbox_path, opts).await?;
+                tabular::write_df(&mut df, &bbox_path)?;
+
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(&bbox_file, last_commit.id.clone()),
+                ).await?;
+                let restored_contents = util::fs::read_from_path(&bbox_path)?;
+                assert_eq!(og_contents, restored_contents);
+
+                let status = repositories::status(&repo).await?;
+                assert_eq!(status.modified_files.len(), 0);
+                assert!(status.is_clean());
+            }
+
+            // Removed tabular data.
+            {
+                util::fs::remove_file(&bbox_path)?;
+
+                println!("restoring {bbox_file:?}");
+
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(&bbox_file, last_commit.id.clone()),
+                )
+                .await?;
+                let restored_contents = util::fs::read_from_path(&bbox_path)?;
+                assert_eq!(og_contents, restored_contents);
+            }
+
+            // `oxen restore <dir>` must not delete untracked files that happen to live
+            // inside the restored directory. It only overwrites tracked files.
+            {
+                let annotations_dir = Path::new("annotations");
+                let annotations_path = repo.path.join(annotations_dir);
+
+                let untracked_top_level = annotations_path.join("scratch.txt");
+                util::fs::write_to_path(&untracked_top_level, "top-level scratch")?;
+
+                let untracked_subdir = annotations_path.join("scratch_dir");
+                util::fs::create_dir_all(&untracked_subdir)?;
+                let untracked_in_subdir = untracked_subdir.join("nested.txt");
+                util::fs::write_to_path(&untracked_in_subdir, "nested scratch")?;
+
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(annotations_dir, last_commit.id.clone()),
+                )
+                .await?;
+
+                assert!(
+                    untracked_top_level.exists(),
+                    "top-level untracked file must survive `oxen restore <dir>`"
+                );
+                assert!(
+                    untracked_in_subdir.exists(),
+                    "untracked file inside an untracked subdir must survive `oxen restore <dir>`"
+                );
+
+                util::fs::remove_file(&untracked_top_level)?;
+                util::fs::remove_dir_all(&untracked_subdir)?;
+            }
+
+            // A removed data frame, restored from a commit of its own.
+            {
+                let new_line = "new_data,123,456,789";
+                append_line_txt_file(&bbox_path, new_line)?;
+
+                let orig_df = tabular::read_df(&bbox_path, DFOpts::empty()).await?;
+
+                let og_contents = util::fs::read_from_path(&bbox_path)?;
+
+                // Commit
+                repositories::add(&repo, &bbox_path).await?;
+
+                let commit = repositories::commit(&repo, "adding data with duplicates")?;
+
+                // Remove
+                util::fs::remove_file(&bbox_path)?;
+
+                // Restore from commit
+                repositories::restore::restore(
+                    &repo,
+                    RestoreOpts::from_path_ref(&bbox_file, commit.id),
+                )
+                .await?;
+
+                // Make sure is same size
+                let restored_df = tabular::read_df(&bbox_path, DFOpts::empty()).await?;
+
+                assert_eq!(restored_df.height(), orig_df.height());
+                assert_eq!(restored_df.width(), orig_df.width());
+
+                let restored_contents = util::fs::read_from_path(&bbox_path)?;
+                assert_eq!(og_contents, restored_contents);
+            }
 
             Ok(())
         })

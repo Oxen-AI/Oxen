@@ -3,20 +3,16 @@ use std::path::PathBuf;
 use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, get_repo_async};
 use crate::params::{PageNumQuery, app_data, path_param};
-use crate::tasks;
 
 use actix_web::{HttpRequest, HttpResponse, web};
 
 use liboxen::core::repo_locks;
 use liboxen::error::OxenError;
-use liboxen::model::metadata::generic_metadata::GenericMetadata;
-use liboxen::model::{EntryDataType, LocalRepository};
-use liboxen::util::paginate;
-use liboxen::view::entries::ResourceVersion;
+use liboxen::model::LocalRepository;
 use liboxen::view::{
     BranchNewFromBranchName, BranchNewFromCommitId, BranchRemoteMerge, BranchResponse,
-    BranchUpdate, CommitEntryVersion, CommitResponse, ListBranchesResponse, PaginatedEntryVersions,
-    PaginatedEntryVersionsResponse, StatusMessage,
+    BranchUpdate, CommitResponse, ListBranchesResponse, PaginatedEntryVersionsResponse,
+    StatusMessage,
 };
 use liboxen::{constants, repositories};
 
@@ -71,9 +67,9 @@ use liboxen::{constants, repositories};
 )]
 pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, name)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let repo = get_repo_async(app_data, namespace, name).await?;
 
     let branches = repositories::branches::list(&repo).await?;
 
@@ -103,13 +99,13 @@ pub async fn index(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttp
 )]
 pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let branch_name = path_param(&req, "branch_name")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let branch_name = path_param(&req, "branch_name")?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
 
     log::debug!("show branch {branch_name:?}");
-    let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
+    let branch = repositories::branches::get_by_name_async(&repository, branch_name).await?;
     log::debug!("show branch found {branch:?}");
 
     let view = BranchResponse {
@@ -146,10 +142,10 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 )]
 pub async fn create(req: HttpRequest, body: String) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
 
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, namespace, repo_name).await?;
 
     // Keep the write in flight until it finishes so a maintenance op (migration/prune) drains
     // against it; returns 429 while an exclusive op holds the repo.
@@ -178,7 +174,7 @@ async fn create_from_branch(
     repo: &LocalRepository,
     data: &BranchNewFromBranchName,
 ) -> Result<HttpResponse, OxenHttpError> {
-    match repositories::branches::get_by_name(repo, &data.new_name) {
+    match repositories::branches::get_by_name_async(repo, &data.new_name).await {
         Ok(branch) => {
             let view = BranchResponse {
                 status: StatusMessage::resource_found(),
@@ -190,7 +186,8 @@ async fn create_from_branch(
         Err(e) => return Err(e.into()),
     }
 
-    let from_branch = repositories::branches::get_by_name(repo, &data.from_name)
+    let from_branch = repositories::branches::get_by_name_async(repo, &data.from_name)
+        .await
         .map_err(|_| OxenHttpError::NotFound)?;
 
     // Verify the source branch's head before pointing a new ref at it, scoping the check to what it
@@ -202,7 +199,8 @@ async fn create_from_branch(
     )
     .await?;
 
-    let new_branch = repositories::branches::create(repo, &data.new_name, from_branch.commit_id)?;
+    let new_branch =
+        repositories::branches::create_async(repo, &data.new_name, &from_branch.commit_id).await?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_created(),
@@ -223,7 +221,8 @@ async fn create_from_commit(
     )
     .await?;
 
-    let new_branch = repositories::branches::create(repo, &data.new_name, &data.commit_id)?;
+    let new_branch =
+        repositories::branches::create_async(repo, &data.new_name, &data.commit_id).await?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_created(),
@@ -249,15 +248,13 @@ async fn create_from_commit(
 )]
 pub async fn delete(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let branch_name = path_param(&req, "branch_name")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let branch_name = path_param(&req, "branch_name")?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
     let _write = repo_locks::begin_write(&repository)?;
 
-    let branch = repositories::branches::get_by_name(&repository, &branch_name)?;
-
-    repositories::branches::force_delete(&repository, &branch.name)?;
+    let branch = repositories::branches::force_delete_async(&repository, branch_name).await?;
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_deleted(),
         branch,
@@ -293,10 +290,10 @@ pub async fn update(
     body: String,
 ) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let name = path_param(&req, "repo_name")?.to_string();
-    let branch_name = path_param(&req, "branch_name")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let namespace = path_param(&req, "namespace")?;
+    let name = path_param(&req, "repo_name")?;
+    let branch_name = path_param(&req, "branch_name")?;
+    let repository = get_repo_async(app_data, namespace, name).await?;
     let _write = repo_locks::begin_write(&repository)?;
 
     let data: Result<BranchUpdate, serde_json::Error> = serde_json::from_str(&body);
@@ -304,9 +301,10 @@ pub async fn update(
 
     // Don't advance the ref onto a commit whose newly-added objects aren't all present. Scope the
     // check to what changed since the branch's current head.
-    repositories::branches::verify_advance_to(&repository, &data.commit_id, &branch_name).await?;
+    repositories::branches::verify_advance_to(&repository, &data.commit_id, branch_name).await?;
 
-    let branch = repositories::branches::update(&repository, &branch_name, data.commit_id)?;
+    let branch =
+        repositories::branches::update_async(&repository, branch_name, &data.commit_id).await?;
 
     Ok(HttpResponse::Ok().json(BranchResponse {
         status: StatusMessage::resource_updated(),
@@ -424,74 +422,30 @@ pub async fn list_entry_versions(
     query: web::Query<PageNumQuery>,
 ) -> Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
-    let namespace = path_param(&req, "namespace")?.to_string();
-    let repo_name = path_param(&req, "repo_name")?.to_string();
-    let branch_name = path_param(&req, "branch_name")?.to_string();
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let branch_name = path_param(&req, "branch_name")?;
 
-    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let repo = get_repo_async(app_data, namespace, repo_name).await?;
 
     let path = PathBuf::from(path_param(&req, "path")?);
 
     let page = query.page.unwrap_or(constants::DEFAULT_PAGE_NUM);
     let page_size = query.page_size.unwrap_or(constants::DEFAULT_PAGE_SIZE);
 
-    // The branch lookup, the history walk, and each version's node are sync tree reads.
-    let response = tasks::spawn_blocking(
-        move || -> Result<PaginatedEntryVersionsResponse, OxenError> {
-            let branch = repositories::branches::get_by_name(&repo, &branch_name)?;
-            let commits_with_versions =
-                repositories::branches::list_entry_versions_on_branch(&repo, &branch.name, &path)?;
-            log::debug!(
-                "list_entry_versions_on_branch found {:?} versions",
-                commits_with_versions.len()
-            );
-
-            let (page_versions, pagination) = paginate(commits_with_versions, page, page_size);
-            let mut paginated_commit_versions = Vec::with_capacity(page_versions.len());
-            for (commit, _entry) in page_versions {
-                // The schema hash of a data frame's version, from the type its commit recorded.
-                // Use the original path, not the entry path, to get the full path
-                let node = repositories::tree::get_file_by_path(&repo, &commit, &path)?;
-                let maybe_schema_hash = match node
-                    .as_ref()
-                    .map(|node| (node.data_type(), node.metadata()))
-                {
-                    Some((_, Some(GenericMetadata::MetadataTabular(metadata)))) => {
-                        Some(metadata.tabular.schema.hash)
-                    }
-                    Some((EntryDataType::Tabular, _)) => {
-                        tracing::error!(
-                            oxen.file_path = %path.display(),
-                            oxen.commit_id = %commit.id,
-                            "A committed data frame version has no tabular metadata"
-                        );
-                        None
-                    }
-                    _ => None,
-                };
-
-                paginated_commit_versions.push(CommitEntryVersion {
-                    resource: ResourceVersion {
-                        version: commit.id.clone(),
-                        path: path.to_string_lossy().into(),
-                    },
-                    commit,
-                    schema_hash: maybe_schema_hash,
-                });
-            }
-            Ok(PaginatedEntryVersionsResponse {
-                status: StatusMessage::resource_found(),
-                versions: PaginatedEntryVersions {
-                    versions: paginated_commit_versions,
-                    pagination,
-                },
-                branch,
-                path,
-            })
-        },
+    let (branch, versions) = repositories::branches::list_entry_versions_page_async(
+        &repo,
+        branch_name,
+        &path,
+        page,
+        page_size,
     )
-    .await
-    .map_err(OxenError::from)??;
+    .await?;
 
-    Ok(HttpResponse::Ok().json(response))
+    Ok(HttpResponse::Ok().json(PaginatedEntryVersionsResponse {
+        status: StatusMessage::resource_found(),
+        versions,
+        branch,
+        path,
+    }))
 }

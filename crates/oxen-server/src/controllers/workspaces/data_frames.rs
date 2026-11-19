@@ -616,6 +616,7 @@ mod tests {
     use liboxen::model::Schema;
     use liboxen::opts::DFOpts;
     use liboxen::repositories;
+    use liboxen::repositories::workspaces::files::IfExists;
     use liboxen::util;
     use liboxen::view::json_data_frame_view::WorkspaceJsonDataFrameViewResponse;
     use liboxen::view::workspaces::RenameRequest;
@@ -984,6 +985,7 @@ mod tests {
             &workspace,
             std::path::Path::new(file_path),
             std::path::Path::new(copy_path),
+            IfExists::Refuse,
         )
         .await?;
         repositories::workspaces::data_frames::index(

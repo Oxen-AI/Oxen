@@ -10,6 +10,8 @@ use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{LocalRepository, MerkleHash, RemoteRepository};
 use crate::repositories;
+use crate::storage::VersionStore;
+use crate::tasks;
 
 /// Statistics about the prune operation
 #[derive(Debug, Clone)]
@@ -59,26 +61,47 @@ impl Default for PruneStats {
 /// Statistics about the prune operation
 pub async fn prune(repo: &LocalRepository, dry_run: bool) -> Result<PruneStats, OxenError> {
     let start = std::time::Instant::now();
-    let mut stats = PruneStats::new();
 
     log::info!("Starting prune operation (dry_run: {dry_run})");
 
-    // Step 1: Collect all referenced nodes and version hashes from all commits
-    log::info!("Collecting referenced nodes and version files from commit history...");
-    let (referenced_nodes, referenced_versions) = collect_referenced_hashes(repo)?;
-    log::info!(
-        "Found {} referenced nodes and {} referenced version files",
-        referenced_nodes.len(),
-        referenced_versions.len()
-    );
+    // Steps 1 and 2 walk every commit's tree and the node store with sync reads and deletes, so they
+    // run as one blocking task, while the version store lists its version files for step 3.
+    let walk_repo = repo.clone();
+    let walk = async move {
+        tasks::spawn_blocking(move || -> Result<_, OxenError> {
+            // Step 1: Collect all referenced nodes and version hashes from all commits
+            log::info!("Collecting referenced nodes and version files from commit history...");
+            let (referenced_nodes, referenced_versions) = collect_referenced_hashes(&walk_repo)?;
+            log::info!(
+                "Found {} referenced nodes and {} referenced version files",
+                referenced_nodes.len(),
+                referenced_versions.len()
+            );
 
-    // Step 2: Prune orphaned nodes
-    log::info!("Pruning orphaned nodes...");
-    prune_nodes(repo, &referenced_nodes, &mut stats, dry_run)?;
+            // Step 2: Prune orphaned nodes
+            log::info!("Pruning orphaned nodes...");
+            let mut stats = PruneStats::new();
+            prune_nodes(&walk_repo, &referenced_nodes, &mut stats, dry_run)?;
+            Ok((referenced_versions, stats))
+        })
+        .await?
+    };
+    let version_store = repo.version_store();
+    // Not `try_join!`: a listing error would drop the walk's handle while its node deletes run on,
+    // past the return that ends the caller's exclusive lock on the repository.
+    let (walked, listed) = tokio::join!(walk, version_store.list_versions());
+    let ((referenced_versions, mut stats), all_versions) = (walked?, listed?);
 
     // Step 3: Prune orphaned version files
     log::info!("Pruning orphaned version files...");
-    prune_versions(repo, &referenced_versions, &mut stats, dry_run).await?;
+    prune_versions(
+        version_store.as_ref(),
+        all_versions,
+        &referenced_versions,
+        &mut stats,
+        dry_run,
+    )
+    .await?;
 
     let duration = start.elapsed();
     log::info!("Prune operation complete in {duration:.2?}");
@@ -234,37 +257,39 @@ fn prune_nodes(
     Ok(())
 }
 
-/// Prune orphaned version files from the repository
+/// Prune the version files in `all_versions` that `referenced_versions` lacks
 async fn prune_versions(
-    repo: &LocalRepository,
+    version_store: &dyn VersionStore,
+    all_versions: Vec<String>,
     referenced_versions: &HashSet<String>,
     stats: &mut PruneStats,
     dry_run: bool,
 ) -> Result<(), OxenError> {
-    let version_store = repo.version_store();
-
-    let all_versions = version_store.list_versions().await?;
     stats.versions_scanned = all_versions.len();
+    let orphaned: Vec<_> = all_versions
+        .into_iter()
+        .filter(|version_hash| !referenced_versions.contains(version_hash))
+        .collect();
+    stats.versions_kept = stats.versions_scanned - orphaned.len();
+    stats.versions_removed = orphaned.len();
 
-    for version_hash in all_versions {
-        if referenced_versions.contains(&version_hash) {
-            stats.versions_kept += 1;
+    let (orphaned, sizes): (Vec<_>, Vec<_>) = version_store
+        .get_version_sizes(orphaned)
+        .await?
+        .into_iter()
+        .unzip();
+    // A version file whose size can't be read is still removed, and adds nothing to bytes_freed.
+    stats.bytes_freed = sizes.into_iter().flatten().sum();
+
+    for version_hash in &orphaned {
+        if dry_run {
+            tracing::debug!(oxen.file_hash = %version_hash, "Would remove orphaned version file");
         } else {
-            // This version is orphaned
-            stats.versions_removed += 1;
-
-            // Get the size before deleting
-            if let Ok(file_size) = version_store.get_version_size(&version_hash).await {
-                stats.bytes_freed += file_size;
-            }
-
-            if dry_run {
-                log::debug!("Would remove orphaned version: {version_hash}");
-            } else {
-                log::debug!("Removing orphaned version: {version_hash}");
-                version_store.delete_version(&version_hash).await?;
-            }
+            tracing::debug!(oxen.file_hash = %version_hash, "Removing orphaned version file");
         }
+    }
+    if !dry_run {
+        version_store.delete_versions(orphaned).await?;
     }
 
     Ok(())
@@ -375,6 +400,12 @@ mod tests {
                 );
             }
             assert_eq!(repositories::commits::list_all(&repo)?, commits_before);
+            let stats = prune(&repo, true).await?;
+            assert_eq!(
+                (stats.nodes_removed, stats.versions_removed),
+                (0, 0),
+                "the prune deleted every node and version file it reported"
+            );
 
             Ok(())
         })

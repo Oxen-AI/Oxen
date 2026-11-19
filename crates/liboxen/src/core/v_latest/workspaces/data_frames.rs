@@ -34,6 +34,7 @@ use crate::model::{
 use crate::repositories;
 use crate::{error::OxenError, util};
 use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
 pub mod columns;
 pub mod rows;
@@ -219,6 +220,25 @@ pub fn get_queryable_data_frame_workspace(
     get_queryable_data_frame_workspace_from_file_node(repo, &commit.id.parse()?, path)
 }
 
+/// The file the workspace has at `path`: what it stages there, which may have replaced the
+/// committed file, or the base commit's file when it stages nothing there or stages the path for
+/// removal. `None` when neither has a file there.
+pub(crate) fn workspace_file(
+    workspace: &Workspace,
+    path: &Path,
+) -> Result<Option<FileNode>, OxenError> {
+    let staged = get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(path)?;
+    match staged {
+        Some(staged) if staged.status != StagedEntryStatus::Removed => {
+            let EMerkleTreeNode::File(file_node) = staged.node.node else {
+                return Err(OxenError::NotAFile(path.to_path_buf().into()));
+            };
+            Ok(Some(file_node))
+        }
+        _ => repositories::tree::get_file_by_path(&workspace.base_repo, &workspace.commit, path),
+    }
+}
+
 /// Build the workspace's DuckDB table for the data frame at `path` from its version file.
 /// A table that is already fully indexed is left as it is, with the edits staged in it.
 pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
@@ -241,22 +261,8 @@ async fn build_table(
         let path = path.to_path_buf();
         tasks::spawn_blocking(move || -> Result<_, OxenError> {
             let path = path.as_path();
-            let file_node = match repositories::tree::get_file_by_path(
-                &workspace.base_repo,
-                &workspace.commit,
-                path,
-            )? {
-                Some(file_node) => file_node,
-                None => {
-                    let staged = get_staged_db_manager(&workspace.workspace_repo)?
-                        .read_from_staged_db(path)?
-                        .ok_or_else(|| OxenError::path_does_not_exist(path))?;
-                    let EMerkleTreeNode::File(file_node) = staged.node.node else {
-                        return Err(OxenError::NotAFile(path.to_path_buf().into()));
-                    };
-                    file_node
-                }
-            };
+            let file_node = workspace_file(&workspace, path)?
+                .ok_or_else(|| OxenError::path_does_not_exist(path))?;
             if *file_node.data_type() != EntryDataType::Tabular {
                 return Err(OxenError::basic_str(
                     "File format not supported, must be tabular.",
@@ -326,6 +332,7 @@ async fn build_table(
                 conn.execute_batch("BEGIN TRANSACTION")?;
                 let build = (|| -> Result<(), DataFrameError> {
                     df_db::index_file_with_id(&version_path, conn, &extension)?;
+                    df_db::record_index_source(conn, file_hash)?;
                     Ok(())
                 })();
                 match build {
@@ -409,11 +416,10 @@ const LEGACY_AND_CURRENT_INTERNAL_COLS: [&str; 7] = [
 /// appended and modified rows kept, deleted rows gone — re-keyed in the current
 /// index format (fresh `_oxen_id`/`_oxen_row_id` and the index marker).
 ///
-/// Call only for a table that exists but fails
-/// [`is_indexed`](crate::repositories::workspaces::data_frames::is_indexed);
-/// afterward it passes that gate and exports/commits like any freshly indexed
-/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no
-/// user columns to recover.
+/// Call only for a table whose `IndexStatus` is `Unfinished`, since one built from another file
+/// holds that file's rows. Afterward it is complete and exports/commits like any freshly indexed
+/// table. Returns [`OxenError::WorkspaceStaleStagedIndex`] when the table has no user columns to
+/// recover.
 pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, path);
     let extension = util::fs::extension_from_path(path);
@@ -686,6 +692,119 @@ pub(super) fn move_index(
         util::fs::rename(og_db_path_parent, new_db_path_parent)
     })?;
     Ok(true)
+}
+
+/// A replacement for a data frame's DuckDB index, either a copy of another data frame's index or no
+/// index, made by [`IndexReplacement::prepare`] and put in place by [`IndexReplacement::install`].
+/// Dropping it deletes what it holds aside (the copy before `install`, the replaced index after),
+/// except a replaced index it could not put back.
+pub(super) struct IndexReplacement {
+    db_path: PathBuf,
+    aside: TempDir,
+}
+
+impl IndexReplacement {
+    /// Prepare to replace the index of the data frame at `new_path` with a copy of `source`'s, or
+    /// with none when `source` is `None` or has no index. Returns `None` when neither has one.
+    pub(super) fn prepare(
+        workspace: &Workspace,
+        source: Option<&Path>,
+        new_path: &Path,
+    ) -> Result<Option<Self>, OxenError> {
+        let source_db_path = source
+            .map(|source| repositories::workspaces::data_frames::duckdb_path(workspace, source))
+            .filter(|source_db_path| source_db_path.exists());
+        let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, new_path);
+        let db_dir = db_parent(&db_path)?;
+        if source_db_path.is_none() && !db_dir.exists() {
+            return Ok(None);
+        }
+        let indexes_dir = db_parent(db_dir)?;
+        util::fs::create_dir_all(indexes_dir)?;
+        let aside = tempfile::Builder::new()
+            .prefix(".replacing.")
+            .tempdir_in(indexes_dir)?;
+        if let Some(source_db_path) = source_db_path {
+            // Closed, as in `move_index`, so the copy is of a whole, checkpointed database.
+            with_db_closed(&source_db_path, || {
+                util::fs::copy_dir_all(db_parent(&source_db_path)?, aside.path().join("copy"))
+            })?;
+        }
+        Ok(Some(Self { db_path, aside }))
+    }
+
+    /// Put the prepared index in place, keeping the replaced one aside for [`Self::restore`].
+    pub(super) fn install(&mut self) -> Result<(), OxenError> {
+        let db_dir = db_parent(&self.db_path)?;
+        let copy = self.aside.path().join("copy");
+        let previous = self.previous();
+        let result = with_db_closed(&self.db_path, || -> Result<(), OxenError> {
+            if db_dir.exists() {
+                util::fs::rename(db_dir, &previous)?;
+            }
+            if copy.exists()
+                && let Err(err) = util::fs::rename(&copy, db_dir)
+            {
+                put_back(&previous, db_dir)?;
+                return Err(err);
+            }
+            Ok(())
+        });
+        if let Err(err) = &result {
+            self.keep_aside(err);
+        }
+        result
+    }
+
+    /// Best effort: put the replaced index back in place of the one [`Self::install`] put there.
+    pub(super) fn restore(&mut self) {
+        let previous = self.previous();
+        let result = with_db_closed(&self.db_path, || -> Result<(), OxenError> {
+            let db_dir = db_parent(&self.db_path)?;
+            if db_dir.exists() {
+                util::fs::remove_dir_all(db_dir)?;
+            }
+            put_back(&previous, db_dir)
+        });
+        if let Err(err) = result
+            && !self.keep_aside(&err)
+        {
+            tracing::error!(
+                file.path = %self.db_path.display(),
+                exception.message = %err,
+                "Could not put a data frame index back after a failed copy"
+            );
+        }
+    }
+
+    /// Where the replaced index waits while it is set aside.
+    fn previous(&self) -> PathBuf {
+        self.aside.path().join("previous")
+    }
+
+    /// When `err` left the replaced index set aside, keep it on disk rather than deleting it on
+    /// drop, and log where it is. Returns whether there was one to keep.
+    fn keep_aside(&mut self, err: &OxenError) -> bool {
+        let previous = self.previous();
+        if !previous.exists() {
+            return false;
+        }
+        self.aside.disable_cleanup(true);
+        tracing::error!(
+            file.path = %previous.display(),
+            exception.message = %err,
+            "Kept a data frame's replaced index aside, since it could not be put back"
+        );
+        true
+    }
+}
+
+/// Move the index set aside at `previous`, if there is one, back to `db_dir`.
+fn put_back(previous: &Path, db_dir: &Path) -> Result<(), OxenError> {
+    if previous.exists() {
+        util::fs::rename(previous, db_dir)?;
+    }
+    Ok(())
 }
 
 /// The directory holding a data frame's DuckDB database.

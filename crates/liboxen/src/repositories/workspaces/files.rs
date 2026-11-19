@@ -36,7 +36,7 @@ pub use crate::core::v_latest::workspaces::files::upload_zip;
 
 pub use crate::core::v_latest::workspaces::files::mv;
 
-pub use crate::core::v_latest::workspaces::files::copy;
+pub use crate::core::v_latest::workspaces::files::{Copied, IfExists, copy};
 
 #[cfg(test)]
 mod tests {
@@ -50,6 +50,8 @@ mod tests {
         Commit, EntryDataType, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace,
     };
     use crate::repositories::size;
+    use crate::repositories::workspaces::data_frames::IndexStatus;
+    use crate::repositories::workspaces::files::{Copied, IfExists};
     use crate::repositories::{self, workspaces};
     use crate::test;
     use crate::util::fs;
@@ -358,8 +360,8 @@ mod tests {
             );
 
             // A copy commits beside its source with the source's content, takes the type an upload
-            // to its own name would get, and is refused where the source has staged changes or
-            // something is already at the destination.
+            // to its own name would get, and is refused where something is already at the
+            // destination unless it replaces a file there.
             let workspace = committing_workspace(&repo, &commit, "copy")?;
             let table_copy = "out/table_copy.csv";
             let copies = [
@@ -375,7 +377,14 @@ mod tests {
                 ),
             ];
             for (source, copy, _, _) in &copies {
-                workspaces::files::copy(&workspace, Path::new(source), Path::new(copy)).await?;
+                let copied = workspaces::files::copy(
+                    &workspace,
+                    Path::new(source),
+                    Path::new(copy),
+                    IfExists::Refuse,
+                )
+                .await?;
+                assert_eq!(copied, Copied::Added, "{copy}");
             }
             assert_eq!(
                 staged_status(&workspace, table_copy),
@@ -388,7 +397,8 @@ mod tests {
             );
             // A copy indexes from its staged entry, and a row added to it commits to the copy.
             let edited = Path::new("edited.csv");
-            workspaces::files::copy(&workspace, Path::new("table.csv"), edited).await?;
+            workspaces::files::copy(&workspace, Path::new("table.csv"), edited, IfExists::Refuse)
+                .await?;
             workspaces::data_frames::index(&repo, &workspace, edited).await?;
             workspaces::data_frames::rows::add(
                 &repo,
@@ -398,8 +408,21 @@ mod tests {
             )?;
             stage_new_file(&workspace, "data/a.txt").await?;
             workspaces::files::rm(&workspace, &[PathBuf::from("data/sub/b.txt")]).await?;
-            for (source, dest, refusal) in [
-                ("data/a.txt", "a_copy.txt", "SourceHasStagedChanges"),
+            // A staged source copies what the workspace stages, and an edited data frame's copy
+            // carries its edits.
+            for (source, copy) in [
+                ("data/a.txt", "a_copy.txt"),
+                ("edited.csv", "edited_copy.csv"),
+            ] {
+                workspaces::files::copy(
+                    &workspace,
+                    Path::new(source),
+                    Path::new(copy),
+                    IfExists::Refuse,
+                )
+                .await?;
+            }
+            let refused = [
                 ("data/sub/b.txt", "b_copy.txt", "PathStagedForRemoval"),
                 ("data", "data_copy", "NotAFile"),
                 ("missing.txt", "missing_copy.txt", "PathDoesNotExist"),
@@ -408,16 +431,56 @@ mod tests {
                 ("table.csv", "data/a.txt", "DestinationExists"),
                 ("table.csv", "other_copy.txt", "DestinationAlreadyStaged"),
                 ("table.csv", "other.txt/table.csv", "NotADirectory"),
+            ];
+            let refused_even_replacing = [
+                ("table.csv", "other.txt/table.csv", "NotADirectory"),
+                ("table.csv", "data", "DestinationExists"),
+                ("table.csv", "out", "DestinationAlreadyStaged"),
+                ("table.csv", "table.csv", "DestinationExists"),
+            ];
+            for (if_exists, cases) in [
+                (IfExists::Refuse, &refused[..]),
+                (IfExists::Replace, &refused_even_replacing[..]),
             ] {
-                let result =
-                    workspaces::files::copy(&workspace, Path::new(source), Path::new(dest)).await;
-                assert!(
-                    result
-                        .as_ref()
-                        .is_err_and(|err| format!("{err:?}").starts_with(refusal)),
-                    "copying {source} to {dest} should be refused with {refusal}, got {result:?}"
+                for &(source, dest, refusal) in cases {
+                    let result = workspaces::files::copy(
+                        &workspace,
+                        Path::new(source),
+                        Path::new(dest),
+                        if_exists,
+                    )
+                    .await;
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|err| format!("{err:?}").starts_with(refusal)),
+                        "copying {source} to {dest} ({if_exists:?}) should be refused with \
+                         {refusal}, got {result:?}"
+                    );
+                }
+            }
+            // Replacing a staged data frame drops its edits along with its index, and a copy over a
+            // committed file the workspace removed puts a file back there.
+            for (source, dest, copied) in [
+                ("table.csv", "edited.csv", Copied::Replaced),
+                ("other.txt", "data/sub/b.txt", Copied::Added),
+            ] {
+                assert_eq!(
+                    workspaces::files::copy(
+                        &workspace,
+                        Path::new(source),
+                        Path::new(dest),
+                        IfExists::Replace,
+                    )
+                    .await?,
+                    copied,
+                    "copying {source} over {dest}"
                 );
             }
+            assert_eq!(
+                staged_status(&workspace, "data/sub/b.txt"),
+                Some(StagedEntryStatus::Modified)
+            );
             let committed = workspaces::commit(
                 &workspace,
                 &NewCommitBody::from_config(&user, "Copy files"),
@@ -447,9 +510,87 @@ mod tests {
                 other => panic!("{path} should have tabular metadata, got {other:?}"),
             };
             assert_eq!(
-                (rows("table.csv"), rows("edited.csv")),
-                (1, 2),
-                "the row added to the copy commits to the copy alone"
+                (
+                    rows("table.csv"),
+                    rows("edited_copy.csv"),
+                    rows("edited.csv")
+                ),
+                (1, 2, 1),
+                "the row added to a copy commits to it and its own copy, until it is replaced"
+            );
+            for (path, content) in [
+                ("a_copy.txt", "data/a.txt"),
+                ("data/sub/b.txt", "other.txt"),
+            ] {
+                assert_eq!(
+                    node(path).hash(),
+                    node(content).hash(),
+                    "{path} has {content}'s content"
+                );
+            }
+
+            // A data frame indexed after a copy replaced it indexes the copy, not the committed file,
+            // and a row added to it keeps the copy staged, so the row commits on the copy's rows.
+            let workspace = committing_workspace(&repo, &commit, "replaced")?;
+            let rows_csv = workspace.workspace_repo.path.join("rows.csv");
+            fs::write_to_path(&rows_csv, "x,y\n5,6\n7,8\n")?;
+            workspaces::files::add(&workspace, &rows_csv).await?;
+            let table = Path::new("table.csv");
+            workspaces::files::copy(&workspace, Path::new("rows.csv"), table, IfExists::Replace)
+                .await?;
+            workspaces::data_frames::index(&repo, &workspace, table).await?;
+            assert_eq!(
+                workspaces::data_frames::count(&workspace, table)?,
+                2,
+                "table.csv indexes the copy's two rows, not the committed file's one"
+            );
+            workspaces::data_frames::rows::add(&repo, &workspace, table, &json!({"x": 9, "y": 9}))?;
+            assert!(
+                workspaces::data_frames::is_indexed(&workspace, table)?,
+                "the row added to table.csv keeps the copy it was indexed from staged"
+            );
+            // A data frame edited and then replaced commits the replacement, not the edits, and its
+            // index stops counting as indexed. A copy over a path whose index is being built, or a
+            // copy of an index whose source is replaced as it is copied, leaves the same state.
+            let replaced = Path::new("replaced.csv");
+            let replaced_file = workspace.workspace_repo.path.join(replaced);
+            fs::write_to_path(&replaced_file, "x,y\n1,1\n")?;
+            workspaces::files::add(&workspace, &replaced_file).await?;
+            workspaces::data_frames::index(&repo, &workspace, replaced).await?;
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                replaced,
+                &json!({"x": 2, "y": 2}),
+            )?;
+            fs::write_to_path(&replaced_file, "x,y\n3,3\n4,4\n5,5\n")?;
+            workspaces::files::add(&workspace, &replaced_file).await?;
+            assert_eq!(
+                workspaces::data_frames::index_status(&workspace, replaced)?,
+                IndexStatus::OtherFile,
+                "replaced.csv keeps its index of the file it held before the upload"
+            );
+            let committed = workspaces::commit(
+                &workspace,
+                &NewCommitBody::from_config(&user, "Edit replaced data frames"),
+                "replaced",
+            )
+            .await?;
+            let rows = |path: &str| match repositories::tree::get_file_by_path(
+                &repo, &committed, path,
+            )
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} should be in the commit"))
+            .metadata()
+            {
+                Some(GenericMetadata::MetadataTabular(m)) => m.tabular.height,
+                other => panic!("{path} should have tabular metadata, got {other:?}"),
+            };
+            assert_eq!(
+                (rows("table.csv"), rows("replaced.csv")),
+                (3, 3),
+                "table.csv commits the copy's rows and the added one, and replaced.csv the upload's \
+                 rows without the one added before it"
             );
 
             // A committed directory moves with its nested subdirectory, and retrying the move

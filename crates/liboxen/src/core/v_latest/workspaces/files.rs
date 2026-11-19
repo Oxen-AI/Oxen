@@ -27,6 +27,7 @@ use crate::core::v_latest::add::{
     get_file_node, process_add_file_with_staged_db_manager, stage_version_file, version_file_node,
 };
 use crate::core::v_latest::index::CommitMerkleTree;
+use crate::core::v_latest::workspaces::data_frames::IndexReplacement;
 use crate::error::OxenError;
 use crate::model::file::TempFilePathNew;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, FileNode};
@@ -1294,24 +1295,23 @@ fn p_modify_file(
 
     let staged_db_manager = get_staged_db_manager(workspace_repo)?;
     staged_db_manager.edit_staged_node(path, |staged| {
-        let (mut file_node, status) = match (committed, staged) {
-            (Some(mut file_node), staged) => {
+        let (mut file_node, status) = match (staged, committed) {
+            // The edit applies to what the workspace stages, which may have replaced the committed
+            // file (an upload or a copy) or edited its metadata, and keeps its content hash, which
+            // the data frame's index was built from. `edit_staged_node` refuses a path staged for
+            // removal. A path the commit has is staged as modified, and one only the workspace has,
+            // such as a copy, stays staged as it was added.
+            (Some(staged), committed) => {
+                let status = match committed {
+                    Some(_) => StagedEntryStatus::Modified,
+                    None => staged.status,
+                };
+                (staged.node.file()?, status)
+            }
+            (None, Some(mut file_node)) => {
                 file_node.set_name(&path.to_string_lossy());
-                // The committed node knows nothing of workspace metadata edits. When
-                // the staged node holds the same content with different metadata,
-                // carry that metadata over so re-staging doesn't discard it.
-                if let Some(staged) = staged
-                    && let Ok(staged_file) = staged.node.file()
-                    && staged_file.hash() == file_node.hash()
-                    && let Some(metadata) = staged_file.metadata()
-                {
-                    file_node.set_metadata(Some(metadata));
-                    file_node.recompute_metadata_hashes()?;
-                }
                 (file_node, StagedEntryStatus::Modified)
             }
-            // A file only the workspace has, such as a copy, stays staged as it was added.
-            (None, Some(staged)) => (staged.node.file()?, staged.status),
             (None, None) => return Err(OxenError::basic_str("file not found in head commit")),
         };
         file_node.set_last_modified(edited_at.unix_seconds(), edited_at.nanoseconds());
@@ -1396,17 +1396,46 @@ fn mv_sync(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), Ox
     mv_dir(workspace, &db, path, new_path)
 }
 
-/// Stage a copy of the base commit's file at `path` as a new file at `new_path`. The copy shares the
-/// committed file's content, so nothing is uploaded. A copy with a different extension gets the type
-/// and metadata an upload of the same bytes to `new_path` would. Refused when the workspace has
-/// changes staged for `path`, or when anything is at `new_path` already.
-pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result<(), OxenError> {
-    let source =
-        repositories::tree::get_node_by_path_async(&workspace.base_repo, &workspace.commit, path)
-            .await?
-            .ok_or_else(|| OxenError::path_does_not_exist(path))?;
-    let EMerkleTreeNode::File(source) = source.node else {
-        return Err(OxenError::NotAFile(path.to_path_buf().into()));
+/// What a copy does when a file is already at its destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IfExists {
+    /// Refuse the copy.
+    Refuse,
+    /// Replace the file, committed or staged.
+    Replace,
+}
+
+/// What a copy did at its destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Copied {
+    /// No file was there.
+    Added,
+    /// The copy replaced a file.
+    Replaced,
+}
+
+/// Stage a copy of the workspace's file at `path` at `new_path`, taking what the workspace stages
+/// for `path` when it stages a change, else the base commit's file. A tabular copy also takes the
+/// data frame edits the workspace holds for `path`, and any other copy gets the file without them.
+/// The copy shares the source's content, so nothing is uploaded. A copy with a different extension
+/// gets the type and metadata an upload of the same bytes to `new_path` would. Refused for a source
+/// staged for removal, a destination that is a directory or sits beneath a file, and a file at
+/// `new_path` unless `if_exists` is [`IfExists::Replace`].
+pub async fn copy(
+    workspace: &Workspace,
+    path: &Path,
+    new_path: &Path,
+    if_exists: IfExists,
+) -> Result<Copied, OxenError> {
+    let source = {
+        let (workspace, path) = (workspace.clone(), path.to_path_buf());
+        tasks::spawn_blocking(move || CopySource::find(&workspace, &path)).await??
+    };
+    // A data frame's staged edits live in its index, which the commit exports in place of the
+    // staged file, so the copy takes the index along. An index of an unstaged file holds no edits.
+    let (source, index_source) = match source {
+        CopySource::Staged(file) => (file, Some(path.to_path_buf())),
+        CopySource::Committed(file) => (file, None),
     };
     let copy = if util::fs::file_extension(path) != util::fs::file_extension(new_path) {
         let mut file = inspect_stored_version(
@@ -1430,34 +1459,131 @@ pub async fn copy(workspace: &Workspace, path: &Path, new_path: &Path) -> Result
         path.to_path_buf(),
         new_path.to_path_buf(),
     );
-    tasks::spawn_blocking(move || stage_copy(&workspace, &path, &new_path, copy)).await?
+    // Only a tabular copy is exported from an index.
+    let index_source = index_source.filter(|_| *copy.data_type() == EntryDataType::Tabular);
+    tasks::spawn_blocking(move || {
+        // Prepared before the staged-db lock is taken, so copying a large index doesn't hold up
+        // the workspace.
+        let index = match index_source.as_deref() {
+            Some(source) => IndexReplacement::prepare(&workspace, Some(source), &new_path)?,
+            None => None,
+        };
+        stage_copy(&workspace, &path, &new_path, copy, if_exists, index)
+    })
+    .await?
 }
 
-/// Stage `file_node` at `new_path` as a copy of the committed file at `path`, refusing the copy
-/// under the same staged-db guard as the write.
+/// The file a copy takes its content from.
+enum CopySource {
+    /// What the workspace stages at the path.
+    Staged(FileNode),
+    /// The base commit's file, which the workspace stages nothing over.
+    Committed(FileNode),
+}
+
+impl CopySource {
+    /// The file a copy of `path` in `workspace` takes, refusing one staged for removal.
+    fn find(workspace: &Workspace, path: &Path) -> Result<Self, OxenError> {
+        let staged = get_staged_db_manager(&workspace.workspace_repo)?.read_from_staged_db(path)?;
+        match staged {
+            Some(entry) if entry.status == StagedEntryStatus::Removed => {
+                Err(OxenError::PathStagedForRemoval(path.to_path_buf().into()))
+            }
+            Some(entry) if !entry.node.is_dir() => Ok(Self::Staged(entry.node.file()?)),
+            _ => match repositories::tree::get_node_by_path(
+                &workspace.base_repo,
+                &workspace.commit,
+                path,
+            )? {
+                Some(MerkleTreeNode {
+                    node: EMerkleTreeNode::File(file),
+                    ..
+                }) => Ok(Self::Committed(file)),
+                Some(_) => Err(OxenError::NotAFile(path.to_path_buf().into())),
+                None => Err(OxenError::path_does_not_exist(path)),
+            },
+        }
+    }
+}
+
+/// Stage `file_node` at `new_path` as a copy of the file at `path`, refusing the copy under the same
+/// staged-db guard as the write, and put `index` in place of `new_path`'s data frame index.
 fn stage_copy(
     workspace: &Workspace,
     path: &Path,
     new_path: &Path,
     mut file_node: FileNode,
-) -> Result<(), OxenError> {
+    if_exists: IfExists,
+    index: Option<IndexReplacement>,
+) -> Result<Copied, OxenError> {
     let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     let db = staged_db_manager.lock_for_write();
-    match read_from_db(&db, path)? {
-        Some(entry) if entry.status == StagedEntryStatus::Removed => {
-            return Err(OxenError::PathStagedForRemoval(path.to_path_buf().into()));
-        }
-        Some(_) => return Err(OxenError::SourceHasStagedChanges(path.to_path_buf().into())),
-        None => {}
-    }
     refuse_destination_under_file(workspace, new_path, |p| read_from_db(&db, p))?;
-    refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
+    let (copied, status) = match if_exists {
+        IfExists::Refuse => {
+            refuse_destination(workspace, new_path, |p| Ok(read_from_db(&db, p)?.is_some()))?;
+            (Copied::Added, StagedEntryStatus::Added)
+        }
+        IfExists::Replace => {
+            replace_destination(workspace, path, new_path, read_from_db(&db, new_path)?)?
+        }
+    };
+    // A copy that brings no index checks for one at `new_path` here, since another copy can
+    // install one there before this lock is taken, and installs under this lock too.
+    let mut index = match index {
+        None => IndexReplacement::prepare(workspace, None, new_path)?,
+        some => some,
+    };
 
     file_node.set_name(&new_path.to_string_lossy());
     let mut batch = StagedWriteBatch::default();
-    batch.upsert_file_node(new_path, StagedEntryStatus::Added, &file_node);
+    batch.upsert_file_node(new_path, status, &file_node);
     batch.add_parent_directories(new_path);
-    batch.write(&db)
+    if let Some(index) = &mut index {
+        index.install()?;
+    }
+    if let Err(err) = batch.write(&db) {
+        if let Some(index) = &mut index {
+            index.restore();
+        }
+        return Err(err);
+    }
+    // Released first, so deleting the replaced index doesn't hold up the workspace.
+    drop(db);
+    Ok(copied)
+}
+
+/// What copying `path` over `new_path` does there, and the copy's staged status, refusing a
+/// directory at `new_path` and a copy onto its own source. `staged` is the workspace's entry at
+/// `new_path`.
+fn replace_destination(
+    workspace: &Workspace,
+    path: &Path,
+    new_path: &Path,
+    staged: Option<StagedMerkleTreeNode>,
+) -> Result<(Copied, StagedEntryStatus), OxenError> {
+    let committed =
+        repositories::tree::get_node_by_path(&workspace.base_repo, &workspace.commit, new_path)?;
+    if new_path == path || committed.as_ref().is_some_and(|node| node.is_dir()) {
+        return Err(OxenError::DestinationExists(new_path.to_path_buf().into()));
+    }
+    let copied = match staged {
+        Some(entry) if entry.status == StagedEntryStatus::Removed => Copied::Added,
+        Some(entry) if entry.node.is_dir() => {
+            return Err(OxenError::DestinationAlreadyStaged(
+                new_path.to_path_buf().into(),
+            ));
+        }
+        Some(_) => Copied::Replaced,
+        None if committed.is_some() => Copied::Replaced,
+        None => Copied::Added,
+    };
+    let status = if committed.is_some() {
+        StagedEntryStatus::Modified
+    } else {
+        StagedEntryStatus::Added
+    };
+    Ok((copied, status))
 }
 
 /// Refuse a copy's or move's destination when the base commit already has it, or else when
