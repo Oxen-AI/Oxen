@@ -366,10 +366,7 @@ fn latest_commit<'a>(
     found_commits: &'a mut HashMap<MerkleHash, Option<Commit>>,
 ) -> Result<Option<&'a Commit>, OxenError> {
     match found_commits.entry(commit_id) {
-        Entry::Occupied(found) => {
-            let found: &'a Option<Commit> = found.into_mut();
-            Ok(found.as_ref())
-        }
+        Entry::Occupied(found) => Ok(found.into_mut().as_ref()),
         Entry::Vacant(slot) => {
             let _perf = crate::perf_guard!("core::entries::get_commit_by_hash");
             let commit = repositories::commits::get_by_hash(repo, &commit_id)?;
@@ -380,8 +377,7 @@ fn latest_commit<'a>(
                     "Entry names a commit the repository does not have"
                 );
             }
-            let inserted: &'a Option<Commit> = slot.insert(commit);
-            Ok(inserted.as_ref())
+            Ok(slot.insert(commit).as_ref())
         }
     }
 }

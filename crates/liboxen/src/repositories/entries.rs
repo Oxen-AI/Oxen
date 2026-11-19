@@ -47,7 +47,7 @@ pub fn list_commit_entries(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts)
+    list_directory_w_version(repo, Path::new(ROOT_PATH), revision.as_ref(), paginate_opts)
 }
 
 /// List all the entries within a directory given a specific commit
@@ -57,40 +57,35 @@ pub fn list_directory(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, directory, revision, paginate_opts)
+    list_directory_w_version(repo, directory.as_ref(), revision.as_ref(), paginate_opts)
 }
 
 /// List the entries within a directory given a specific revision
 pub fn list_directory_w_version(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    let revision_str = revision.as_ref().to_string();
+    let revision_str = revision.to_string();
     let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
     let commit = repositories::revisions::get(repo, &revision_str)?;
     let parsed_resource = ParsedResource {
-        path: directory.as_ref().to_path_buf(),
+        path: directory.to_path_buf(),
         commit,
         workspace: None,
         branch,
         version: PathBuf::from(&revision_str),
-        resource: PathBuf::from(&revision_str).join(directory.as_ref()),
+        resource: PathBuf::from(&revision_str).join(directory),
     };
-    core::v_latest::entries::list_directory(
-        repo,
-        directory.as_ref(),
-        &parsed_resource,
-        paginate_opts,
-    )
+    core::v_latest::entries::list_directory(repo, directory, &parsed_resource, paginate_opts)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     sort_opts: &SortOpts,
@@ -99,7 +94,7 @@ pub fn list_directory_w_workspace_depth(
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
 
     let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
-    let revision_str = revision.as_ref().to_string();
+    let revision_str = revision.to_string();
     let version_str = if let Some(workspace) = workspace.clone() {
         workspace.id.clone()
     } else {
@@ -109,18 +104,18 @@ pub fn list_directory_w_workspace_depth(
     let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
     let commit = repositories::revisions::get(repo, &revision_str)?;
     let parsed_resource = ParsedResource {
-        path: directory.as_ref().to_path_buf(),
+        path: directory.to_path_buf(),
         commit,
         workspace,
         branch,
         version: PathBuf::from(&version_str),
-        resource: PathBuf::from(&version_str).join(directory.as_ref()),
+        resource: PathBuf::from(&version_str).join(directory),
     };
     drop(_perf_setup);
 
     core::v_latest::entries::list_directory_with_depth(
         repo,
-        directory.as_ref(),
+        directory,
         &parsed_resource,
         paginate_opts,
         sort_opts,
