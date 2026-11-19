@@ -329,6 +329,19 @@ impl VersionStore for LocalVersionStore {
         Ok(self.version_path(hash).exists())
     }
 
+    async fn find_missing_versions(&self, hashes: &[String]) -> Result<Vec<String>, OxenError> {
+        let store = LocalVersionStore::new(&self.root_path);
+        let hashes = hashes.to_vec();
+        let missing = tasks::spawn_blocking(move || {
+            hashes
+                .into_par_iter()
+                .filter(|hash| !store.version_path(hash).exists())
+                .collect()
+        })
+        .await?;
+        Ok(missing)
+    }
+
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
         self.delete_versions(vec![hash.to_string()]).await
     }

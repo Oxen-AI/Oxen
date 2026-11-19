@@ -7,14 +7,13 @@ use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
 use crate::repositories;
 use crate::tasks;
-use crate::util::concurrency;
 
 use crate::constants::ROOT_PATH;
 use crate::model::{
     Commit, CommitEntry, LocalRepository, MetadataEntry, ParsedResource, Workspace,
 };
 use crate::view::PaginatedDirEntries;
-use futures::{StreamExt, TryStreamExt, stream};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Get a directory object for a commit
@@ -227,69 +226,47 @@ pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
     Ok(total_size)
 }
 
+/// The files of `head_commit_id`, or of every commit after `base_commit_id` up to it, whose version
+/// files the version store lacks, one entry per path. A base the repository lacks counts as none.
 pub async fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
-    base_commit: &Option<Commit>,
-    head_commit: &Commit,
+    base_commit_id: Option<&str>,
+    head_commit_id: &str,
 ) -> Result<Vec<CommitEntry>, OxenError> {
     let version_store = repo.version_store();
-
-    match base_commit {
-        Some(base_commit) => {
-            let commits = repositories::commits::list_between(repo, base_commit, head_commit)?;
-
-            let mut all_entries: Vec<CommitEntry> = Vec::new();
-            for commit in commits {
-                let entries = list_for_commit(repo, &commit)?;
-                all_entries.extend(entries);
-            }
-
-            all_entries.sort_by(|a, b| a.path.cmp(&b.path));
-            all_entries.dedup_by(|a, b| a.path == b.path);
-
-            let worker_count = concurrency::num_threads_for_items(all_entries.len());
-            let missing_files = stream::iter(all_entries)
-                .map(|entry| {
-                    let version_store = &version_store;
-                    async move {
-                        match version_store.version_exists(&entry.hash).await {
-                            Ok(true) => Ok(None),
-                            Ok(false) => Ok(Some(entry)),
-                            Err(e) => Err(e),
-                        }
-                    }
-                })
-                .buffer_unordered(worker_count)
-                .try_filter_map(|x| async move { Ok(x) })
-                .try_collect::<Vec<_>>()
-                .await?;
-
-            Ok(missing_files)
+    let repo = repo.clone();
+    let base_commit_id = base_commit_id.map(str::to_string);
+    let head_commit_id = head_commit_id.to_string();
+    let entries = tasks::spawn_blocking(move || -> Result<_, OxenError> {
+        let head_commit = repositories::commits::get_by_id(&repo, &head_commit_id)?
+            .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.as_str().into()))?;
+        let base_commit = base_commit_id
+            .map(|id| repositories::commits::get_by_id(&repo, id))
+            .transpose()?
+            .flatten();
+        let Some(base_commit) = base_commit else {
+            return list_for_commit(&repo, &head_commit);
+        };
+        let mut entries = Vec::new();
+        for commit in repositories::commits::list_between(&repo, &base_commit, &head_commit)? {
+            entries.extend(list_for_commit(&repo, &commit)?);
         }
-        None => {
-            // we only receive a head commit, so we need to find all the commits between the head and the first commit
-            let entries = list_for_commit(repo, head_commit)?;
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        entries.dedup_by(|a, b| a.path == b.path);
+        Ok(entries)
+    })
+    .await??;
 
-            let worker_count = concurrency::num_threads_for_items(entries.len());
-            let missing_files = stream::iter(entries)
-                .map(|entry| {
-                    let version_store = &version_store;
-                    async move {
-                        match version_store.version_exists(&entry.hash).await {
-                            Ok(true) => Ok(None),
-                            Ok(false) => Ok(Some(entry)),
-                            Err(e) => Err(e),
-                        }
-                    }
-                })
-                .buffer_unordered(worker_count)
-                .try_filter_map(|x| async move { Ok(x) })
-                .try_collect::<Vec<_>>()
-                .await?;
-
-            Ok(missing_files)
-        }
-    }
+    let hashes: Vec<String> = entries.iter().map(|entry| entry.hash.clone()).collect();
+    let missing: HashSet<String> = version_store
+        .find_missing_versions(&hashes)
+        .await?
+        .into_iter()
+        .collect();
+    Ok(entries
+        .into_iter()
+        .filter(|entry| missing.contains(&entry.hash))
+        .collect())
 }
 
 pub use crate::core::v_latest::entries::list_tabular_files_in_repo;
