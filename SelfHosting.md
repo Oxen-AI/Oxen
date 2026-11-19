@@ -12,7 +12,7 @@ Start the server:
 $ oxen-server start
 ```
 
-Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer) rather than exposing it to clients directly. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a long read timeout and no limit on a request's total time, since some requests, such as committing a workspace, merging a branch, or importing a file from a URL, send nothing until their work is done, for longer the more data they cover.
+Run `oxen-server` behind a reverse proxy (nginx, Caddy, Traefik, or a cloud load balancer), and make sure clients can reach it only through the proxy. `oxen-server` serves plain HTTP and does not authenticate requests, so the proxy should terminate TLS, close idle client connections, and, if you require authentication, check each request before forwarding it. Let the proxy forward request bodies of several GB, since a push of a large repository uploads its tree in one request, and give it a long read timeout and no limit on a request's total time, since some requests, such as committing a workspace, merging a branch, or importing a file from a URL, send nothing until their work is done, for longer the more data they cover.
 
 If the proxy checks a bearer token, give each client its token with the `config` command, which keeps one token per host in `~/.config/oxen/auth_config.toml` and sends it as `Authorization: Bearer <TOKEN>` on every request to that host:
 
@@ -32,10 +32,10 @@ Syncing to directory: /Path/To/Data
 [2022-06-08T10:00:48Z INFO  actix_server::server] Actix runtime found; starting in Actix runtime
 ```
 
-If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default, so keep clients from reaching it around the reverse proxy. If the proxy and the server run on the same host and share its network (neither in a container with its own network), bind the server to `127.0.0.1`. Otherwise, use a firewall or a private network so only the proxy can reach the server's port. In a container, keep the default bind and either publish the port only on the host's loopback (`docker run -p 127.0.0.1:<host port>:<port>`) or put the proxy on the container's network and publish nothing. For example, to bind a server outside a container to `127.0.0.1` on port 4321:
+If you want to change the default `IP ADDRESS` and `PORT` you can do so by passing them in with the `-i` and `-p` parameters. The server listens on every interface (`0.0.0.0`) by default.
 
 ```bash
-$ oxen-server start -i 127.0.0.1 -p 4321
+$ oxen-server start -i 0.0.0.0 -p 4321
 ```
 
 ## Storage Configuration
