@@ -84,11 +84,12 @@ mod tests {
         );
     }
 
-    /// A misspelled source fails startup.
-    /// Falling back would leave the server minting UUIDs an auth provider owns.
     #[test]
     fn rejects_an_unknown_source() {
-        assert!(toml::from_str::<IdentityPolicy>(r#"repo_uuids_assigned_by = "hub""#).is_err());
+        assert!(
+            toml::from_str::<IdentityPolicy>(r#"repo_uuids_assigned_by = "hub""#).is_err(),
+            "an unknown source must fail before the server mints UUIDs an auth provider owns"
+        );
     }
 
     #[test]
