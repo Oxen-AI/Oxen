@@ -311,9 +311,12 @@ async fn build_table(
     tasks::spawn_blocking(move || {
         with_df_db_manager(&db_path, |manager| {
             manager.with_conn(|conn| {
-                // Another request may have indexed this frame since the caller checked.
+                // Another request may have indexed this file since the caller checked.
                 // A rebuild would then discard the edits staged in the table.
-                if !replace_indexed && df_db::table_is_fully_indexed(conn, TABLE_NAME)? {
+                if !replace_indexed
+                    && df_db::table_is_fully_indexed(conn, TABLE_NAME)?
+                    && df_db::index_source(conn)?.is_none_or(|source| source == file_hash)
+                {
                     return Ok(());
                 }
 

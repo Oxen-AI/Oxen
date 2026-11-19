@@ -998,6 +998,21 @@ mod tests {
             }
 
             {
+                // Indexing a data frame that an upload replaced builds its table from the upload.
+                let workspace = indexed_workspace(&repo, &commit, "reindex-upload").await?;
+                let workspace_file = workspace.workspace_repo.path.join(&path);
+                write_to_path(&workspace_file, "file,label\nreplaced.jpg,dog\n")?;
+                files::add(&workspace, &workspace_file).await?;
+                assert!(!is_indexed(&workspace, &path)?);
+                index(&repo, &workspace, &path).await?;
+                assert!(
+                    is_indexed(&workspace, &path)?,
+                    "indexing a replaced data frame builds its table from the upload"
+                );
+                assert_eq!(count(&workspace, &path)?, 1);
+            }
+
+            {
                 // Row and column edits in a workspace, and what stays staged after them.
                 let workspace = indexed_workspace(&repo, &commit, "row-edits").await?;
                 let row_count = || count(&workspace, &path);
