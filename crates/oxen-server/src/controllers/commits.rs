@@ -22,7 +22,6 @@ use liboxen::view::{
     RootCommitResponse, StatusMessage,
 };
 
-use crate::app_data::OxenAppData;
 use crate::errors::OxenHttpError;
 use crate::helpers::{get_repo, get_repo_async};
 use crate::params::PageNumQuery;
@@ -30,22 +29,18 @@ use crate::params::parse_resource_async;
 use crate::params::{app_data, maybe_parse_two_dot, path_param};
 use crate::tasks;
 
-use actix_web::{Error, HttpRequest, HttpResponse, web};
-use async_compression::tokio::bufread::GzipDecoder;
+use actix_web::{HttpRequest, HttpResponse, web};
 use bytesize::ByteSize;
 use flate2::Compression;
+use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use futures_util::stream::StreamExt as _;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::io::Cursor;
 use std::io::ErrorKind;
 use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::io::BufReader;
-use tokio_tar::Archive;
 use utoipa::{IntoParams, ToSchema};
 
 #[derive(Deserialize, Debug, IntoParams)]
@@ -240,7 +235,7 @@ pub async fn list_missing(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
 
     let data: Result<MerkleHashes, serde_json::Error> = serde_json::from_str(&body);
     let Ok(merkle_hashes) = data else {
@@ -248,27 +243,11 @@ pub async fn list_missing(
         return Ok(HttpResponse::BadRequest().json(StatusMessage::error("Invalid JSON")));
     };
 
-    // Treat a commit as fully present iff BOTH the commit's merkle-tree node is in the repository's
-    // node store AND the commit's dir-hashes directory exists at
-    // `.oxen/history/<commit_id>/dir_hashes/`. The dir-hashes directory is uploaded as the last
-    // data step of `push`, so requiring both is a stronger proxy for "the push got all the way to
-    // the end" than node-existence alone, and avoids regressing the `create_nodes`-without-push
-    // pattern, which uploads non-leaf nodes directly without ever populating the dir-hashes DB.
-    let history_dir = util::fs::oxen_hidden_dir(&repo.path).join(HISTORY_DIR);
-    let mut missing_commits = HashSet::new();
-    for hash in &merkle_hashes.hashes {
-        let node_present = repositories::tree::get_node_by_id(&repo, hash)?.is_some();
-        let dir_hashes_present = history_dir
-            .join(hash.to_string())
-            .join(DIR_HASHES_DIR)
-            .exists();
-        if !node_present || !dir_hashes_present {
-            missing_commits.insert(*hash);
-        }
-    }
+    let hash_count = merkle_hashes.hashes.len();
+    let missing_commits = repositories::commits::list_missing(&repo, merkle_hashes.hashes).await?;
     log::debug!(
         "list_missing checked {} commit hashes, {} missing",
-        merkle_hashes.hashes.len(),
+        hash_count,
         missing_commits.len()
     );
     let response = MerkleHashesResponse {
@@ -301,20 +280,12 @@ pub async fn list_missing_files(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-
-    let base_commit = match &query.base {
-        Some(base) => repositories::commits::get_by_id(&repo, base)?,
-        None => None,
-    };
-
-    let head_commit = repositories::commits::get_by_id(&repo, &query.head)?
-        .ok_or_else(|| OxenError::RevisionNotFound(query.head.as_str().into()))?;
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
 
     let missing_files = repositories::entries::list_missing_files_in_commit_range(
         &repo,
-        &base_commit,
-        &head_commit,
+        query.base.as_deref(),
+        &query.head,
     )
     .await?;
 
@@ -346,8 +317,9 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
     let commit_id = path_param(&req, "commit_id")?.to_string();
-    let repo = get_repo(app_data, namespace, repo_name)?;
-    let commit = repositories::commits::get_by_id(&repo, &commit_id)?
+    let repo = get_repo_async(app_data, &namespace, &repo_name).await?;
+    let commit = repositories::commits::get_by_id_async(&repo, &commit_id)
+        .await?
         .ok_or_else(|| OxenError::RevisionNotFound(commit_id.into()))?;
 
     Ok(HttpResponse::Ok().json(CommitResponse {
@@ -377,7 +349,7 @@ pub async fn parents(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHt
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
     // Resolving the revision and walking its history are sync RocksDB reads, and opening the
     // commit-count cache can spin for the whole LOCK-retry window.
     let parents = tasks::spawn_blocking(move || {
@@ -469,7 +441,7 @@ pub async fn download_dir_hashes_db(
     let name = path_param(&req, "repo_name")?.to_string();
     // base_head is the base and head commit id separated by ..
     let base_head = path_param(&req, "base_head")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
 
     // Let user pass in base..head to download a range of commits
     // or we just get all the commits from the base commit to the first commit
@@ -500,7 +472,7 @@ pub async fn download_dir_hashes_db(
 /// Download commit entries DB
 #[utoipa::path(
     get,
-    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_entries_db",
+    path = "/api/repos/{namespace}/{repo_name}/commits/{commit_or_branch}/commit_db",
     tag = "Commits",
     description = "Download the commit entries database for a specific commit as a tarball.",
     params(
@@ -520,11 +492,14 @@ pub async fn download_commit_entries_db(
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
     let commit_or_branch = path_param(&req, "commit_or_branch")?.to_string();
-    let repository = get_repo(app_data, namespace, name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
 
-    let commit = repositories::revisions::get(&repository, &commit_or_branch)?
+    let commit = repositories::revisions::get_async(&repository, &commit_or_branch)
+        .await?
         .ok_or_else(|| OxenError::RevisionNotFound(commit_or_branch.into()))?;
-    let buffer = compress_commit(&repository, &commit)?;
+    let buffer = tasks::spawn_blocking(move || compress_commit(&repository, &commit))
+        .await
+        .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().body(buffer))
 }
@@ -644,7 +619,7 @@ pub async fn create(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let repo_name = path_param(&req, "repo_name")?.to_string();
-    let repository = get_repo(app_data, namespace, repo_name)?;
+    let repository = get_repo_async(app_data, &namespace, &repo_name).await?;
     let _write = repo_locks::begin_write(&repository)?;
 
     let new_commit: Commit = match serde_json::from_str(&body) {
@@ -666,10 +641,11 @@ pub async fn create(
         };
 
     // Create Commit from uri params
-    match repositories::commits::create_empty_commit(&repository, bn.branch_name, &new_commit) {
+    match repositories::commits::create_empty_commit(&repository, bn.branch_name, new_commit).await
+    {
         Ok(commit) => Ok(HttpResponse::Ok().json(CommitResponse {
             status: StatusMessage::resource_created(),
-            commit: commit.to_owned(),
+            commit,
         })),
         Err(err) => {
             log::error!("Err create_commit: {err}");
@@ -707,7 +683,7 @@ pub async fn upload_chunk(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, name)?;
+    let repo = get_repo_async(app_data, &namespace, &name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
@@ -733,24 +709,33 @@ pub async fn upload_chunk(
     let bytes = bytes.freeze();
 
     let tmp_dir = hidden_dir.join("tmp").join("chunked").join(id);
-    let chunk_file = chunk_path(&tmp_dir, chunk_num);
-    log::debug!("upload_chunk writing file {chunk_file:?}");
-    // The chunk's file is closed before the completion check, which can remove its directory: on
-    // NFS an unlinked file still open lingers as .nfsXXXX and the rmdir fails with ENOTEMPTY.
-    tasks::spawn_blocking(move || AtomicFile::new(&chunk_file).write(&bytes))
-        .await
-        .map_err(OxenError::from)??;
-
     // TODO: there is a race condition here when multiple chunks
     // are uploaded in parallel Currently doesn't hurt anything,
     // but we should find a more elegant solution because we're
     // doing a lot of extra work unpacking tarballs multiple
     // times.
-    check_if_upload_complete_and_unpack(&repo, tmp_dir, total_chunks, size, expected_hash)
-        .await
-        .inspect_err(|err| log::error!("upload_chunk unpack failed: {err:?}"))?;
+    let reassembly = tasks::spawn_blocking(move || {
+        let chunk_file = chunk_path(&tmp_dir, chunk_num);
+        log::debug!("upload_chunk writing file {chunk_file:?}");
+        // The chunk's file is closed before the completion check, which can remove its directory:
+        // on NFS an unlinked file still open lingers as .nfsXXXX and the rmdir fails with ENOTEMPTY.
+        AtomicFile::new(&chunk_file).write(&bytes)?;
+        reassemble_chunks(&hidden_dir, &tmp_dir, total_chunks, size, expected_hash)
+    })
+    .await
+    .map_err(OxenError::from)?
+    .inspect_err(|err| {
+        tracing::error!(exception.message = ?err, "Failed to store a chunk of a commit upload");
+    })?;
 
-    Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+    match reassembly {
+        Reassembly::AwaitingChunks | Reassembly::Unpacked => {
+            Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
+        }
+        Reassembly::HashMismatch => Err(OxenHttpError::BadRequest(
+            "the uploaded chunks do not match the upload's hash".into(),
+        )),
+    }
 }
 
 /// The file in a chunked upload's directory that holds chunk `chunk_num`.
@@ -758,104 +743,76 @@ fn chunk_path(tmp_dir: &Path, chunk_num: usize) -> PathBuf {
     tmp_dir.join(format!("chunk_{chunk_num:016}"))
 }
 
-async fn check_if_upload_complete_and_unpack(
-    repo: &LocalRepository,
-    tmp_dir: PathBuf,
+/// What a chunk's arrival did to its chunked upload.
+enum Reassembly {
+    AwaitingChunks,
+    Unpacked,
+    HashMismatch,
+}
+
+/// Unpacks a chunked upload into `hidden_dir` once all `total_chunks` of its chunks in `tmp_dir`
+/// have arrived and add up to `expected_hash`, then removes the chunks. Chunks that fail the hash
+/// are removed too, since a retry sends its first chunk into the same directory, where they would
+/// fail the hash the same way every time. Other failures keep them, since a server error is
+/// retried by resending one chunk among the rest.
+fn reassemble_chunks(
+    hidden_dir: &Path,
+    tmp_dir: &Path,
     total_chunks: usize,
     total_size: usize,
     expected_hash: MerkleHash,
-) -> Result<(), OxenHttpError> {
-    let chunk_dir = tmp_dir.clone();
-    let assembled = tasks::spawn_blocking(move || -> Result<_, OxenError> {
-        // Only the chunks themselves, so a write's scratch file in the directory is never taken for
-        // a chunk. Built lazily, since `total_chunks` comes from the request.
-        let files = || (0..total_chunks).map(|chunk_num| chunk_path(&chunk_dir, chunk_num));
-        let mut uploaded_size: u64 = 0;
-        // Last chunk first, since chunks arrive in order and every request before the last finds
-        // it missing.
-        for file in files().rev() {
-            match std::fs::metadata(&file) {
-                Ok(metadata) => uploaded_size += metadata.len(),
-                Err(err) if err.kind() == ErrorKind::NotFound => {
-                    log::debug!("check_if_upload_complete_and_unpack still waiting on {file:?}");
-                    return Ok(None);
-                }
-                Err(err) => return Err(OxenError::file_metadata_error(&file, err)),
+) -> Result<Reassembly, OxenError> {
+    // Only the chunks themselves, so a write's scratch file in the directory is never taken for a
+    // chunk. Built lazily, since `total_chunks` comes from the request.
+    let files = || (0..total_chunks).map(|chunk_num| chunk_path(tmp_dir, chunk_num));
+    let mut uploaded_size: u64 = 0;
+    // Last chunk first, since chunks arrive in order and every request before the last finds it
+    // missing.
+    for file in files().rev() {
+        match std::fs::metadata(&file) {
+            Ok(metadata) => uploaded_size += metadata.len(),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                log::debug!("reassemble_chunks still waiting on {file:?}");
+                return Ok(Reassembly::AwaitingChunks);
             }
+            Err(err) => return Err(OxenError::file_metadata_error(&file, err)),
         }
-
-        log::debug!(
-            "check_if_upload_complete_and_unpack checking if complete... {uploaded_size} / {total_size}"
-        );
-
-        if (uploaded_size as usize) < total_size {
-            return Ok(None);
-        }
-
-        // Get tar.gz bytes for history/COMMIT_ID data
-        let mut buffer = Vec::with_capacity(uploaded_size as usize);
-        for file in files() {
-            log::debug!("Reading file bytes {file:?}");
-            let mut f =
-                std::fs::File::open(&file).map_err(|e| OxenError::file_open_error(&file, e))?;
-
-            f.read_to_end(&mut buffer)
-                .map_err(|e| OxenError::file_read_error(&file, e))?;
-        }
-        // `files` is in chunk order, so the concatenation restores the original byte offsets, and
-        // a chunk that arrived corrupt, truncated, or out of order fails the hash before anything
-        // unpacks.
-        let hash = MerkleHash::new(hasher::hash_buffer_128bit(&buffer));
-        Ok(Some((buffer, hash)))
-    })
-    .await
-    .map_err(OxenError::from)??;
-
-    if let Some((buffer, hash)) = assembled {
-        log::debug!(
-            "check_if_upload_complete_and_unpack decompressing {} bytes to {:?}",
-            total_size,
-            repo.path
-        );
-
-        if hash != expected_hash {
-            // A retry sends its first chunk into this directory again, where these chunks would
-            // fail the hash the same way and refuse the upload every time. Other failures keep
-            // them, since a server error is retried by resending one chunk among the rest.
-            remove_chunks(tmp_dir).await;
-            return Err(OxenHttpError::BadRequest(
-                "the uploaded chunks do not match the upload's hash".into(),
-            ));
-        }
-
-        // Unpack tarball to our hidden dir using async streaming
-        unpack_entry_tarball_async(repo, buffer).await?;
-
-        log::debug!(
-            "check_if_upload_complete_and_unpack unpacked {total_chunks} files successfully"
-        );
-
-        remove_chunks(tmp_dir).await;
     }
 
-    Ok(())
-}
+    log::debug!("reassemble_chunks checking if complete... {uploaded_size} / {total_size}");
 
-/// Removes a chunked upload's directory of chunks, logging a failure rather than returning it,
-/// since the upload's outcome is already decided.
-async fn remove_chunks(tmp_dir: PathBuf) {
-    let dir = tmp_dir.clone();
-    if let Err(err) = tasks::spawn_blocking(move || util::fs::remove_dir_all(&dir))
-        .await
-        .map_err(OxenError::from)
-        .and_then(|removed| removed)
-    {
+    if (uploaded_size as usize) < total_size {
+        return Ok(Reassembly::AwaitingChunks);
+    }
+
+    // Get tar.gz bytes for history/COMMIT_ID data
+    let mut buffer = Vec::with_capacity(uploaded_size as usize);
+    for file in files() {
+        log::debug!("Reading file bytes {file:?}");
+        let mut f = std::fs::File::open(&file).map_err(|e| OxenError::file_open_error(&file, e))?;
+
+        f.read_to_end(&mut buffer)
+            .map_err(|e| OxenError::file_read_error(&file, e))?;
+    }
+    // `files` is in chunk order, so the concatenation restores the original byte offsets, and a
+    // chunk that arrived corrupt, truncated, or out of order fails the hash before anything
+    // unpacks.
+    let reassembly = if MerkleHash::new(hasher::hash_buffer_128bit(&buffer)) == expected_hash {
+        unpack_commit_archive(hidden_dir, &buffer)?;
+        log::debug!("reassemble_chunks unpacked {total_chunks} files successfully");
+        Reassembly::Unpacked
+    } else {
+        Reassembly::HashMismatch
+    };
+    // The upload's outcome is decided, so a failure to remove its chunks is logged, not returned.
+    if let Err(err) = util::fs::remove_dir_all(tmp_dir) {
         tracing::error!(
             file.path = %tmp_dir.display(),
             exception.message = ?err,
             "Failed to remove a chunked upload's chunks"
         );
     }
+    Ok(reassembly)
 }
 
 /// Upload commits DB
@@ -885,7 +842,7 @@ pub async fn upload(
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, &namespace, &name)?;
+    let repo = get_repo_async(app_data, &namespace, &name).await?;
     let _write = repo_locks::begin_write(&repo)?;
 
     // Read bytes from body
@@ -909,8 +866,10 @@ pub async fn upload(
         bytes.len(),
         repo.path.display()
     );
-    // Unpack tarball to repo using async streaming
-    unpack_entry_tarball_async(&repo, bytes).await?;
+    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
+    tasks::spawn_blocking(move || unpack_commit_archive(&hidden_dir, &bytes))
+        .await
+        .map_err(OxenError::from)??;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_created()))
 }
@@ -931,48 +890,20 @@ pub async fn upload(
         (status = 404, description = "Repository or commit not found"),
     )
 )]
-pub async fn complete(req: HttpRequest) -> Result<HttpResponse, Error> {
-    let app_data = req.app_data::<OxenAppData>().unwrap();
-    // name to the repo, should be in url path so okay to unwrap
-    let namespace: &str = path_param(&req, "namespace").unwrap();
-    let repo_name: &str = path_param(&req, "repo_name").unwrap();
-    let commit_id: &str = path_param(&req, "commit_id").unwrap();
+pub async fn complete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
+    let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?;
+    let repo_name = path_param(&req, "repo_name")?;
+    let commit_id = path_param(&req, "commit_id")?;
+    let repo = get_repo_async(app_data, namespace, repo_name).await?;
+    let commit = repositories::commits::get_by_id_async(&repo, commit_id)
+        .await?
+        .ok_or_else(|| OxenError::RevisionNotFound(commit_id.into()))?;
 
-    match repositories::get_by_namespace_and_name(
-        &app_data.path,
-        namespace,
-        repo_name,
-        app_data.config.storage.s3(),
-    ) {
-        Ok(Some(repo)) => {
-            match repositories::commits::get_by_id(&repo, commit_id) {
-                Ok(Some(commit)) => {
-                    let response = CommitResponse {
-                        status: StatusMessage::resource_created(),
-                        commit: commit.clone(),
-                    };
-                    Ok(HttpResponse::Ok().json(response))
-                }
-                Ok(None) => {
-                    log::warn!("Could not find commit [{commit_id}]");
-                    Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
-                }
-                Err(err) => {
-                    tracing::error!(oxen.commit_id = %commit_id, exception.message = %err, "Error finding commit");
-                    Ok(HttpResponse::InternalServerError()
-                        .json(StatusMessage::internal_server_error()))
-                }
-            }
-        }
-        Ok(None) => {
-            log::debug!("404 could not get repo {repo_name}",);
-            Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
-        }
-        Err(repo_err) => {
-            log::error!("Err get_by_name: {repo_err}");
-            Ok(HttpResponse::InternalServerError().json(StatusMessage::internal_server_error()))
-        }
-    }
+    Ok(HttpResponse::Ok().json(CommitResponse {
+        status: StatusMessage::resource_created(),
+        commit,
+    }))
 }
 
 /// Get root commit
@@ -993,9 +924,9 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
     let app_data = app_data(&req)?;
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
-    let repo = get_repo(app_data, namespace, name)?;
+    let repo = get_repo_async(app_data, &namespace, &name).await?;
 
-    let root = repositories::commits::root_commit_maybe(&repo)?;
+    let root = repositories::commits::root_commit_maybe(&repo).await?;
 
     Ok(HttpResponse::Ok().json(RootCommitResponse {
         status: StatusMessage::resource_found(),
@@ -1003,21 +934,11 @@ pub async fn root_commit(req: HttpRequest) -> Result<HttpResponse, OxenHttpError
     }))
 }
 
-async fn unpack_entry_tarball_async(
-    repo: &LocalRepository,
-    compressed_data: Vec<u8>,
-) -> Result<(), OxenError> {
-    let hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-
-    // Create async gzip decoder and tar archive
-    let reader = Cursor::new(compressed_data);
-    let buf_reader = BufReader::new(reader);
-    let decoder = GzipDecoder::new(buf_reader);
-    let mut archive = Archive::new(decoder);
-
-    // Process entries asynchronously
-    let mut entries = archive.entries()?;
-    while let Some(entry) = entries.next().await {
+/// Unpacks a gzipped commit archive into the repository's `.oxen` directory, refusing every entry
+/// outside a commit's `history/<commit_id>/dirs` and `history/<commit_id>/dir_hashes`.
+fn unpack_commit_archive(hidden_dir: &Path, compressed_data: &[u8]) -> Result<(), OxenError> {
+    let mut archive = tar::Archive::new(GzDecoder::new(compressed_data));
+    for entry in archive.entries()? {
         let mut file = entry?;
         let path = file
             .path()
@@ -1049,17 +970,15 @@ async fn unpack_entry_tarball_async(
             util::fs::create_dir_all(parent)?;
         }
         file.unpack(&dest)
-            .await
             .map_err(|e| OxenError::basic_str(format!("Failed to unpack file: {e}")))?;
     }
-
-    log::debug!("Done decompressing with async streaming.");
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_data::OxenAppData;
     use crate::test;
     use actix_web::App;
     use actix_web::http::StatusCode;
@@ -1204,7 +1123,7 @@ mod tests {
             header.set_mode(0o644);
             tar.append_data(&mut header, &entry, &planted[..])?;
 
-            let result = unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await;
+            let result = unpack_commit_archive(&hidden_dir, &tar.into_inner()?.finish()?);
 
             assert!(
                 matches!(result, Err(OxenError::InvalidCommitArchiveEntry(_))),
@@ -1223,7 +1142,7 @@ mod tests {
         header.set_entry_type(tar::EntryType::Symlink);
         header.set_size(0);
         tar.append_link(&mut header, &link, "../../../config.toml")?;
-        let result = unpack_entry_tarball_async(&repo, tar.into_inner()?.finish()?).await;
+        let result = unpack_commit_archive(&hidden_dir, &tar.into_inner()?.finish()?);
         assert!(
             matches!(result, Err(OxenError::InvalidCommitArchiveEntry(_))),
             "a symlink in a commit's dirs is refused, got {result:?}"
