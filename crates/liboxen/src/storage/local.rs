@@ -162,7 +162,7 @@ impl VersionStore for LocalVersionStore {
             if target.exists() {
                 return Ok(());
             }
-            AtomicFile::new(&target).move_from(file, hash)
+            AtomicFile::new(&target).move_from(file, Some(hash))
         })
         .await??;
         Ok(LocalFilePath::Stable(version_path))

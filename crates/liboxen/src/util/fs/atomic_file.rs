@@ -557,20 +557,20 @@ impl AtomicFile {
         self.fill_from_file(src)?.commit()
     }
 
-    /// Publish `file`, whose bytes hash to `file_hash`, by renaming it over the target, which takes
-    /// no copy when `file` is on the target's filesystem. On another filesystem, copy it instead. A
-    /// [`with_hash`][Self::with_hash] digest is compared with `file_hash`, which the caller must
-    /// have computed from the file's bytes.
+    /// Publish `file`, whose bytes hash to `file_hash` when given, by renaming it over the target,
+    /// which takes no copy when `file` is on the target's filesystem. On another filesystem, copy it
+    /// instead. A [`with_hash`][Self::with_hash] digest is compared with `file_hash`, which the
+    /// caller must have computed from the file's bytes.
     pub(crate) fn move_from(
         self,
         file: tempfile::NamedTempFile,
-        file_hash: MerkleHash,
+        file_hash: Option<MerkleHash>,
     ) -> Result<(), OxenError> {
         let mut tmp = AtomicTempFile {
             tmp: file,
             target: self.target.clone(),
         };
-        self.verify_and_stamp(&mut tmp, Some(file_hash))?;
+        self.verify_and_stamp(&mut tmp, file_hash)?;
         create_parent_dir(&self.target)?;
         tmp.tmp.as_file().sync_all()?;
         match tmp.rename_into_place() {
@@ -744,7 +744,8 @@ mod tests {
             temp.write_all(b"moved bytes")?;
             let temp_path = temp.path().to_path_buf();
             let moved = dir.join("moved").join("file.txt");
-            AtomicFile::new(&moved).move_from(temp, MerkleHash::new(xxh3_128(b"moved bytes")))?;
+            AtomicFile::new(&moved)
+                .move_from(temp, Some(MerkleHash::new(xxh3_128(b"moved bytes"))))?;
             assert_eq!(tokio::fs::read(&moved).await?, b"moved bytes");
             assert!(
                 !tokio::fs::try_exists(&temp_path).await?,
@@ -914,7 +915,7 @@ mod tests {
             temp.write_all(payload)?;
             let moved = AtomicFile::new(&target)
                 .with_hash(bogus_expected)
-                .move_from(temp, MerkleHash::new(xxh3_128(payload)));
+                .move_from(temp, Some(MerkleHash::new(xxh3_128(payload))));
             assert!(matches!(moved, Err(OxenError::HashMismatch { .. })));
             let mut entries = tokio::fs::read_dir(&dir).await?;
             assert!(
