@@ -30,14 +30,11 @@ jobs:
     # what they need and nothing wider.
     permissions:
       contents: read
-      id-token: write
       packages: write
     uses: ./.github/workflows/build_branch.yml
     with:
       branch: ${{ github.sha }}
       ARCHITECTURE: arm64
-    secrets:
-      GH_PERSONAL_ACCESS_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
   deploy:
     name: Dispatch deploy
