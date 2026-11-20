@@ -7,8 +7,9 @@ use tokio::sync::Mutex;
 
 use crate::constants::DEFAULT_REMOTE_NAME;
 use crate::constants::stream_segment_size;
+use crate::core::progress::observer::{ProgressObserver, ProgressReporter};
 use crate::core::progress::push_progress::PushProgress;
-use crate::core::progress::sync_progress::{ProgressObserver, ProgressReporter};
+use crate::core::progress::sync_progress::SyncProgressUpdate;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::MerkleTreeNode;
 use crate::model::{
@@ -35,7 +36,7 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
 }
 
 /// Push `opts.branch` to the remote `opts.remote`, telling `progress` how many files and bytes it
-/// has uploaded as it uploads them, as [`ProgressObserver`] lays out.
+/// has uploaded as it uploads them, as [`ProgressObserver`] and [`SyncProgressUpdate`] lay out.
 ///
 /// The push returns only after the observer has returned from the last update, whether or not the
 /// push succeeded. A push dropped partway keeps calling it until the uploads it started have
@@ -44,7 +45,7 @@ pub async fn push(repo: &LocalRepository) -> Result<Branch, OxenError> {
 pub async fn push_remote_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
-    progress: Option<ProgressObserver>,
+    progress: Option<ProgressObserver<SyncProgressUpdate>>,
 ) -> Result<Branch, OxenError> {
     ProgressObserver::observe_while(progress, |reporter| push_branch(repo, opts, reporter)).await
 }
@@ -52,7 +53,7 @@ pub async fn push_remote_branch(
 async fn push_branch(
     repo: &LocalRepository,
     opts: &PushOpts,
-    reporter: ProgressReporter,
+    reporter: ProgressReporter<SyncProgressUpdate>,
 ) -> Result<Branch, OxenError> {
     // start a timer
     let start = std::time::Instant::now();
@@ -84,7 +85,7 @@ async fn push_local_branch_to_remote_repo(
     remote_repo: &RemoteRepository,
     local_branch: &Branch,
     opts: &PushOpts,
-    reporter: ProgressReporter,
+    reporter: ProgressReporter<SyncProgressUpdate>,
 ) -> Result<(), OxenError> {
     // Get the commit from the branch
     let Some(commit) = repositories::commits::get_by_id(repo, &local_branch.commit_id)? else {
@@ -119,7 +120,7 @@ async fn push_to_new_branch(
     branch: &Branch,
     commit: &Commit,
     opts: &PushOpts,
-    reporter: ProgressReporter,
+    reporter: ProgressReporter<SyncProgressUpdate>,
 ) -> Result<(), OxenError> {
     // We need to find all the commits that need to be pushed
     let history = repositories::commits::list_from(repo, &commit.id)?;
@@ -151,7 +152,7 @@ async fn push_to_existing_branch(
     remote_repo: &RemoteRepository,
     remote_branch: &Branch,
     opts: &PushOpts,
-    reporter: ProgressReporter,
+    reporter: ProgressReporter<SyncProgressUpdate>,
 ) -> Result<(), OxenError> {
     // Check if the latest commit on the remote is the same as the local branch
     if remote_branch.commit_id == commit.id && !opts.missing_files && !opts.revalidate {
@@ -461,7 +462,7 @@ async fn push_commits(
     head_commit: &Commit,
     commits: Vec<Commit>,
     opts: &PushOpts,
-    reporter: ProgressReporter,
+    reporter: ProgressReporter<SyncProgressUpdate>,
 ) -> Result<(), OxenError> {
     if opts.revalidate {
         return revalidate_and_push_missing_files(

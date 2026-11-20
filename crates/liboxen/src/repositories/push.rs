@@ -48,8 +48,8 @@ mod tests {
 
     use crate::constants;
     use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
+    use crate::core::progress::observer::ProgressObserver;
     use crate::core::progress::push_progress::PushProgress;
-    use crate::core::progress::sync_progress::ProgressObserver;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
     use crate::opts::RmOpts;
