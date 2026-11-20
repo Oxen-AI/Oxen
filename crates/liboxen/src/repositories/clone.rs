@@ -290,7 +290,7 @@ mod tests {
                     branch: feature_branch_name.to_string(),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&local_repo, &push_opts).await?;
+                repositories::push::push_remote_branch(&local_repo, &push_opts, None).await?;
 
                 let mut clone_opts = CloneOpts::new(remote_repo.url(), dir.join("feature_subtree"));
                 clone_opts.fetch_opts.branch = feature_branch_name.to_string();
@@ -385,7 +385,7 @@ mod tests {
                 ..Default::default()
             };
 
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push::push_remote_branch(&local_repo, &opts, None).await?;
 
             // Clone with the --all flag
             test::run_empty_dir_test_async(|new_repo_dir| async move {
@@ -416,7 +416,7 @@ mod tests {
                 };
 
                 // Should be able to push all data successfully
-                repositories::push::push_remote_branch(&cloned_repo, &opts).await?;
+                repositories::push::push_remote_branch(&cloned_repo, &opts, None).await?;
 
                 Ok(())
             })

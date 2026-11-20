@@ -263,7 +263,7 @@ impl PyRepo {
                         ..Default::default()
                     };
                     // Push to the remote branch
-                    repositories::push::push_remote_branch(&repo, &opts).await
+                    repositories::push::push_remote_branch(&repo, &opts, None).await
                 }
             });
 

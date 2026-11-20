@@ -228,7 +228,8 @@ mod tests {
                     branch: collab_branch.to_string(),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&cloned_repo, &collab_push_opts).await?;
+                repositories::push::push_remote_branch(&cloned_repo, &collab_push_opts, None)
+                    .await?;
                 let fetch_opts = FetchOpts {
                     all: true,
                     ..FetchOpts::new()
@@ -250,7 +251,7 @@ mod tests {
                     test::write_txt_file_to_path(train_dir.join("hotdog_2.jpg"), "hotdog 2")?;
                 repositories::add(&repo, &hotdog_2).await?;
                 repositories::commit(&repo, "Adding next file to train dir")?;
-                repositories::push::push_remote_branch(&repo, &collab_push_opts).await?;
+                repositories::push::push_remote_branch(&repo, &collab_push_opts, None).await?;
                 let fetch_opts = FetchOpts::from_branch(collab_branch);
                 repositories::pull_remote_branch(&cloned_repo, &fetch_opts).await?;
                 assert_eq!(
@@ -514,7 +515,7 @@ mod tests {
                     branch: branch_name.to_string(),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&branch_repo, &opts).await?;
+                repositories::push::push_remote_branch(&branch_repo, &opts, None).await?;
                 let remote_branch = api::client::branches::get_by_name(&remote_repo, branch_name)
                     .await?
                     .unwrap();
@@ -901,7 +902,7 @@ mod tests {
                 };
 
                 // 5. Push to origin branch1
-                repositories::push::push_remote_branch(&repo, &opts).await?;
+                repositories::push::push_remote_branch(&repo, &opts, None).await?;
 
                 // 6. Pull from main
                 let pull_result = repositories::pull_remote_branch(

@@ -312,7 +312,7 @@ mod tests {
                 branch: "pushed-branch".to_string(),
                 ..Default::default()
             };
-            push_remote_branch(&local_repo, &opts).await?;
+            push_remote_branch(&local_repo, &opts, None).await?;
             delete(&remote_repo, "pushed-branch").await?;
 
             let opts = PushOpts {
@@ -320,7 +320,7 @@ mod tests {
                 ..opts
             };
             assert!(
-                push_remote_branch(&local_repo, &opts).await.is_err(),
+                push_remote_branch(&local_repo, &opts, None).await.is_err(),
                 "a branch that does not exist cannot be pushed"
             );
 

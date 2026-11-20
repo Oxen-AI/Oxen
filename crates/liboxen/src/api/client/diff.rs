@@ -265,7 +265,7 @@ who won the game?,The packers beat up on the bears,packers
                 branch: branch_name.to_string(),
                 ..Default::default()
             };
-            repositories::push::push_remote_branch(&repo, &opts).await?;
+            repositories::push::push_remote_branch(&repo, &opts, None).await?;
 
             // test.csv gained a row and train.csv gained three columns
             let compare =

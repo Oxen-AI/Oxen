@@ -126,7 +126,7 @@ impl RunCmd for PushCmd {
             check_remote_version_blocking(scheme.clone(), host.clone()).await?;
             check_remote_version(scheme, host).await?;
 
-            repositories::push::push_remote_branch(&repo, &opts).await?;
+            repositories::push::push_remote_branch(&repo, &opts, None).await?;
             Ok(())
         }
     }
