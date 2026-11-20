@@ -424,7 +424,7 @@ pub async fn reindex_preserving_rows(workspace: &Workspace, path: &Path) -> Resu
 
     let recovered = tasks::spawn_blocking(move || -> Result<bool, OxenError> {
         let outcome = with_df_db_manager(&db_path, |manager| {
-            manager.with_conn(|conn| -> Result<bool, DataFrameError> {
+            manager.with_export_conn(|conn| -> Result<bool, DataFrameError> {
                 let schema = df_db::get_schema(conn, TABLE_NAME)?;
                 let has_col = |name: &str| schema.fields.iter().any(|f| f.name == name);
                 let has_user_col = schema
@@ -834,7 +834,7 @@ pub fn extract_file_node_to_working_dir(
     with_df_db_manager(&db_path, |manager| {
         // A file error does not fit the connection's error type.
         // The export's own result comes back inside the Ok, for the second ? to return.
-        manager.with_conn(|conn| Ok(publish_export(conn, &working_path, slice_bytes)))
+        manager.with_export_conn(|conn| Ok(publish_export(conn, &working_path, slice_bytes)))
     })??;
 
     Ok(working_path)
