@@ -172,22 +172,9 @@ pub fn unindex(workspace: &Workspace, path: impl AsRef<Path>) -> Result<(), Data
     })
 }
 
-pub async fn restore(
-    repo: &LocalRepository,
-    workspace: &Workspace,
-    path: impl AsRef<Path>,
-) -> Result<(), OxenError> {
-    // Unstage and then restage the df
-    {
-        let workspace = workspace.clone();
-        let path = path.as_ref().to_path_buf();
-        tasks::spawn_blocking(move || unindex(&workspace, path)).await??;
-    }
-
+pub async fn restore(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
     // TODO: we could do this more granularly without a full reset
-    index(repo, workspace, path.as_ref()).await?;
-
-    Ok(())
+    core::v_latest::workspaces::data_frames::restore(workspace, path).await
 }
 
 pub fn count(workspace: &Workspace, path: &Path) -> Result<usize, DataFrameError> {
@@ -750,6 +737,24 @@ mod tests {
                 index(&repo, &workspace, &path).await?;
                 assert!(is_indexed(&workspace, &path)?);
 
+                // Two index requests can overlap, and the second can run after a row was appended.
+                // A rebuild there would drop a row whose append reported success.
+                let committed_rows = count(&workspace, &path)?;
+                let appended = json!({"file": "images/appended.jpg", "label": "dog"});
+                rows::add(&repo, &workspace, &path, &appended)?;
+                index(&repo, &workspace, &path).await?;
+                assert_eq!(
+                    count(&workspace, &path)?,
+                    committed_rows + 1,
+                    "indexing a fully indexed frame keeps the rows staged in it"
+                );
+                restore(&workspace, &path).await?;
+                assert_eq!(
+                    count(&workspace, &path)?,
+                    committed_rows,
+                    "restoring a fully indexed frame rebuilds it from the committed file"
+                );
+
                 // Simulate a table written by an older version: no index marker table. Such a table
                 // may hold rows tombstoned as 'removed' that the current code would wrongly export,
                 // so it must be rebuilt.
@@ -990,6 +995,21 @@ mod tests {
                     matches!(result, Err(OxenError::WorkspaceStaleStagedIndex(_))),
                     "recovery with no user columns must fail with WorkspaceStaleStagedIndex, got {result:?}"
                 );
+            }
+
+            {
+                // Indexing a data frame that an upload replaced builds its table from the upload.
+                let workspace = indexed_workspace(&repo, &commit, "reindex-upload").await?;
+                let workspace_file = workspace.workspace_repo.path.join(&path);
+                write_to_path(&workspace_file, "file,label\nreplaced.jpg,dog\n")?;
+                files::add(&workspace, &workspace_file).await?;
+                assert!(!is_indexed(&workspace, &path)?);
+                index(&repo, &workspace, &path).await?;
+                assert!(
+                    is_indexed(&workspace, &path)?,
+                    "indexing a replaced data frame builds its table from the upload"
+                );
+                assert_eq!(count(&workspace, &path)?, 1);
             }
 
             {

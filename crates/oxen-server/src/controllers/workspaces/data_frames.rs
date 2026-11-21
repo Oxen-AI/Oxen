@@ -578,7 +578,7 @@ pub async fn delete(req: HttpRequest) -> Result<HttpResponse, OxenHttpError> {
             .json(StatusMessageDescription::workspace_not_found(workspace_id)));
     };
 
-    repositories::workspaces::data_frames::restore(&repo, &workspace, file_path).await?;
+    repositories::workspaces::data_frames::restore(&workspace, &file_path).await?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_deleted()))
 }
