@@ -313,7 +313,9 @@ pub async fn index(workspace: &Workspace, path: &Path) -> Result<(), OxenError> 
                 conn.execute_batch("BEGIN TRANSACTION")?;
                 let build = (|| -> Result<(), DataFrameError> {
                     df_db::index_file_with_id(&version_path, conn, &extension)?;
-                    df_db::record_index_sources(conn, &[file_hash])?;
+                    // A new generation, so a commit writing out an earlier build of this table
+                    // records nothing on this one.
+                    df_db::record_index_sources(conn, None, &[file_hash])?;
                     Ok(())
                 })();
                 match build {

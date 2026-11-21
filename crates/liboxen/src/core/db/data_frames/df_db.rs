@@ -50,7 +50,7 @@ use crate::model::data_frame::schema::Schema;
 use crate::opts::DFOpts;
 use crate::{model, util};
 use duckdb::arrow::record_batch::RecordBatch;
-use duckdb::{ToSql, params};
+use duckdb::{OptionalExt, ToSql, params};
 use polars::prelude::*;
 use sqlparser::ast::{self, Expr as SqlExpr, SelectItem, Statement, Value as SqlValue};
 use sqlparser::dialect::PostgreSqlDialect;
@@ -60,6 +60,7 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use uuid::Uuid;
 
 use sql_query_builder as sql;
 
@@ -1192,22 +1193,45 @@ pub fn index_file_with_id(
     Ok(())
 }
 
-/// Record `file_hashes` as the hashes of the files the data frame table holds the rows of, replacing
-/// any earlier record.
+/// Record `file_hashes` as the hashes of the files the data frame table holds the rows of, and
+/// `generation` as the build of the table they describe, or a new one when `None`, replacing any
+/// earlier record.
 pub(crate) fn record_index_sources(
     conn: &duckdb::Connection,
+    generation: Option<&str>,
     file_hashes: &[MerkleHash],
 ) -> Result<(), duckdb::Error> {
+    let generation = generation.map_or_else(|| Uuid::new_v4().to_string(), str::to_string);
     conn.execute_batch(&format!(
-        "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR)"
+        "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR, generation VARCHAR)"
     ))?;
     for file_hash in file_hashes {
         conn.execute(
-            &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?)"),
-            params![file_hash.to_string()],
+            &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?, ?)"),
+            params![file_hash.to_string(), generation],
         )?;
     }
     Ok(())
+}
+
+/// The build of the data frame table [`record_index_sources`] recorded, or `None` for an index
+/// built before builds were recorded.
+pub(crate) fn index_generation(conn: &duckdb::Connection) -> Result<Option<String>, duckdb::Error> {
+    if !table_exists(conn, INDEX_SOURCE_TABLE)?
+        || !get_schema(conn, INDEX_SOURCE_TABLE)?
+            .fields
+            .iter()
+            .any(|field| field.name == "generation")
+    {
+        return Ok(None);
+    }
+    conn.query_row(
+        &format!("SELECT generation FROM \"{INDEX_SOURCE_TABLE}\" LIMIT 1"),
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
 }
 
 /// The hashes [`record_index_sources`] recorded, or `None` for an index built before sources were

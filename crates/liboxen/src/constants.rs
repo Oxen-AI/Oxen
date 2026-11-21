@@ -81,8 +81,9 @@ pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
 /// Table holding the hashes of the files a workspace data frame's staged table holds the rows of:
 /// the file it was built from, or once a workspace commit has written it out, the file the commit
 /// read it against and the file it wrote. An index of a file the workspace has since replaced at the
-/// path is told apart from a current one by its hash. An index built before this table existed has
-/// none.
+/// path is told apart from a current one by its hash. Each row also carries the generation of the
+/// build it describes, so a commit records nothing on a table rebuilt after it wrote the table out.
+/// An index built before this table existed has none.
 pub(crate) const INDEX_SOURCE_TABLE: &str = "_oxen_index_source";
 /// Oxen's internal columns to exclude from dfs
 pub const EXCLUDE_OXEN_COLS: [&str; 5] = [
