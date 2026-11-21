@@ -55,7 +55,7 @@ pub(crate) enum IndexStatus {
 
 /// [`IndexStatus`] of the data frame at `path` against the file the workspace has there.
 pub(crate) fn index_status(workspace: &Workspace, path: &Path) -> Result<IndexStatus, OxenError> {
-    let sources = match indexed_sources(workspace, path)? {
+    let sources = match indexed_sources(workspace, path, false)?.0 {
         ControlFlow::Break(status) => return Ok(status),
         ControlFlow::Continue(None) => return Ok(IndexStatus::Current),
         ControlFlow::Continue(Some(sources)) => sources,
@@ -65,40 +65,53 @@ pub(crate) fn index_status(workspace: &Workspace, path: &Path) -> Result<IndexSt
 }
 
 /// [`IndexStatus`] of the data frame at `path` against the file whose hash is `file_hash`, such as
-/// the staged node a commit is writing.
+/// the staged node a commit is writing, and the generation of the build that status describes.
 pub(crate) fn index_status_against(
     workspace: &Workspace,
     path: &Path,
     file_hash: MerkleHash,
-) -> Result<IndexStatus, OxenError> {
-    Ok(match indexed_sources(workspace, path)? {
+) -> Result<(IndexStatus, Option<String>), OxenError> {
+    let (sources, generation) = indexed_sources(workspace, path, true)?;
+    let status = match sources {
         ControlFlow::Break(status) => status,
         ControlFlow::Continue(None) => IndexStatus::Current,
         ControlFlow::Continue(Some(sources)) => source_status(&sources, Some(file_hash)),
-    })
+    };
+    Ok((status, generation))
 }
 
 /// The hashes of the files a complete staged table holds the rows of, `None` for one built before
 /// sources were recorded, or the table's status when it is missing or unfinished.
+type IndexedSources = ControlFlow<IndexStatus, Option<Vec<MerkleHash>>>;
+
+/// The [`IndexedSources`] of the data frame at `path`, together with the generation of the build
+/// they were read from when `with_generation`.
 fn indexed_sources(
     workspace: &Workspace,
     path: &Path,
-) -> Result<ControlFlow<IndexStatus, Option<Vec<MerkleHash>>>, OxenError> {
+    with_generation: bool,
+) -> Result<(IndexedSources, Option<String>), OxenError> {
     let db_path = duckdb_path(workspace, path);
     if !db_path.exists() {
-        return Ok(ControlFlow::Break(IndexStatus::Missing));
+        return Ok((ControlFlow::Break(IndexStatus::Missing), None));
     }
     Ok(with_df_db_manager(&db_path, |manager| {
         manager.with_conn(|conn| {
+            let generation = if with_generation {
+                df_db::index_generation(conn)?
+            } else {
+                None
+            };
             // A partially-indexed table (missing some OXEN_COLS) can't be queried, so it is not
             // current, and callers rebuild it.
-            if df_db::table_is_fully_indexed(conn, TABLE_NAME)? {
-                Ok(ControlFlow::Continue(df_db::index_sources(conn)?))
+            let sources = if df_db::table_is_fully_indexed(conn, TABLE_NAME)? {
+                ControlFlow::Continue(df_db::index_sources(conn)?)
             } else if df_db::table_exists(conn, TABLE_NAME)? {
-                Ok(ControlFlow::Break(IndexStatus::Unfinished))
+                ControlFlow::Break(IndexStatus::Unfinished)
             } else {
-                Ok(ControlFlow::Break(IndexStatus::Missing))
-            }
+                ControlFlow::Break(IndexStatus::Missing)
+            };
+            Ok((sources, generation))
         })
     })?)
 }
@@ -1533,10 +1546,18 @@ mod tests {
                 );
 
                 // A named workspace outlives its commit, and its data frame stays indexed: the
-                // committed file is the one the commit wrote out from the index. A row added after
-                // the commit lands on the committed rows.
+                // committed file is the one the commit wrote out from the index.
+                let committed_rows = |commit: &Commit| -> Result<usize, OxenError> {
+                    match tree::get_file_by_path(&repo, commit, &path)?
+                        .expect("the data frame should be in the commit")
+                        .metadata()
+                    {
+                        Some(GenericMetadata::MetadataTabular(m)) => Ok(m.tabular.height),
+                        other => panic!("the data frame should have tabular metadata, got {other:?}"),
+                    }
+                };
                 branches::create(&repo, "kept-index", &commit.id)?;
-                let workspace = workspaces::create_with_name(
+                let before = workspaces::create_with_name(
                     &repo,
                     &commit,
                     "kept-index",
@@ -1544,52 +1565,63 @@ mod tests {
                     true,
                 )
                 .await?;
-                index(&repo, &workspace, &path).await?;
-                rows::add(&repo, &workspace, &path, &json_data)?;
-                workspaces::commit(&workspace, &body("Add a row in a named workspace"), "kept-index")
-                    .await?;
+                index(&repo, &before, &path).await?;
+                rows::add(&repo, &before, &path, &json_data)?;
+                let first =
+                    workspaces::commit(&before, &body("Add a row in a named workspace"), "kept-index")
+                        .await?;
                 let workspace = workspaces::get(&repo, "kept-index")?
                     .expect("a named workspace outlives its commit");
                 assert!(
                     is_indexed(&workspace, &path)?,
                     "the data frame stays indexed after its workspace commits it"
                 );
+
+                // An edit through the workspace as loaded before the commit stages the committed
+                // file rather than the one before it, so the data frame stays indexed and the
+                // edit lands on the committed rows.
                 let second_row = json!({"file": "images/second.jpg", "label": "cat", "min_x": 4.0, "min_y": 5.0, "width": 6, "height": 7});
-                rows::add(&repo, &workspace, &path, &second_row)?;
+                rows::add(&repo, &before, &path, &second_row)?;
+                assert!(
+                    is_indexed(&workspace, &path)?,
+                    "an edit through the workspace as loaded before its commit keeps the data \
+                     frame indexed"
+                );
                 let kept = workspaces::commit(
                     &workspace,
                     &body("Add a row after the named workspace's commit"),
                     "kept-index",
                 )
                 .await?;
-                let entry = entries::get_commit_entry(&repo, &kept, &path)?
-                    .expect("the data frame is in the second commit");
-                let data_frame = read_version_df(
-                    &version_store,
-                    entry.hash.parse()?,
-                    entry.num_bytes,
-                    "csv",
-                    &DFOpts::empty(),
-                )
-                .await?;
                 assert_eq!(
-                    data_frame.height(),
+                    committed_rows(&kept)?,
                     8,
                     "the second commit holds the fixture's 6 rows and both added rows"
                 );
-                // The index holds the second commit's rows, so an upload of the file it was first
-                // built from, two commits back, replaces what it indexed.
-                let original = entries::get_commit_entry(&repo, &commit, &path)?
-                    .expect("the data frame is in the fixture's commit");
+
+                // An upload of the file before the last commit (a revert) replaces what the index
+                // holds, and the revert commits.
+                let workspace = workspaces::get(&repo, "kept-index")?
+                    .expect("a named workspace outlives its commit");
+                let previous = entries::get_commit_entry(&repo, &first, &path)?
+                    .expect("the data frame is in the first commit");
                 let upload = workspace.workspace_repo.path.join(&path);
                 version_store
-                    .copy_version_to_path(&original.hash, &upload, SystemTime::now())
+                    .copy_version_to_path(&previous.hash, &upload, SystemTime::now())
                     .await?;
                 files::add(&workspace, &upload).await?;
                 assert_eq!(
                     index_status(&workspace, &path)?,
                     IndexStatus::OtherFile,
-                    "an upload of the file the index was first built from is not the file it holds"
+                    "an upload of the file before the last commit is not the file the index holds"
+                );
+                let reverted =
+                    workspaces::commit(&workspace, &body("Revert the second row"), "kept-index")
+                        .await?;
+                assert_eq!(
+                    committed_rows(&reverted)?,
+                    7,
+                    "the revert commits the first commit's 7 rows, not the index's 8"
                 );
 
                 // Committing a workspace whose staged table was left by an older version of oxen

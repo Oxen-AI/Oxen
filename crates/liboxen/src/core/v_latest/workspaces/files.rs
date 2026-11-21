@@ -383,10 +383,9 @@ pub fn track_modified_data_frame(
 ) -> Result<PathBuf, OxenError> {
     let filepath = filepath.as_ref();
     let workspace_repo = &workspace.workspace_repo;
-    let base_repo = &workspace.base_repo;
 
     // Stage the file using the repositories::add method
-    p_modify_file(base_repo, workspace_repo, &workspace.commit, filepath)?;
+    p_modify_file(workspace, filepath)?;
 
     // Return the relative path of the file in the workspace
     let relative_path = util::fs::path_relative_to_dir(filepath, &workspace_repo.path)?;
@@ -1282,19 +1281,29 @@ pub(crate) fn unindex_if_staged_table(workspace: &Workspace, path: &Path) -> Res
     Ok(())
 }
 
-fn p_modify_file(
-    base_repo: &LocalRepository,
-    workspace_repo: &LocalRepository,
-    commit: &Commit,
-    path: &Path,
-) -> Result<(), OxenError> {
-    let committed = repositories::tree::get_file_by_path(base_repo, commit, path)?;
+fn p_modify_file(workspace: &Workspace, path: &Path) -> Result<(), OxenError> {
+    let base_repo = &workspace.base_repo;
     // Stamping each edit's time changes the staged node, so a commit that read it before this edit
     // leaves the path staged for the next commit.
     let edited_at = FileTime::now();
+    let committed = repositories::tree::get_file_by_path(base_repo, &workspace.commit, path)?;
 
-    let staged_db_manager = get_staged_db_manager(workspace_repo)?;
+    let staged_db_manager = get_staged_db_manager(&workspace.workspace_repo)?;
     staged_db_manager.edit_staged_node(path, |staged| {
+        // The file the workspace's commit has now, checked under the staged db's lock, since
+        // `workspace` may predate a commit that has landed since. A commit moves the workspace to
+        // the commit it wrote before it drops the pre-commit file from the data frame's index, so
+        // an edit that stages the committed file stages the one the index holds.
+        let commit_id = repositories::workspaces::read_config(&workspace.dir())?
+            .ok_or_else(|| OxenError::WorkspaceNotFound(workspace.id.as_str().into()))?
+            .workspace_commit_id;
+        let committed = if commit_id == workspace.commit.id {
+            committed
+        } else {
+            let commit = repositories::commits::get_by_id(base_repo, &commit_id)?
+                .ok_or_else(|| OxenError::commit_id_does_not_exist(&commit_id))?;
+            repositories::tree::get_file_by_path(base_repo, &commit, path)?
+        };
         let (mut file_node, status) = match (staged, committed) {
             // The edit applies to what the workspace stages, which may have replaced the committed
             // file (an upload or a copy) or edited its metadata, and keeps its content hash, which
