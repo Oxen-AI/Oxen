@@ -1599,6 +1599,37 @@ mod tests {
                     "the second commit holds the fixture's 6 rows and both added rows"
                 );
 
+                // A metadata edit and then a row edit through the workspace as loaded before two
+                // and three commits stage the file of the commit the workspace is on now, which
+                // the index matches, rather than the older file it loaded.
+                let settings = json!({"_oxen": {"view": {"columns": ["label", "file"]}}});
+                schemas::add_schema_metadata(&repo, &before, &path, &settings)?;
+                assert!(
+                    is_indexed(&workspace, &path)?,
+                    "a metadata edit through the workspace as loaded before two commits keeps the \
+                     data frame indexed"
+                );
+                let viewed =
+                    workspaces::commit(&workspace, &body("Set the data frame's view"), "kept-index")
+                        .await?;
+                let viewed_file = tree::get_file_by_path(&repo, &viewed, &path)?
+                    .expect("the data frame should be in the commit");
+                let Some(GenericMetadata::MetadataTabular(m)) = viewed_file.metadata() else {
+                    panic!("the data frame should have tabular metadata");
+                };
+                assert_eq!(
+                    (m.tabular.height, m.tabular.schema.metadata),
+                    (8, Some(settings)),
+                    "the commit after the metadata edit keeps both added rows and the view"
+                );
+                let third_row = json!({"file": "images/third.jpg", "label": "dog", "min_x": 7.0, "min_y": 8.0, "width": 9, "height": 10});
+                rows::add(&repo, &before, &path, &third_row)?;
+                assert!(
+                    is_indexed(&workspace, &path)?,
+                    "a row edit through the workspace as loaded before three commits keeps the \
+                     data frame indexed"
+                );
+
                 // An upload of the file from before the last commit (a revert) drops the index,
                 // although the index matched that file before the commit, and the revert commits.
                 let workspace = workspaces::get(&repo, "kept-index")?

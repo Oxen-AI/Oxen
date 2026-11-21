@@ -11,7 +11,7 @@ use crate::core::db::data_frames::workspace_df_db::schema_without_oxen_cols;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::staged::staged_db_manager::StagedDBManager;
 use crate::core::v_latest::workspaces::files::{
-    add, refuse_destination, refuse_destination_under_file,
+    add, current_committed_file, refuse_destination, refuse_destination_under_file,
 };
 use crate::repositories::workspaces::data_frames::duckdb_path_in_dir;
 use crate::repositories::workspaces::{
@@ -64,7 +64,8 @@ where
         let (mut file_node, status) = match staged {
             Some(staged) => (staged.node.file()?, staged.status),
             None => (
-                committed_node.ok_or_else(|| OxenError::path_does_not_exist(&path))?,
+                current_committed_file(workspace, &path, committed_node)?
+                    .ok_or_else(|| OxenError::path_does_not_exist(&path))?,
                 StagedEntryStatus::Modified,
             ),
         };

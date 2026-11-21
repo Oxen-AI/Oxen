@@ -680,6 +680,7 @@ mod tests {
     use crate::core::v_latest::workspaces::files::{
         CommittedFiles, InspectedVersionFile, VersionFileToStage,
     };
+    use crate::model::LocalRepository;
     use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::repositories;
     use crate::test;
@@ -1149,14 +1150,11 @@ mod tests {
             let committed = committed?;
             restored?;
 
-            let rows = match repositories::tree::get_file_by_path(&repo, &committed, &path)?
-                .expect("the data frame should be in the commit")
-                .metadata()
-            {
-                Some(GenericMetadata::MetadataTabular(m)) => m.tabular.height,
-                other => panic!("the data frame should have tabular metadata, got {other:?}"),
-            };
-            assert_eq!(rows, 7, "the commit carries the row added before it");
+            assert_eq!(
+                committed_rows(&repo, &committed, &path)?,
+                7,
+                "the commit carries the row added before it"
+            );
             let workspace = repositories::workspaces::get(&repo, &workspace.id)?
                 .expect("a named workspace outlives its commit");
             assert_eq!(
@@ -1169,6 +1167,99 @@ mod tests {
             Ok(())
         })
         .await
+    }
+
+    /// A row edit that lands while a commit is in flight, before the commit moves the workspace to
+    /// the commit it wrote, stages the file from before it. The index still matches that file, so
+    /// the data frame stays indexed and the next commit carries the edit.
+    #[tokio::test]
+    async fn test_edit_during_commit_keeps_data_frame_indexed() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &head,
+                "edit-during-commit",
+                Some("edit-during-commit".to_string()),
+                true,
+            )
+            .await?;
+            let path = test::test_bounding_box_csv();
+            repositories::workspaces::data_frames::index(&repo, &workspace, &path).await?;
+            let row = |file: &str| serde_json::json!({"file": file, "label": "dog", "min_x": 1.0, "min_y": 2.0, "width": 3, "height": 4});
+            repositories::workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &path,
+                &row("images/first.jpg"),
+            )?;
+
+            let body = |message: &str| NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: message.to_string(),
+            };
+            let (reached, resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &workspace.workspace_repo.path);
+            let first_body = body("Add a row");
+            let paused_commit =
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, &workspace, &first_body);
+            let edit = async {
+                reached
+                    .await
+                    .expect("the commit should reach the branch update");
+                repositories::workspaces::data_frames::rows::add(
+                    &repo,
+                    &workspace,
+                    &path,
+                    &row("images/during.jpg"),
+                )?;
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let (committed, edited) = tokio::join!(paused_commit, edit);
+            committed?;
+            edited?;
+
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("a named workspace outlives its commit");
+            assert!(
+                repositories::workspaces::data_frames::is_indexed(&workspace, &path)?,
+                "an edit made during the commit keeps the data frame indexed"
+            );
+            let next = commit(&workspace, &body("Commit the edit made during the commit"), "main")
+                .await?;
+            assert_eq!(
+                committed_rows(&repo, &next, &path)?,
+                8,
+                "the next commit carries both added rows on the fixture's 6"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The number of rows `commit` records for the data frame at `path`.
+    fn committed_rows(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: &Path,
+    ) -> Result<usize, OxenError> {
+        match repositories::tree::get_file_by_path(repo, commit, path)?
+            .expect("the data frame should be in the commit")
+            .metadata()
+        {
+            Some(GenericMetadata::MetadataTabular(m)) => Ok(m.tabular.height),
+            other => panic!("the data frame should have tabular metadata, got {other:?}"),
+        }
     }
 
     /// Where in `commit_inner` a test can pause a commit.
