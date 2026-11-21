@@ -40,7 +40,6 @@ impl IdentitySource {
 /// The default is [`IdentitySource::OxenServer`]: a server with nothing configured above it
 /// assigns UUIDs itself.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct IdentityPolicy {
     #[serde(default)]
     repo_uuids_assigned_by: IdentitySource,
@@ -85,16 +84,22 @@ mod tests {
         );
     }
 
-    /// A typo must not silently leave the server assigning UUIDs an auth provider owns.
     #[test]
     fn rejects_an_unknown_source() {
-        assert!(toml::from_str::<IdentityPolicy>(r#"repo_uuids_assigned_by = "hub""#).is_err());
+        assert!(
+            toml::from_str::<IdentityPolicy>(r#"repo_uuids_assigned_by = "hub""#).is_err(),
+            "an unknown source must fail before the server mints UUIDs an auth provider owns"
+        );
     }
 
     #[test]
-    fn rejects_an_unknown_key() {
-        assert!(
-            toml::from_str::<IdentityPolicy>(r#"repo_uuids_assigned_byy = "oxen-server""#).is_err()
+    fn ignores_an_unknown_key() {
+        let policy: IdentityPolicy = toml::from_str(r#"repo_uuids_assigned_byy = "auth-provider""#)
+            .expect("an unknown key is ignored");
+        assert_eq!(
+            policy,
+            IdentityPolicy::default(),
+            "a misspelled key leaves the server assigning UUIDs itself"
         );
     }
 }
