@@ -47,7 +47,7 @@ pub fn list_commit_entries(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, ROOT_PATH, revision, paginate_opts)
+    list_directory_w_version(repo, Path::new(ROOT_PATH), revision.as_ref(), paginate_opts)
 }
 
 /// List all the entries within a directory given a specific commit
@@ -57,26 +57,26 @@ pub fn list_directory(
     revision: impl AsRef<str>,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    list_directory_w_version(repo, directory, revision, paginate_opts)
+    list_directory_w_version(repo, directory.as_ref(), revision.as_ref(), paginate_opts)
 }
 
 /// List the entries within a directory given a specific revision
 pub fn list_directory_w_version(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     paginate_opts: &PaginateOpts,
 ) -> Result<PaginatedDirEntries, OxenError> {
-    let revision_str = revision.as_ref().to_string();
+    let revision_str = revision.to_string();
     let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
     let commit = repositories::revisions::get(repo, &revision_str)?;
     let parsed_resource = ParsedResource {
-        path: directory.as_ref().to_path_buf(),
+        path: directory.to_path_buf(),
         commit,
         workspace: None,
         branch,
         version: PathBuf::from(&revision_str),
-        resource: PathBuf::from(&revision_str).join(directory.as_ref()),
+        resource: PathBuf::from(&revision_str).join(directory),
     };
     core::v_latest::entries::list_directory(repo, directory, &parsed_resource, paginate_opts)
 }
@@ -84,8 +84,8 @@ pub fn list_directory_w_version(
 #[allow(clippy::too_many_arguments)]
 pub fn list_directory_w_workspace_depth(
     repo: &LocalRepository,
-    directory: impl AsRef<Path>,
-    revision: impl AsRef<str>,
+    directory: &Path,
+    revision: &str,
     workspace: Option<Workspace>,
     paginate_opts: &PaginateOpts,
     sort_opts: &SortOpts,
@@ -94,7 +94,7 @@ pub fn list_directory_w_workspace_depth(
     let _perf = crate::perf_guard!("entries::list_directory_w_workspace");
 
     let _perf_setup = crate::perf_guard!("entries::list_directory_w_workspace_setup");
-    let revision_str = revision.as_ref().to_string();
+    let revision_str = revision.to_string();
     let version_str = if let Some(workspace) = workspace.clone() {
         workspace.id.clone()
     } else {
@@ -104,12 +104,12 @@ pub fn list_directory_w_workspace_depth(
     let branch = repositories::branches::get_by_name(repo, &revision_str).ok();
     let commit = repositories::revisions::get(repo, &revision_str)?;
     let parsed_resource = ParsedResource {
-        path: directory.as_ref().to_path_buf(),
+        path: directory.to_path_buf(),
         commit,
         workspace,
         branch,
         version: PathBuf::from(&version_str),
-        resource: PathBuf::from(&version_str).join(directory.as_ref()),
+        resource: PathBuf::from(&version_str).join(directory),
     };
     drop(_perf_setup);
 
@@ -320,6 +320,7 @@ mod tests {
     use crate::util;
     use crate::util::fs;
     use crate::util::fs::rcount_files_in_dir;
+    use crate::view::entries::EMetadataEntry;
 
     use super::{
         count_for_commit, get_directory, get_directory_async, get_meta_entry, get_meta_entry_async,
@@ -515,6 +516,64 @@ mod tests {
             assert_eq!((larger.total_pages, larger.entries.len()), (1, total));
             let smaller = page(1, total - 1)?;
             assert_eq!((smaller.total_pages, smaller.entries.len()), (2, total - 1));
+
+            // A newer commit makes date order differ from name order for dir_050 and file_7.txt.
+            test::modify_txt_file(repo.path.join("dir_050").join("data_0.txt"), "changed")?;
+            test::modify_txt_file(repo.path.join("file_7.txt"), "changed")?;
+            repositories::add(&repo, &repo.path).await?;
+            let newer = repositories::commit(&repo, "Changing one directory and one file")?;
+            for (sort_by, last_dir, last_file) in [
+                (SortBy::Name, "dir_100", "file_9.txt"),
+                (SortBy::Date, "dir_050", "file_7.txt"),
+            ] {
+                for reverse in [false, true] {
+                    let sort_opts = SortOpts {
+                        sort_by: sort_by.clone(),
+                        reverse,
+                    };
+                    let page = |page_num, page_size| -> Result<Vec<EMetadataEntry>, OxenError> {
+                        Ok(list_directory_w_workspace_depth(
+                            &repo,
+                            Path::new(""),
+                            &newer.id,
+                            None,
+                            &PaginateOpts {
+                                page_num,
+                                page_size,
+                            },
+                            &sort_opts,
+                            0,
+                        )?
+                        .entries)
+                    };
+                    let case = format!("{sort_by}, reverse {reverse}");
+                    let whole = page(1, total)?;
+                    let paged = (1..=15)
+                        .map(|page_num| page(page_num, 10))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .concat();
+                    assert_eq!(
+                        serde_json::to_value(&paged).expect("entries serialize"),
+                        serde_json::to_value(&whole).expect("entries serialize"),
+                        "{case}: the pages hold the whole listing's entries, field for field"
+                    );
+                    let (dir_at, file_at) = if reverse {
+                        (0, num_dirs)
+                    } else {
+                        (num_dirs - 1, total - 1)
+                    };
+                    assert_eq!(
+                        whole[dir_at].filename(),
+                        last_dir,
+                        "{case}: directories list first, and reversing flips the order among them"
+                    );
+                    assert_eq!(
+                        whole[file_at].filename(),
+                        last_file,
+                        "{case}: files follow directories, and reversing flips the order among them"
+                    );
+                }
+            }
 
             Ok(())
         })
