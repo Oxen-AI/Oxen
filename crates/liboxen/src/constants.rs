@@ -80,7 +80,7 @@ pub const OXEN_COLS: [&str; 2] = [OXEN_ID_COL, OXEN_ROW_ID_COL];
 pub const INDEX_META_TABLE: &str = "_oxen_index_meta";
 /// Table holding the hashes of the files a workspace data frame's staged table holds the rows of:
 /// the file it was built from, or once a workspace commit has written it out, the file the commit
-/// read it against and the file it wrote, and only the file it wrote once the commit lands. An index of a file the workspace has since replaced at the
+/// read it against and the file it wrote. An index of a file the workspace has since replaced at the
 /// path is told apart from a current one by its hash. Each row also carries the generation of the
 /// build it describes, so a commit records nothing on a table rebuilt after it wrote the table out.
 /// An index built before this table existed has none.

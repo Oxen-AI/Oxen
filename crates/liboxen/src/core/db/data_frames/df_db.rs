@@ -1195,12 +1195,12 @@ pub fn index_file_with_id(
 
 /// Record `file_hashes` as the hashes of the files the data frame table holds the rows of, and
 /// `generation` as the build of the table they describe, or a new one when `None`, replacing any
-/// earlier record. Returns the generation recorded.
+/// earlier record.
 pub(crate) fn record_index_sources(
     conn: &duckdb::Connection,
     generation: Option<&str>,
     file_hashes: &[MerkleHash],
-) -> Result<String, duckdb::Error> {
+) -> Result<(), duckdb::Error> {
     let generation = generation.map_or_else(|| Uuid::new_v4().to_string(), str::to_string);
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR, generation VARCHAR)"
@@ -1211,24 +1211,24 @@ pub(crate) fn record_index_sources(
             params![file_hash.to_string(), generation],
         )?;
     }
-    Ok(generation)
+    Ok(())
 }
 
 /// [`record_index_sources`] in one transaction, only while the table is still the build whose
 /// generation is `generation` (`None` for one built before builds were recorded), so a table rebuilt
-/// since gets no record. Returns the generation recorded, or `None` when the table was rebuilt.
+/// since gets no record. Returns whether it recorded them.
 pub(crate) fn record_index_sources_on_build(
     conn: &mut duckdb::Connection,
     generation: Option<&str>,
     file_hashes: &[MerkleHash],
-) -> Result<Option<String>, duckdb::Error> {
+) -> Result<bool, duckdb::Error> {
     let tx = conn.transaction()?;
     if index_generation(&tx)?.as_deref() != generation {
-        return Ok(None);
+        return Ok(false);
     }
-    let generation = record_index_sources(&tx, generation, file_hashes)?;
+    record_index_sources(&tx, generation, file_hashes)?;
     tx.commit()?;
-    Ok(Some(generation))
+    Ok(true)
 }
 
 /// The build of the data frame table [`record_index_sources`] recorded, or `None` for an index

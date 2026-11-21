@@ -985,6 +985,9 @@ pub(crate) fn process_add_file_with_staged_db_manager(
         );
     }
 
+    // The file replaces what a data frame's index holds, as in `stage_version_file`.
+    unindex_if_staged_table(workspace, &relative_path)?;
+
     let (mime_type, data_type, metadata) =
         inspect_file_for_staging(&full_path, path, file_status.previous_metadata.as_ref())?;
 
@@ -1070,6 +1073,10 @@ pub(crate) async fn stage_version_file(
                 committed: None,
             } => (file, StagedEntryStatus::Added, None),
         };
+        // The upload replaces what a data frame's index holds, even when it holds the bytes of a
+        // file the index matched before, such as the one before a commit (a revert), so the index
+        // goes and a client builds it again from the upload.
+        unindex_if_staged_table(&workspace, &relative_path)?;
         let previous_metadata =
             staged_file_metadata(&staged_db_manager, &relative_path)?.or(previous_metadata);
         let file_node =

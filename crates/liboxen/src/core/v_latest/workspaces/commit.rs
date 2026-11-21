@@ -172,8 +172,7 @@ async fn commit_inner(
     };
     let workspace = &workspace;
 
-    let (dir_entries, exported_indexes) =
-        export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
+    let dir_entries = export_tabular_data_frames(workspace, dir_entries, &commit_guard).await?;
 
     let (workspace, new_commit, branch_name) = (
         workspace.clone(),
@@ -228,19 +227,6 @@ async fn commit_inner(
             // Named workspaces aren't deleted on commit, instead we
             // update the workspace config to point to the new commit
             repositories::workspaces::update_commit(&workspace, &commit_id)?;
-
-            // The workspace now has each file the commit wrote at its path. The commit has
-            // landed, so a failure here only leaves an index also matching the file before it.
-            for exported in &exported_indexes {
-                if let Err(err) = drop_pre_commit_source(&workspace, exported) {
-                    tracing::warn!(
-                        oxen.workspace_id = %workspace.id,
-                        oxen.file_path = ?exported.path,
-                        exception.message = ?err,
-                        "Workspace commit landed but its data frame index still matches the file before the commit"
-                    );
-                }
-            }
         } else {
             // Unnamed workspaces are deleted on commit. The commit has already landed at this
             // point: a delete that cannot run yet leaves the directory for a later delete to
@@ -387,60 +373,13 @@ fn list_conflicts(
     Ok(conflicts)
 }
 
-/// A data frame index a commit wrote out, and the file it wrote, which the index records along with
-/// the file the commit read it against until the commit lands.
-struct ExportedIndex {
-    path: PathBuf,
-    file_hash: MerkleHash,
-    generation: String,
-}
-
-/// Record only the file a landed commit wrote on the index of `exported.path`, so an upload of the
-/// file from before the commit replaces what the index holds. An index the workspace stages the
-/// path over again, or one rebuilt since the commit wrote it out, keeps its record.
-fn drop_pre_commit_source(
-    workspace: &Workspace,
-    exported: &ExportedIndex,
-) -> Result<(), OxenError> {
-    if get_staged_db_manager(&workspace.workspace_repo)?
-        .read_from_staged_db(&exported.path)?
-        .is_some()
-    {
-        return Ok(());
-    }
-    let db_path = repositories::workspaces::data_frames::duckdb_path(workspace, &exported.path);
-    // Opening a removed index's database would create an empty one.
-    if !db_path.exists() {
-        return Ok(());
-    }
-    with_df_db_manager(&db_path, |manager| {
-        manager.with_conn_mut(|conn| {
-            Ok(df_db::record_index_sources_on_build(
-                conn,
-                Some(&exported.generation),
-                &[exported.file_hash],
-            )?)
-        })
-    })?;
-    Ok(())
-}
-
-/// Writes out each workspace data frame with a current index in place of its staged file, and
-/// returns the entries to commit along with the indexes it recorded the written files on.
 async fn export_tabular_data_frames(
     workspace: &Workspace,
     dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
     commit_guard: &Arc<CommitGuard>,
-) -> Result<
-    (
-        HashMap<PathBuf, Vec<StagedMerkleTreeNode>>,
-        Vec<ExportedIndex>,
-    ),
-    OxenError,
-> {
+) -> Result<HashMap<PathBuf, Vec<StagedMerkleTreeNode>>, OxenError> {
     // Export all the workspace data frames and add them to the commit
     let mut new_dir_entries: HashMap<PathBuf, Vec<StagedMerkleTreeNode>> = HashMap::new();
-    let mut exported_indexes = Vec::new();
     for (dir_path, entries) in dir_entries {
         for dir_entry in entries {
             log::debug!(
@@ -538,12 +477,11 @@ async fn export_tabular_data_frames(
                         );
 
                         // The index now holds the rows of the file just written out, which a named
-                        // workspace has at the path once the commit lands. Until then the
-                        // workspace stages the file the index matched, and still does if the
-                        // commit fails or an edit restages the path first, so the index counts as
-                        // current for both until `drop_pre_commit_source` runs after the commit
-                        // lands. A table rebuilt since it was written out (a restore discards its
-                        // edits) holds neither, so it gets no record.
+                        // workspace has at the path once the commit lands. The workspace stages
+                        // the file the index matched until then, and still does if the commit
+                        // fails or an edit restages the path first, so the index counts as current
+                        // for both. A table rebuilt since it was written out (a restore discards
+                        // its edits) holds neither, so it gets no record.
                         {
                             let db_path = repositories::workspaces::data_frames::duckdb_path(
                                 workspace, &node_path,
@@ -556,7 +494,7 @@ async fn export_tabular_data_frames(
                                 (node_path.clone(), Arc::clone(commit_guard));
                             #[cfg(test)]
                             let workspace_path = workspace.workspace_repo.path.clone();
-                            let recorded = tasks::spawn_blocking(move || {
+                            tasks::spawn_blocking(move || {
                                 let _commit_guard = commit_guard;
                                 #[cfg(test)]
                                 tests::pause_at(
@@ -570,23 +508,16 @@ async fn export_tabular_data_frames(
                                             generation.as_deref(),
                                             &sources,
                                         )?;
-                                        if recorded.is_none() {
+                                        if !recorded {
                                             log::debug!(
                                                 "workspace commit leaves the index of {log_path:?} unrecorded, since it was rebuilt after the export"
                                             );
                                         }
-                                        Ok(recorded)
+                                        Ok(())
                                     })
                                 })
                             })
                             .await??;
-                            if let Some(generation) = recorded {
-                                exported_indexes.push(ExportedIndex {
-                                    path: node_path.clone(),
-                                    file_hash: sources[1],
-                                    generation,
-                                });
-                            }
                         }
 
                         // Drop the entry only when the re-export is identical
@@ -635,7 +566,7 @@ async fn export_tabular_data_frames(
             }
         }
     }
-    Ok((new_dir_entries, exported_indexes))
+    Ok(new_dir_entries)
 }
 
 async fn compute_staged_merkle_tree_node(

@@ -1577,8 +1577,8 @@ mod tests {
                     "the data frame stays indexed after its workspace commits it"
                 );
 
-                // An edit through the workspace as loaded before the commit stages the committed
-                // file rather than the one before it, so the data frame stays indexed and the
+                // An edit through the workspace as loaded before the commit stages the file from
+                // before it, which the index still matches, so the data frame stays indexed and the
                 // edit lands on the committed rows.
                 let second_row = json!({"file": "images/second.jpg", "label": "cat", "min_x": 4.0, "min_y": 5.0, "width": 6, "height": 7});
                 rows::add(&repo, &before, &path, &second_row)?;
@@ -1599,8 +1599,8 @@ mod tests {
                     "the second commit holds the fixture's 6 rows and both added rows"
                 );
 
-                // An upload of the file before the last commit (a revert) replaces what the index
-                // holds, and the revert commits.
+                // An upload of the file from before the last commit (a revert) drops the index,
+                // although the index matched that file before the commit, and the revert commits.
                 let workspace = workspaces::get(&repo, "kept-index")?
                     .expect("a named workspace outlives its commit");
                 let previous = entries::get_commit_entry(&repo, &first, &path)?
@@ -1612,8 +1612,8 @@ mod tests {
                 files::add(&workspace, &upload).await?;
                 assert_eq!(
                     index_status(&workspace, &path)?,
-                    IndexStatus::OtherFile,
-                    "an upload of the file before the last commit is not the file the index holds"
+                    IndexStatus::Missing,
+                    "an upload of the file from before the last commit drops the index"
                 );
                 let reverted =
                     workspaces::commit(&workspace, &body("Revert the second row"), "kept-index")
