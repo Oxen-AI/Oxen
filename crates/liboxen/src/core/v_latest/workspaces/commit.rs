@@ -8,6 +8,7 @@ use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
 use crate::constants::STAGED_DIR;
 use crate::core;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::core::refs::with_ref_manager;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -472,6 +473,41 @@ async fn export_tabular_data_frames(
                         log::debug!(
                             "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
                         );
+
+                        // The index now holds the rows of the file just written out, which a named
+                        // workspace has at the path once the commit lands. Until then the
+                        // workspace stages the file the index matched, and still does if the
+                        // commit fails or an edit restages the path first. Those two are the only
+                        // files the index counts as current for, so a later upload of an older
+                        // file's bytes does not.
+                        {
+                            let db_path = repositories::workspaces::data_frames::duckdb_path(
+                                workspace, &node_path,
+                            );
+                            let sources = [
+                                *file_node.hash(),
+                                *new_staged_merkle_tree_node.node.file()?.hash(),
+                            ];
+                            let commit_guard = Arc::clone(commit_guard);
+                            tasks::spawn_blocking(move || {
+                                let _commit_guard = commit_guard;
+                                with_df_db_manager(&db_path, |manager| {
+                                    manager.with_conn(|conn| {
+                                        // One transaction, so a crash between replacing the
+                                        // record and filling it leaves the earlier record.
+                                        conn.execute_batch("BEGIN TRANSACTION")?;
+                                        match df_db::record_index_sources(conn, &sources) {
+                                            Ok(()) => Ok(conn.execute_batch("COMMIT")?),
+                                            Err(err) => {
+                                                let _ = conn.execute_batch("ROLLBACK");
+                                                Err(err.into())
+                                            }
+                                        }
+                                    })
+                                })
+                            })
+                            .await??;
+                        }
 
                         // Drop the entry only when the re-export is identical
                         // (content and metadata) to the BASE commit's file node

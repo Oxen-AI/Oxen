@@ -1192,39 +1192,42 @@ pub fn index_file_with_id(
     Ok(())
 }
 
-/// Record `file_hash` as the hash of the file the data frame table was built from, replacing any
-/// earlier record.
-pub(crate) fn record_index_source(
+/// Record `file_hashes` as the hashes of the files the data frame table holds the rows of, replacing
+/// any earlier record.
+pub(crate) fn record_index_sources(
     conn: &duckdb::Connection,
-    file_hash: MerkleHash,
+    file_hashes: &[MerkleHash],
 ) -> Result<(), duckdb::Error> {
     conn.execute_batch(&format!(
         "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR)"
     ))?;
-    conn.execute(
-        &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?)"),
-        params![file_hash.to_string()],
-    )?;
+    for file_hash in file_hashes {
+        conn.execute(
+            &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?)"),
+            params![file_hash.to_string()],
+        )?;
+    }
     Ok(())
 }
 
-/// The hash [`record_index_source`] recorded, or `None` for an index built before sources were
+/// The hashes [`record_index_sources`] recorded, or `None` for an index built before sources were
 /// recorded.
-pub(crate) fn index_source(conn: &duckdb::Connection) -> Result<Option<MerkleHash>, duckdb::Error> {
+pub(crate) fn index_sources(
+    conn: &duckdb::Connection,
+) -> Result<Option<Vec<MerkleHash>>, duckdb::Error> {
     if !table_exists(conn, INDEX_SOURCE_TABLE)? {
         return Ok(None);
     }
-    conn.query_row(
-        &format!("SELECT file_hash FROM \"{INDEX_SOURCE_TABLE}\""),
-        [],
-        |row| {
+    let mut stmt = conn.prepare(&format!("SELECT file_hash FROM \"{INDEX_SOURCE_TABLE}\""))?;
+    let hashes = stmt
+        .query_map([], |row| {
             let hash: String = row.get(0)?;
             hash.parse().map_err(|err: OxenError| {
                 duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(err))
             })
-        },
-    )
-    .map(Some)
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(Some(hashes))
 }
 
 pub fn preview(conn: &duckdb::Connection, table_name: &str) -> Result<DataFrame, DataFrameError> {
