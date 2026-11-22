@@ -43,11 +43,13 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::config::UserConfig;
+    use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
     use crate::core::staged::staged_db_manager::get_staged_db_manager;
     use crate::error::OxenError;
     use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::model::{
-        Commit, EntryDataType, LocalRepository, NewCommitBody, StagedEntryStatus, Workspace,
+        Commit, EntryDataType, LocalRepository, MerkleHash, NewCommitBody, StagedEntryStatus,
+        Workspace,
     };
     use crate::repositories::size;
     use crate::repositories::workspaces::data_frames::IndexStatus;
@@ -55,6 +57,7 @@ mod tests {
     use crate::repositories::{self, workspaces};
     use crate::test;
     use crate::util::fs;
+    use crate::util::hasher;
     use serde_json::json;
 
     #[tokio::test]
@@ -549,13 +552,13 @@ mod tests {
                 workspaces::data_frames::is_indexed(&workspace, table)?,
                 "the row added to table.csv keeps the copy it was indexed from staged"
             );
-            // A data frame edited and then replaced commits the replacement, not the edits, and its
-            // index stops counting as indexed. A copy over a path whose index is being built, or a
-            // copy of an index whose source is replaced as it is copied, leaves the same state.
+            // A data frame edited and then replaced by an upload commits the replacement, not the
+            // edits, since the upload drops the index.
             let replaced = Path::new("replaced.csv");
             let replaced_file = workspace.workspace_repo.path.join(replaced);
             fs::write_to_path(&replaced_file, "x,y\n1,1\n")?;
             workspaces::files::add(&workspace, &replaced_file).await?;
+            let first_upload: MerkleHash = hasher::hash_file_contents(&replaced_file)?.parse()?;
             workspaces::data_frames::index(&repo, &workspace, replaced).await?;
             workspaces::data_frames::rows::add(
                 &repo,
@@ -567,8 +570,27 @@ mod tests {
             workspaces::files::add(&workspace, &replaced_file).await?;
             assert_eq!(
                 workspaces::data_frames::index_status(&workspace, replaced)?,
+                IndexStatus::Missing,
+                "the upload drops replaced.csv's index of the file it held before"
+            );
+            // An index whose recorded source is the file the path held before, as an index built
+            // while a copy or upload replaces the file can leave, counts as another file's, and the
+            // commit commits the staged file rather than the index's rows.
+            workspaces::data_frames::index(&repo, &workspace, replaced).await?;
+            workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                replaced,
+                &json!({"x": 6, "y": 6}),
+            )?;
+            let db_path = workspaces::data_frames::duckdb_path(&workspace, replaced);
+            with_df_db_manager(&db_path, |manager| {
+                manager.with_conn(|conn| Ok(df_db::record_index_sources(conn, None, &[first_upload])?))
+            })?;
+            assert_eq!(
+                workspaces::data_frames::index_status(&workspace, replaced)?,
                 IndexStatus::OtherFile,
-                "replaced.csv keeps its index of the file it held before the upload"
+                "replaced.csv's index records the file it held before the upload"
             );
             let committed = workspaces::commit(
                 &workspace,
@@ -590,7 +612,7 @@ mod tests {
                 (rows("table.csv"), rows("replaced.csv")),
                 (3, 3),
                 "table.csv commits the copy's rows and the added one, and replaced.csv the upload's \
-                 rows without the one added before it"
+                 rows without the ones added to its indexes"
             );
 
             // A committed directory moves with its nested subdirectory, and retrying the move

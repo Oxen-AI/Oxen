@@ -50,7 +50,7 @@ use crate::model::data_frame::schema::Schema;
 use crate::opts::DFOpts;
 use crate::{model, util};
 use duckdb::arrow::record_batch::RecordBatch;
-use duckdb::{ToSql, params};
+use duckdb::{OptionalExt, ToSql, params};
 use polars::prelude::*;
 use sqlparser::ast::{self, Expr as SqlExpr, SelectItem, Statement, Value as SqlValue};
 use sqlparser::dialect::PostgreSqlDialect;
@@ -60,6 +60,7 @@ use std::io::Cursor;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use uuid::Uuid;
 
 use sql_query_builder as sql;
 
@@ -1192,39 +1193,82 @@ pub fn index_file_with_id(
     Ok(())
 }
 
-/// Record `file_hash` as the hash of the file the data frame table was built from, replacing any
+/// Record `file_hashes` as the hashes of the files the data frame table holds the rows of, and
+/// `generation` as the build of the table they describe, or a new one when `None`, replacing any
 /// earlier record.
-pub(crate) fn record_index_source(
+pub(crate) fn record_index_sources(
     conn: &duckdb::Connection,
-    file_hash: MerkleHash,
+    generation: Option<&str>,
+    file_hashes: &[MerkleHash],
 ) -> Result<(), duckdb::Error> {
+    let generation = generation.map_or_else(|| Uuid::new_v4().to_string(), str::to_string);
     conn.execute_batch(&format!(
-        "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR)"
+        "CREATE OR REPLACE TABLE \"{INDEX_SOURCE_TABLE}\" (file_hash VARCHAR, generation VARCHAR)"
     ))?;
-    conn.execute(
-        &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?)"),
-        params![file_hash.to_string()],
-    )?;
+    for file_hash in file_hashes {
+        conn.execute(
+            &format!("INSERT INTO \"{INDEX_SOURCE_TABLE}\" VALUES (?, ?)"),
+            params![file_hash.to_string(), generation],
+        )?;
+    }
     Ok(())
 }
 
-/// The hash [`record_index_source`] recorded, or `None` for an index built before sources were
-/// recorded.
-pub(crate) fn index_source(conn: &duckdb::Connection) -> Result<Option<MerkleHash>, duckdb::Error> {
-    if !table_exists(conn, INDEX_SOURCE_TABLE)? {
+/// [`record_index_sources`] in one transaction, only while the table is still the build whose
+/// generation is `generation` (`None` for one built before builds were recorded), so a table rebuilt
+/// since gets no record. Returns whether it recorded them.
+pub(crate) fn record_index_sources_on_build(
+    conn: &mut duckdb::Connection,
+    generation: Option<&str>,
+    file_hashes: &[MerkleHash],
+) -> Result<bool, duckdb::Error> {
+    let tx = conn.transaction()?;
+    if index_generation(&tx)?.as_deref() != generation {
+        return Ok(false);
+    }
+    record_index_sources(&tx, generation, file_hashes)?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// The build of the data frame table [`record_index_sources`] recorded, or `None` for an index
+/// built before builds were recorded.
+pub(crate) fn index_generation(conn: &duckdb::Connection) -> Result<Option<String>, duckdb::Error> {
+    if !table_exists(conn, INDEX_SOURCE_TABLE)?
+        || !get_schema(conn, INDEX_SOURCE_TABLE)?
+            .fields
+            .iter()
+            .any(|field| field.name == "generation")
+    {
         return Ok(None);
     }
     conn.query_row(
-        &format!("SELECT file_hash FROM \"{INDEX_SOURCE_TABLE}\""),
+        &format!("SELECT generation FROM \"{INDEX_SOURCE_TABLE}\" LIMIT 1"),
         [],
-        |row| {
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// The hashes [`record_index_sources`] recorded, or `None` for an index built before sources were
+/// recorded.
+pub(crate) fn index_sources(
+    conn: &duckdb::Connection,
+) -> Result<Option<Vec<MerkleHash>>, duckdb::Error> {
+    if !table_exists(conn, INDEX_SOURCE_TABLE)? {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare(&format!("SELECT file_hash FROM \"{INDEX_SOURCE_TABLE}\""))?;
+    let hashes = stmt
+        .query_map([], |row| {
             let hash: String = row.get(0)?;
             hash.parse().map_err(|err: OxenError| {
                 duckdb::Error::FromSqlConversionFailure(0, duckdb::types::Type::Text, Box::new(err))
             })
-        },
-    )
-    .map(Some)
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(Some(hashes))
 }
 
 pub fn preview(conn: &duckdb::Connection, table_name: &str) -> Result<DataFrame, DataFrameError> {

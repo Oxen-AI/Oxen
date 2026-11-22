@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::core::staged::get_staged_db_manager;
+use crate::core::v_latest::workspaces::files::current_committed_file;
 use crate::error::OxenError;
 use crate::model::LocalRepository;
 use crate::model::Schema;
@@ -29,7 +30,8 @@ pub fn update_schema(
         let (mut file_node, status) = match staged {
             Some(staged) => (staged.node.file()?, staged.status),
             None => (
-                committed_node.ok_or_else(|| OxenError::path_does_not_exist(path))?,
+                current_committed_file(workspace, path, committed_node)?
+                    .ok_or_else(|| OxenError::path_does_not_exist(path))?,
                 StagedEntryStatus::Modified,
             ),
         };

@@ -8,6 +8,7 @@ use tokio::sync::{Mutex as TokioMutex, OwnedMutexGuard};
 
 use crate::constants::STAGED_DIR;
 use crate::core;
+use crate::core::db::data_frames::df_db::{self, with_df_db_manager};
 use crate::core::refs::with_ref_manager;
 use crate::core::staged::get_staged_db_manager;
 use crate::core::v_latest::index::CommitMerkleTree;
@@ -403,7 +404,9 @@ async fn export_tabular_data_frames(
                     // An index of a file other than the one being committed
                     // (one the workspace replaced since) holds that file's
                     // rows, so the staged file commits as it is.
-                    let index_status = if is_tabular {
+                    // The status comes with the build of the index it describes, so the hashes
+                    // recorded after the export go only on that build.
+                    let (index_status, generation) = if is_tabular {
                         let (workspace, node_path) = (workspace.clone(), node_path.clone());
                         let file_hash = *file_node.hash();
                         tasks::spawn_blocking(move || {
@@ -413,7 +416,7 @@ async fn export_tabular_data_frames(
                         })
                         .await??
                     } else {
-                        IndexStatus::Missing
+                        (IndexStatus::Missing, None)
                     };
                     let mut should_export = index_status == IndexStatus::Current;
 
@@ -472,6 +475,50 @@ async fn export_tabular_data_frames(
                         log::debug!(
                             "export_tabular_data_frames new_staged_merkle_tree_node: {new_staged_merkle_tree_node:?}"
                         );
+
+                        // The index now holds the rows of the file just written out, which a named
+                        // workspace has at the path once the commit lands. The workspace stages
+                        // the file the index matched until then, and still does if the commit
+                        // fails or an edit restages the path first, so the index counts as current
+                        // for both. A table rebuilt since it was written out (a restore discards
+                        // its edits) holds neither, so it gets no record.
+                        {
+                            let db_path = repositories::workspaces::data_frames::duckdb_path(
+                                workspace, &node_path,
+                            );
+                            let sources = [
+                                *file_node.hash(),
+                                *new_staged_merkle_tree_node.node.file()?.hash(),
+                            ];
+                            let (log_path, commit_guard) =
+                                (node_path.clone(), Arc::clone(commit_guard));
+                            #[cfg(test)]
+                            let workspace_path = workspace.workspace_repo.path.clone();
+                            tasks::spawn_blocking(move || {
+                                let _commit_guard = commit_guard;
+                                #[cfg(test)]
+                                tests::pause_at(
+                                    tests::PausePoint::BeforeIndexSources,
+                                    &workspace_path,
+                                );
+                                with_df_db_manager(&db_path, |manager| {
+                                    manager.with_conn_mut(|conn| {
+                                        let recorded = df_db::record_index_sources_on_build(
+                                            conn,
+                                            generation.as_deref(),
+                                            &sources,
+                                        )?;
+                                        if !recorded {
+                                            log::debug!(
+                                                "workspace commit leaves the index of {log_path:?} unrecorded, since it was rebuilt after the export"
+                                            );
+                                        }
+                                        Ok(())
+                                    })
+                                })
+                            })
+                            .await??;
+                        }
 
                         // Drop the entry only when the re-export is identical
                         // (content and metadata) to the BASE commit's file node
@@ -633,6 +680,8 @@ mod tests {
     use crate::core::v_latest::workspaces::files::{
         CommittedFiles, InspectedVersionFile, VersionFileToStage,
     };
+    use crate::model::LocalRepository;
+    use crate::model::metadata::generic_metadata::GenericMetadata;
     use crate::repositories;
     use crate::test;
     use crate::util;
@@ -1051,6 +1100,168 @@ mod tests {
         .await
     }
 
+    /// A restore that rebuilds a data frame's index after a commit wrote the data frame out, and
+    /// before the commit records the file it wrote, discards the rows the commit carries, so the
+    /// rebuilt index must not count as the committed file's.
+    #[tokio::test]
+    async fn test_restore_during_commit_leaves_rebuilt_index_unrecorded() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &head,
+                "restore-during-commit",
+                Some("restore-during-commit".to_string()),
+                true,
+            )
+            .await?;
+            let path = test::test_bounding_box_csv();
+            repositories::workspaces::data_frames::index(&repo, &workspace, &path).await?;
+            let row = serde_json::json!({"file": "images/added.jpg", "label": "dog", "min_x": 1.0, "min_y": 2.0, "width": 3, "height": 4});
+            repositories::workspaces::data_frames::rows::add(&repo, &workspace, &path, &row)?;
+
+            let body = NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: "Add a row".to_string(),
+            };
+            let (reached, resume) = pause_commit_at(
+                PausePoint::BeforeIndexSources,
+                &workspace.workspace_repo.path,
+            );
+            let paused_commit =
+                commit_then_clear_pause(PausePoint::BeforeIndexSources, &workspace, &body);
+            let restore = async {
+                reached
+                    .await
+                    .expect("the commit should write the data frame out");
+                repositories::workspaces::data_frames::restore(&repo, &workspace, &path).await?;
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let (committed, restored) = tokio::join!(paused_commit, restore);
+            let committed = committed?;
+            restored?;
+
+            assert_eq!(
+                committed_rows(&repo, &committed, &path)?,
+                7,
+                "the commit carries the row added before it"
+            );
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("a named workspace outlives its commit");
+            assert_eq!(
+                repositories::workspaces::data_frames::index_status(&workspace, &path)?,
+                IndexStatus::OtherFile,
+                "the index the restore rebuilt lacks the committed row, so it is not the \
+                 committed file's"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// A row edit that lands while a commit is in flight, before the commit moves the workspace to
+    /// the commit it wrote, stages the file from before it. The index still matches that file, so
+    /// the data frame stays indexed and the next commit carries the edit.
+    #[tokio::test]
+    async fn test_edit_during_commit_keeps_data_frame_indexed() -> Result<(), OxenError> {
+        // Skip duckdb if on windows
+        if std::env::consts::OS == "windows" {
+            return Ok(());
+        }
+
+        test::run_bounding_box_csv_repo_test_fully_committed_async(|repo| async move {
+            let head = repositories::commits::head_commit(&repo)?;
+            let workspace = repositories::workspaces::create_with_name(
+                &repo,
+                &head,
+                "edit-during-commit",
+                Some("edit-during-commit".to_string()),
+                true,
+            )
+            .await?;
+            let path = test::test_bounding_box_csv();
+            repositories::workspaces::data_frames::index(&repo, &workspace, &path).await?;
+            let row = |file: &str| serde_json::json!({"file": file, "label": "dog", "min_x": 1.0, "min_y": 2.0, "width": 3, "height": 4});
+            repositories::workspaces::data_frames::rows::add(
+                &repo,
+                &workspace,
+                &path,
+                &row("images/first.jpg"),
+            )?;
+
+            let body = |message: &str| NewCommitBody {
+                author: "author".to_string(),
+                email: "email".to_string(),
+                message: message.to_string(),
+            };
+            let (reached, resume) =
+                pause_commit_at(PausePoint::BeforeRefUpdate, &workspace.workspace_repo.path);
+            let first_body = body("Add a row");
+            let paused_commit =
+                commit_then_clear_pause(PausePoint::BeforeRefUpdate, &workspace, &first_body);
+            let edit = async {
+                reached
+                    .await
+                    .expect("the commit should reach the branch update");
+                repositories::workspaces::data_frames::rows::add(
+                    &repo,
+                    &workspace,
+                    &path,
+                    &row("images/during.jpg"),
+                )?;
+                resume
+                    .send(())
+                    .expect("the paused commit should be waiting to resume");
+                Ok::<_, OxenError>(())
+            };
+            let (committed, edited) = tokio::join!(paused_commit, edit);
+            committed?;
+            edited?;
+
+            let workspace = repositories::workspaces::get(&repo, &workspace.id)?
+                .expect("a named workspace outlives its commit");
+            assert!(
+                repositories::workspaces::data_frames::is_indexed(&workspace, &path)?,
+                "an edit made during the commit keeps the data frame indexed"
+            );
+            let next = commit(&workspace, &body("Commit the edit made during the commit"), "main")
+                .await?;
+            assert_eq!(
+                committed_rows(&repo, &next, &path)?,
+                8,
+                "the next commit carries both added rows on the fixture's 6"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// The number of rows `commit` records for the data frame at `path`.
+    fn committed_rows(
+        repo: &LocalRepository,
+        commit: &Commit,
+        path: &Path,
+    ) -> Result<usize, OxenError> {
+        match repositories::tree::get_file_by_path(repo, commit, path)?
+            .expect("the data frame should be in the commit")
+            .metadata()
+        {
+            Some(GenericMetadata::MetadataTabular(m)) => Ok(m.tabular.height),
+            other => panic!("the data frame should have tabular metadata, got {other:?}"),
+        }
+    }
+
     /// Where in `commit_inner` a test can pause a commit.
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     pub(super) enum PausePoint {
@@ -1058,6 +1269,8 @@ mod tests {
         AfterStagedRead,
         /// Once the commit has been built on the branch head, before the branch moves to it.
         BeforeRefUpdate,
+        /// Once a data frame has been written out, before its index records the file written.
+        BeforeIndexSources,
     }
 
     type PauseHandles = (oneshot::Sender<()>, oneshot::Receiver<()>);
