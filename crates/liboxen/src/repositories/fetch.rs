@@ -31,15 +31,22 @@ pub async fn fetch_all(
     // Find branches that are on the remote but not on the local
     let mut branches_to_create = vec![];
     let mut branches_to_fetch = vec![];
+    // A local branch already at the remote's commit was fetched or committed here, so there is
+    // nothing to download for it unless the caller asked for a re-scan.
+    let mut branches_up_to_date = vec![];
+    let skip_up_to_date = !fetch_opts.all && !fetch_opts.missing_files;
     for remote_branch in remote_branches {
-        if !local_branches.iter().any(|b| b.name == remote_branch.name) {
-            branches_to_create.push(remote_branch);
-        } else {
-            branches_to_fetch.push(remote_branch);
+        match local_branches.iter().find(|b| b.name == remote_branch.name) {
+            None => branches_to_create.push(remote_branch),
+            Some(local) if skip_up_to_date && local.commit_id == remote_branch.commit_id => {
+                branches_up_to_date.push(remote_branch)
+            }
+            Some(_) => branches_to_fetch.push(remote_branch),
         }
     }
 
     log::debug!("Branches to create: {branches_to_create:?}");
+    log::debug!("Branches already up to date: {branches_up_to_date:?}");
     log::debug!("Branches to fetch: {branches_to_fetch:?}");
 
     let branches_to_process = branches_to_fetch
@@ -76,11 +83,13 @@ pub async fn fetch_all(
     .buffer_unordered(1)
     .collect::<Vec<_>>();
 
-    let branches: Result<Vec<Branch>, OxenError> = stream.await.into_iter().collect();
+    let fetched: Result<Vec<Branch>, OxenError> = stream.await.into_iter().collect();
 
     api::client::repositories::post_fetch(&remote_repo).await?;
 
-    branches
+    let mut branches = fetched?;
+    branches.extend(branches_up_to_date);
+    Ok(branches)
 }
 
 #[tracing::instrument(skip_all, fields(oxen.repository_path = %repo.path.display()))]
@@ -117,6 +126,8 @@ pub async fn fetch_remote_branch(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::api;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
@@ -161,6 +172,44 @@ mod tests {
 
                 let current_branch = repositories::branches::current_branch(&cloned_repo)?.unwrap();
                 assert_eq!(current_branch.name, DEFAULT_BRANCH_NAME);
+
+                // Move the clone to the newest branch, so main and test_moo are behind its
+                // HEAD, then advance main on the remote, so it is on a line HEAD is not on.
+                repositories::checkout(&cloned_repo, "test_moo_2").await?;
+                repositories::checkout(&repo, DEFAULT_BRANCH_NAME).await?;
+                let filepath = repo.path.join("file_main.txt");
+                test::write_txt_file_to_path(&filepath, "a second file on main")?;
+                repositories::add(&repo, &filepath).await?;
+                let main_commit = repositories::commit(&repo, "Adding a second file on main")?;
+                repositories::push(&repo).await?;
+
+                let fetched = repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
+                let mut fetched_names: Vec<&str> =
+                    fetched.iter().map(|b| b.name.as_str()).collect();
+                fetched_names.sort();
+                assert_eq!(
+                    fetched_names,
+                    vec![DEFAULT_BRANCH_NAME, "test_moo", "test_moo_2"],
+                    "branches already at the remote's commit are still reported"
+                );
+                assert_eq!(3, repositories::branches::count(&cloned_repo).await?);
+
+                // The commit main gained arrived with its file, although HEAD can't reach it.
+                let main_commit = repositories::commits::get_by_id(&cloned_repo, &main_commit.id)?
+                    .expect("fetch downloads the commit the remote branch moved to");
+                let entry = repositories::entries::get_file(
+                    &cloned_repo,
+                    &main_commit,
+                    Path::new("file_main.txt"),
+                )?
+                .expect("the fetched commit's tree lists its new file");
+                assert!(
+                    cloned_repo
+                        .version_store()
+                        .version_exists(&entry.hash().to_string())
+                        .await?,
+                    "fetch downloads the new commit's version file"
+                );
 
                 api::client::repositories::delete(&remote_repo).await?;
 

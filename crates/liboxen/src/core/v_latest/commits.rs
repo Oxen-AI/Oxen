@@ -877,49 +877,77 @@ pub async fn list_between_exclusive(
     let repo = repo.clone();
     let base = base.clone();
     let head = head.clone();
-    tasks::spawn_blocking(move || -> Result<Vec<Commit>, OxenError> {
-        // Pass 1: mark everything reachable from base. Purely graph-based, so the
-        // outcome can't hinge on the order commits happen to sort in.
-        let mut on_base: HashSet<String> = HashSet::new();
-        let mut stack = vec![base.clone()];
-        on_base.insert(base.id.clone());
-        while let Some(commit) = stack.pop() {
-            for parent_id in &commit.parent_ids {
-                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
-                    continue;
-                };
-                if on_base.insert(parent.id.clone()) {
-                    stack.push(parent);
-                }
+    tasks::spawn_blocking(move || list_head_only(&repo, &base, &head)).await?
+}
+
+/// The commits reachable from `head` but not from `base`, newest first.
+fn list_head_only(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    // Pass 1: mark everything reachable from base. Purely graph-based, so the
+    // outcome can't hinge on the order commits happen to sort in.
+    let mut on_base: HashSet<String> = HashSet::new();
+    let mut stack = vec![base.clone()];
+    on_base.insert(base.id.clone());
+    while let Some(commit) = stack.pop() {
+        for parent_id in &commit.parent_ids {
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            if on_base.insert(parent.id.clone()) {
+                stack.push(parent);
             }
         }
+    }
 
-        // Pass 2: emit head's ancestry that isn't on base, newest first.
-        let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut results = vec![];
+    // Pass 2: emit head's ancestry that isn't on base, newest first.
+    let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut results = vec![];
 
-        if !on_base.contains(&head.id) {
-            seen.insert(head.id.clone());
-            heap.push(TimestampedCommit(head.clone()));
-        }
+    if !on_base.contains(&head.id) {
+        seen.insert(head.id.clone());
+        heap.push(TimestampedCommit(head.clone()));
+    }
 
-        while let Some(TimestampedCommit(commit)) = heap.pop() {
-            for parent_id in &commit.parent_ids {
-                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
-                    continue;
-                };
-                // An on_base parent (and everything above it) already lives on base.
-                if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
-                    heap.push(TimestampedCommit(parent));
-                }
+    while let Some(TimestampedCommit(commit)) = heap.pop() {
+        for parent_id in &commit.parent_ids {
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            // An on_base parent (and everything above it) already lives on base.
+            if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
+                heap.push(TimestampedCommit(parent));
             }
-            results.push(commit);
         }
+        results.push(commit);
+    }
 
-        Ok(results)
-    })
-    .await?
+    Ok(results)
+}
+
+/// The commits a client that holds `base` and its history downloads to reach `head`: `base`
+/// first, then every commit reachable from `head` but not from `base`, oldest first, ending with
+/// `head`. `head` is listed even when `base` already reaches it, so a client that holds only part
+/// of that history still receives the commit it asked for.
+pub fn list_for_download(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut commits = vec![base.clone()];
+    if head.id == base.id {
+        return Ok(commits);
+    }
+    let head_only = list_head_only(repo, base, head)?;
+    if head_only.is_empty() {
+        commits.push(head.clone());
+    } else {
+        commits.extend(head_only.into_iter().rev());
+    }
+    Ok(commits)
 }
 
 /// Retrieve entries with filepaths matching a provided glob pattern
