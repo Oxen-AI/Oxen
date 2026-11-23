@@ -25,7 +25,6 @@ pub fn config(cfg: &mut web::ServiceConfig) {
                 .service(services::branches())
                 .service(services::chunk())
                 .service(services::commits())
-                .service(services::commits_db())
                 .service(services::compare())
                 .service(services::data_frames())
                 .service(services::dir())

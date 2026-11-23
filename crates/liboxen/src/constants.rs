@@ -25,8 +25,6 @@ pub const HEAD_FILE: &str = "HEAD";
 pub const REFS_DIR: &str = "refs";
 /// history/ dir is a list of directories named after commit ids
 pub const HISTORY_DIR: &str = "history";
-/// commits/ is a key-value database of commit ids to commit objects
-pub const COMMITS_DIR: &str = "commits";
 /// prefix for the cached stats dirs
 pub const CACHE_DIR: &str = "cache";
 /// prefix for the commit count dirs

@@ -168,12 +168,10 @@ const START_SERVER_USAGE: &str = "Usage: `oxen-server start -i 0.0.0.0 -p 3000`"
         crate::controllers::branches::list_entry_versions,
         // Commits
         crate::controllers::commits::history,
-        crate::controllers::commits::list_all,
         crate::controllers::commits::list_missing,
         crate::controllers::commits::list_missing_files,
         crate::controllers::commits::show,
         crate::controllers::commits::parents,
-        crate::controllers::commits::download_commits_db,
         crate::controllers::commits::download_dir_hashes_db,
         crate::controllers::commits::download_commit_entries_db,
         crate::controllers::commits::create,
