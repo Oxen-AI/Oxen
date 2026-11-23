@@ -39,6 +39,9 @@ jobs:
           - arch: x86_64
             target: x86_64-apple-darwin
     env:
+      # The binaries and Python wheels this job publishes keep fat LTO, smaller than the
+      # release profile's thin and the setting they have always shipped with.
+      CARGO_PROFILE_RELEASE_LTO: fat
       RUSTC_WRAPPER: sccache
       CMAKE_C_COMPILER_LAUNCHER: sccache
       CMAKE_CXX_COMPILER_LAUNCHER: sccache

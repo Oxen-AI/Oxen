@@ -191,9 +191,13 @@ debug-assertions = false
 
 [profile.release]
 codegen-units = 1
-# The Windows release and the oxen-server image build both override this to "thin"
-# through CARGO_PROFILE_RELEASE_LTO to save on build time
-lto = true
+# Thin LTO: fat LTO merges the whole program in one serial link-time pass that reruns
+# whenever this workspace's own crates change: on an M4 Pro a release rebuild after a
+# one-line change in liboxen takes about 6 minutes under fat and about 2 under thin.
+# Every oxen-server image and the Windows release build this way. release_linux.yml and
+# release_macos.yml select fat through CARGO_PROFILE_RELEASE_LTO for the binaries and
+# Python wheels they publish, whose runtime under thin is unmeasured.
+lto = "thin"
 opt-level = "s"
 strip = true
 
