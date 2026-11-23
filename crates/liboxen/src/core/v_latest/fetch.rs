@@ -65,13 +65,23 @@ pub async fn fetch_remote_branch(
         } else if fetch_opts.all {
             fetch_full_tree_and_hashes(repo, remote_repo, &remote_branch, &pull_progress).await?;
         } else {
-            // Download the nodes from the commits between the head and the remote head
+            // Download from the local branch's own commit when the server has it, since HEAD may be
+            // a commit not yet pushed, and starting from one downloads the remote's whole history
+            let branch_commit_id = repositories::branches::get_commit_id(repo, &fetch_opts.branch)?
+                .filter(|id| *id != head_commit.id);
+            let base = match branch_commit_id {
+                Some(id) if api::client::tree::has_node(remote_repo, id.parse()?).await? => {
+                    repositories::commits::get_by_id(repo, &id)?.unwrap_or(head_commit)
+                }
+                _ => head_commit,
+            };
+            // Download the nodes from the commits between the base and the remote head
             sync_from_head(
                 repo,
                 remote_repo,
                 fetch_opts,
                 &remote_branch,
-                &head_commit,
+                &base,
                 &pull_progress,
             )
             .await?;
