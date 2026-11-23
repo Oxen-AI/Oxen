@@ -28,7 +28,8 @@ pub async fn fetch_all(
     let remote_branches = api::client::branches::list(&remote_repo).await?;
     let local_branches = repositories::branches::list(repo).await?;
 
-    // Find branches that are on the remote but not on the local
+    // Sort the remote branches into those missing locally, those already at the remote's
+    // commit, and the rest
     let mut branches_to_create = vec![];
     let mut branches_to_fetch = vec![];
     // A local branch already at the remote's commit was fetched or committed here, so there is
