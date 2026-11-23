@@ -246,14 +246,22 @@ jobs:
           # recompiles here. With no interpreter to run, maturin hands cargo a PyO3 config file it
           # writes under target\maturin, and pyo3-ffi's build script reruns whenever
           # PYO3_CONFIG_FILE changes, unset included, so the listing points at the same file.
-          $pyo3Config = @(Get-ChildItem "${{ github.workspace }}\target\maturin\pyo3-config-*.txt" -ErrorAction SilentlyContinue)
+          $maturinDir = "${{ github.workspace }}\target\maturin"
+          $pyo3Config = @(Get-ChildItem "$maturinDir\pyo3-config-*.txt" -ErrorAction SilentlyContinue)
+          if ($pyo3Config.Count -gt 1) {
+            # The restored tree brought an earlier release's file, say from an older abi3 floor,
+            # and maturin wrote its own beside it. Restored files keep their archived mtimes, older
+            # than the stamp this run's build started with, so deleting them leaves the saved tree
+            # only the file this release's wheel graph was built against.
+            $stamp = (Get-Item C:\deptree-build-start).LastWriteTime
+            $restored, $pyo3Config = $pyo3Config.Where({ $_.LastWriteTime -lt $stamp }, 'Split')
+            $restored | Remove-Item -Force
+          }
           if ($pyo3Config.Count -eq 1) { $env:PYO3_CONFIG_FILE = $pyo3Config[0].FullName }
           else {
-            # More than one means an earlier release's file was cached too, say from an older abi3
-            # floor. Dropping them all keeps the stale one out of the saved tree, so the next
-            # release writes and saves only its own.
-            Remove-Item -Recurse -Force "${{ github.workspace }}\target\maturin" -ErrorAction SilentlyContinue
-            Write-Host "::warning::DEPTREE found $($pyo3Config.Count) PyO3 config files, so the listing build recompiles the wheel graph"
+            # No file maturin can be shown to have used, so none is worth saving.
+            Remove-Item -Recurse -Force $maturinDir -ErrorAction SilentlyContinue
+            Write-Host "::warning::DEPTREE found no single PyO3 config file maturin used, so the listing build recompiles the wheel graph"
           }
           cargo build --release --manifest-path ${{ github.workspace }}\crates\oxen-py\Cargo.toml --features pyo3/extension-module --message-format=json-render-diagnostics | Add-Content C:\deptree-live.json
           # Best-effort: without this list the wheel's units are pruned and recompile next release.
@@ -354,7 +362,8 @@ jobs:
           # target/maturin holds the PyO3 config file maturin writes for the wheel build. Restored
           # with its mtime, maturin finds the content unchanged and leaves it alone, while a fresh
           # copy is newer than pyo3-ffi's last build script run and recompiles the wheel graph. The
-          # wheel step removes it when it holds stale files, and tar fails on a missing path.
+          # wheel step removes it when it cannot tell which file maturin used, and tar fails on a
+          # missing path.
           if (Test-Path "${{ github.workspace }}\target\maturin") { $list += "$rel/maturin" }
           # The registry goes last, which the restore's cleanup after a truncated stream relies on.
           $list += @("Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
