@@ -4,9 +4,10 @@
 //!
 
 use crate::core;
+use crate::core::db::dir_hashes::dir_hashes_db::dir_hash_db_path_from_commit_id;
 use crate::error::OxenError;
 use crate::model::User;
-use crate::model::{Commit, LocalRepository};
+use crate::model::{Commit, LocalRepository, MerkleHash};
 use crate::opts::PaginateOpts;
 use crate::tasks;
 use crate::util;
@@ -83,8 +84,11 @@ pub async fn head_commit_maybe_async(repo: &LocalRepository) -> Result<Option<Co
     tasks::spawn_blocking(move || head_commit_maybe(&repo)).await?
 }
 
-/// Get the root commit of a repository
-pub use crate::core::v_latest::commits::root_commit_maybe;
+/// Get the root commit of a repository, or `None` if it has no commits
+pub async fn root_commit_maybe(repo: &LocalRepository) -> Result<Option<Commit>, OxenError> {
+    let repo = repo.clone();
+    tasks::spawn_blocking(move || core::v_latest::commits::root_commit_maybe(&repo)).await?
+}
 
 /// Get a commit by it's MerkleHash
 pub use crate::core::v_latest::commits::get_by_hash;
@@ -117,13 +121,40 @@ pub fn commit_id_exists(
 }
 
 /// Create an empty commit off of the head commit of a branch
-pub fn create_empty_commit(
+pub async fn create_empty_commit(
     repo: &LocalRepository,
-    branch_name: impl AsRef<str>,
-    commit: &Commit,
+    branch_name: String,
+    commit: Commit,
 ) -> Result<Commit, OxenError> {
-    let branch_name = branch_name.as_ref();
-    core::v_latest::commits::create_empty_commit(repo, branch_name, commit)
+    let repo = repo.clone();
+    tasks::spawn_blocking(move || {
+        core::v_latest::commits::create_empty_commit(&repo, &branch_name, &commit)
+    })
+    .await?
+}
+
+/// The commits among `hashes` that this repository lacks or holds only in part, off the async
+/// worker. A commit counts as present only when its merkle-tree node is in the node store and its
+/// `history/<commit_id>/dir_hashes` directory exists, since a push uploads that directory as its
+/// last data step, while a client that uploads nodes directly never writes it.
+pub async fn list_missing(
+    repo: &LocalRepository,
+    hashes: HashSet<MerkleHash>,
+) -> Result<HashSet<MerkleHash>, OxenError> {
+    let repo = repo.clone();
+    tasks::spawn_blocking(move || {
+        let store = repo.merkle_node_store();
+        let mut missing = HashSet::new();
+        for hash in hashes {
+            if !store.exists(&hash)?
+                || !dir_hash_db_path_from_commit_id(&repo, hash.to_string()).is_dir()
+            {
+                missing.insert(hash);
+            }
+        }
+        Ok(missing)
+    })
+    .await?
 }
 
 /// Create an initial empty commit for an empty repository.
@@ -1894,6 +1925,26 @@ A: Oxen.ai
             );
             assert_eq!(merge_count, 5, "should be 5, got {merge_count}");
 
+            Ok(())
+        })
+        .await
+    }
+
+    /// A commit is missing until both its node and a `dir_hashes` directory are present.
+    #[tokio::test]
+    async fn test_list_missing_needs_node_and_dir_hashes_directory() -> Result<(), OxenError> {
+        test::run_one_commit_local_repo_test_async(|repo| async move {
+            let head: MerkleHash = repositories::commits::head_commit(&repo)?.id.parse()?;
+            let unknown = MerkleHash::new(1);
+
+            let missing = list_missing(&repo, HashSet::from([head, unknown])).await?;
+            assert_eq!(missing, HashSet::from([unknown]));
+
+            let dir_hashes = dir_hash_db_path_from_commit_id(&repo, head.to_string());
+            util::fs::remove_dir_all(&dir_hashes)?;
+            util::fs::write_to_path(&dir_hashes, "not a directory")?;
+            let missing = list_missing(&repo, HashSet::from([head])).await?;
+            assert_eq!(missing, HashSet::from([head]));
             Ok(())
         })
         .await
