@@ -416,12 +416,11 @@ fn get_commit_list(
     }
 
     // If the subtree is specified, we only want to get the latest commit
-    let mut commits = if maybe_subtrees.is_some() {
-        vec![base_commit.clone()]
-    } else {
-        repositories::commits::list_from(repository, &base_commit.id)?
-    };
+    if maybe_subtrees.is_some() {
+        return Ok(vec![base_commit.clone()]);
+    }
 
+    let mut commits = repositories::commits::list_from(repository, &base_commit.id)?;
     // Reverse the list so we get the commits in *chronological* order
     commits.reverse();
     Ok(commits)
