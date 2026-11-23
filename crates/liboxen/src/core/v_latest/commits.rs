@@ -886,46 +886,69 @@ fn list_head_only(
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    // Pass 1: mark everything reachable from base. Purely graph-based, so the
+    // When every path back from head runs through base (head ahead of base on one line, as on
+    // every pull), stopping at base already gives the exact set, without walking base's history.
+    let (head_only, avoids_base) = walk_back_from(repo, head, &HashSet::from([base.id.clone()]))?;
+    if !avoids_base {
+        return Ok(head_only);
+    }
+
+    // Otherwise mark everything reachable from base. Purely graph-based, so the
     // outcome can't hinge on the order commits happen to sort in.
-    let mut on_base: HashSet<String> = HashSet::new();
+    let mut on_base = HashSet::from([base.id.clone()]);
     let mut stack = vec![base.clone()];
-    on_base.insert(base.id.clone());
     while let Some(commit) = stack.pop() {
         for parent_id in &commit.parent_ids {
+            if on_base.contains(parent_id) {
+                continue;
+            }
             let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
                 continue;
             };
-            if on_base.insert(parent.id.clone()) {
-                stack.push(parent);
-            }
+            on_base.insert(parent.id.clone());
+            stack.push(parent);
         }
     }
 
-    // Pass 2: emit head's ancestry that isn't on base, newest first.
-    let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut results = vec![];
+    Ok(walk_back_from(repo, head, &on_base)?.0)
+}
 
-    if !on_base.contains(&head.id) {
+/// The commits reachable from `head` without passing through a commit in `stop`, newest first,
+/// and whether that walk reached a commit with no parents or with a parent missing from the
+/// store, which is where a path that avoids every commit in `stop` ends.
+fn walk_back_from(
+    repo: &LocalRepository,
+    head: &Commit,
+    stop: &HashSet<String>,
+) -> Result<(Vec<Commit>, bool), OxenError> {
+    let mut heap = BinaryHeap::new();
+    let mut seen = HashSet::new();
+    let mut results = vec![];
+    let mut reached_end = false;
+
+    if !stop.contains(&head.id) {
         seen.insert(head.id.clone());
         heap.push(TimestampedCommit(head.clone()));
     }
 
     while let Some(TimestampedCommit(commit)) = heap.pop() {
+        reached_end |= commit.parent_ids.is_empty();
         for parent_id in &commit.parent_ids {
+            // A stop parent (and everything above it) is left out.
+            if stop.contains(parent_id) || seen.contains(parent_id) {
+                continue;
+            }
             let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                reached_end = true;
                 continue;
             };
-            // An on_base parent (and everything above it) already lives on base.
-            if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
-                heap.push(TimestampedCommit(parent));
-            }
+            seen.insert(parent.id.clone());
+            heap.push(TimestampedCommit(parent));
         }
         results.push(commit);
     }
 
-    Ok(results)
+    Ok((results, reached_end))
 }
 
 /// The commits a client that holds `base` and its history downloads to reach `head`: `base`
