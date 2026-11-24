@@ -48,6 +48,7 @@ mod tests {
 
     use crate::constants;
     use crate::constants::{DEFAULT_BRANCH_NAME, DEFAULT_REMOTE_NAME, stream_segment_size};
+    use crate::core::progress::observer::ProgressObserver;
     use crate::core::progress::push_progress::PushProgress;
     use crate::error::OxenError;
     use crate::model::merkle_tree::node::MerkleTreeNode;
@@ -59,6 +60,7 @@ mod tests {
     use crate::util;
     use crate::util::fs::AtomicFile;
     use crate::view::entries::EMetadataEntry;
+    use parking_lot::Mutex;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -119,7 +121,44 @@ mod tests {
                 let commit = repositories::commit(&repo, "Adding rest of data")?;
 
                 let remote_repo = test::connect_remote_repo(&mut repo).await?;
-                repositories::push(&repo).await?;
+                let seen = Arc::new(Mutex::new(Vec::new()));
+                let observer = ProgressObserver::new({
+                    let seen = Arc::clone(&seen);
+                    move |update| seen.lock().push(update)
+                });
+                let opts = PushOpts {
+                    remote: DEFAULT_REMOTE_NAME.to_string(),
+                    branch: DEFAULT_BRANCH_NAME.to_string(),
+                    ..Default::default()
+                };
+                repositories::push::push_remote_branch(&repo, &opts, Some(observer.clone()))
+                    .await?;
+
+                let uploaded = *seen
+                    .lock()
+                    .last()
+                    .expect("the push reported its progress before it returned");
+                assert_eq!(
+                    (uploaded.files, uploaded.total_files),
+                    (10, Some(10)),
+                    "the README, six versions of the data files, two train files, and the LICENSE"
+                );
+                assert!(uploaded.bytes > 0);
+                assert!(Some(uploaded.bytes) <= uploaded.total_bytes);
+
+                // A push with nothing to upload never calls the observer, whether the branch is up
+                // to date or new with every commit already on the remote
+                seen.lock().clear();
+                repositories::branches::create(&repo, "already-pushed", &commit.id)?;
+                for branch in [DEFAULT_BRANCH_NAME, "already-pushed"] {
+                    let opts = PushOpts {
+                        branch: branch.to_string(),
+                        ..opts.clone()
+                    };
+                    repositories::push::push_remote_branch(&repo, &opts, Some(observer.clone()))
+                        .await?;
+                }
+                assert!(seen.lock().is_empty());
 
                 let entries =
                     api::client::dir::list(&remote_repo, &commit.id, ".", 1, num_root_entries + 10)
@@ -309,7 +348,7 @@ mod tests {
                     revalidate: true,
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&repo, &opts).await?;
+                repositories::push::push_remote_branch(&repo, &opts, None).await?;
                 assert!(
                     server.version_store().version_exists(&readme_hash).await?,
                     "revalidate must re-push the missing blob"
@@ -338,7 +377,7 @@ mod tests {
                     missing_files: true,
                     ..Default::default()
                 };
-                super::push_remote_branch(&repo, &opts).await?;
+                super::push_remote_branch(&repo, &opts, None).await?;
                 assert!(
                     server
                         .version_store()
@@ -364,7 +403,7 @@ mod tests {
                     missing_files: true,
                     ..Default::default()
                 };
-                let result = repositories::push::push_remote_branch(&repo, &opts).await;
+                let result = repositories::push::push_remote_branch(&repo, &opts, None).await;
                 assert!(
                     matches!(&result, Err(OxenError::CannotPushShallowClone { .. })),
                     "expected CannotPushShallowClone, got {result:?}"
@@ -405,7 +444,7 @@ mod tests {
                     branch: new_branch_name.to_string(),
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&user_a_repo, &opts).await?;
+                repositories::push::push_remote_branch(&user_a_repo, &opts, None).await?;
                 let remote_branches = api::client::branches::list(&remote_repo).await?;
                 assert_eq!(remote_branches.len(), 2, "main and the pushed branch");
                 repositories::checkout(&user_a_repo, DEFAULT_BRANCH_NAME).await?;
@@ -615,7 +654,7 @@ mod tests {
                     force: true,
                     ..Default::default()
                 };
-                repositories::push::push_remote_branch(&user_c_repo, &opts).await?;
+                repositories::push::push_remote_branch(&user_c_repo, &opts, None).await?;
                 let remote_branch =
                     api::client::branches::get_by_name(&remote_repo, DEFAULT_BRANCH_NAME)
                         .await?
@@ -721,7 +760,7 @@ mod tests {
                 branch: new_branch_name.to_string(),
                 ..Default::default()
             };
-            repositories::push::push_remote_branch(&local_repo, &opts).await?;
+            repositories::push::push_remote_branch(&local_repo, &opts, None).await?;
 
             // Should now have 6 commits on remote on new branch
             let history_new =
