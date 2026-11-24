@@ -1,0 +1,391 @@
+name: 📏🪟 Measure the Windows dependency restore
+
+# Scratch measurement for the Windows release's dependency-tree restore (ENG-2811). It runs only on
+# a push to its own branch, starts the release's Windows runner, and times each way of getting the
+# newest saved tree onto the disk. The branch is deleted once the numbers are recorded.
+
+on:
+  push:
+    branches:
+      - cleancut/oxen-ci-scratch
+
+permissions: {}
+
+env:
+  AWS_ROLE: arn:aws:iam::213020545630:role/github-runner-role
+  AWS_REGION: us-west-1
+  EC2_IMAGE_ID: ami-0cfb2e47dd591ebdb
+  EC2_INSTANCE_TYPE: m7i.4xlarge
+
+jobs:
+  start-self-hosted-runner:
+    name: Start self-hosted EC2 runner
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      label: ${{ steps.start-ec2-runner.outputs.label }}
+      ec2-instance-id: ${{ steps.start-ec2-runner.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start EC2 runner
+        id: start-ec2-runner
+        uses: Oxen-AI/ec2-github-runner-windows@v2.1.0
+        with:
+          mode: start
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          ec2-image-id: ${{ env.EC2_IMAGE_ID }}
+          ec2-instance-type: ${{ env.EC2_INSTANCE_TYPE }}
+          ec2-os: windows
+          startup-timeout-minutes: 10
+          subnet-id: subnet-0e28805edbdad482f
+          security-group-id: sg-09c8aa5830122d671
+          iam-role-name: github-runner-instance-profile
+          aws-resource-tags: >
+            [
+              {"Key": "Name", "Value": "ec2-github-runner"}
+            ]
+
+  measure:
+    name: Measure the restore
+    needs: start-self-hosted-runner
+    runs-on: ${{ needs.start-self-hosted-runner.outputs.label }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: powershell
+    env:
+      BUCKET: oxen-release-build-cache
+      PREFIX: deptree/v5
+      # Excluded from Defender below, as the release's workspace is, and kept short so the tree's
+      # deepest paths are only a few characters longer than in the release's extraction into C:\.
+      W: C:\db
+      SCRATCH_KEY: scratch/oxen-ci-2.2/tree.tar
+
+    steps:
+      - name: Exclude paths from Windows Defender
+        run: |
+          # The release excludes its paths and only the build's own processes, so tar and aws run
+          # under the same scanning here as there.
+          try {
+            Set-MpPreference -ExclusionPath @("C:\actions-runner", "C:\db", "C:\Users\Administrator\.cargo", "C:\ProgramData\chocolatey", "$env:TEMP") -ErrorAction Stop
+            Write-Host "Defender ExclusionPath: $((Get-MpPreference).ExclusionPath -join ', ')"
+            Write-Host "Defender real-time protection: $((Get-MpComputerStatus).RealTimeProtectionEnabled)"
+          } catch {
+            Write-Host "Defender configuration unavailable: $_"
+          }
+          $long = (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -ErrorAction SilentlyContinue).LongPathsEnabled
+          Write-Host "LongPathsEnabled: $long"
+
+      - name: Install tools
+        run: |
+          if (-not (Get-Command aws -ErrorAction SilentlyContinue)) {
+            choco install -y awscli
+            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+          }
+          choco install -y zstandard
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+          exit 0
+
+      - name: Describe the machine and pick the tree
+        run: |
+          refreshenv
+          $token = Invoke-RestMethod -Method PUT http://169.254.169.254/latest/api/token -Headers @{ "X-aws-ec2-metadata-token-ttl-seconds" = "300" }
+          $imds = @{ "X-aws-ec2-metadata-token" = $token }
+          Write-Host "Instance type: $(Invoke-RestMethod http://169.254.169.254/latest/meta-data/instance-type -Headers $imds)"
+          Write-Host "Logical CPUs: $([Environment]::ProcessorCount)"
+          Write-Host "Memory: $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)) GiB"
+          Get-PhysicalDisk | Format-Table FriendlyName, MediaType, BusType, @{ n = "SizeGiB"; e = { [math]::Round($_.Size / 1GB) } } | Out-String | Write-Host
+          Write-Host "C: free: $([math]::Round((Get-PSDrive C).Free / 1GB, 1)) GiB"
+          tar --version
+          aws --version
+          zstd --version
+          # Listing lines are "<date> <time> <bytes> <key>", so a plain sort is oldest-first.
+          $line = aws s3 ls "s3://$env:BUCKET/$env:PREFIX/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | Select-Object -Last 1
+          if (-not $line) { throw "no tree under $env:PREFIX" }
+          $date, $time, $bytes, $key = -split $line
+          $gib = [math]::Round([int64]$bytes / 1GB, 2)
+          Write-Host "Tree: $key, $gib GiB, written $date $time"
+          echo "OBJ=$key" >> $env:GITHUB_ENV
+          echo "OBJ_BYTES=$bytes" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force $env:W | Out-Null
+          Add-Content $env:GITHUB_STEP_SUMMARY "Tree $key, $gib GiB`n"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Measurement | Time | Rate over the tar's size |`n| -- | -- | -- |"
+          exit 0
+
+      - name: Disk sequential write (8 GiB, write-through)
+        run: |
+          $path = "$env:W\seq.bin"
+          $buf = New-Object byte[] (4MB)
+          (New-Object Random 1).NextBytes($buf)
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $fs = New-Object IO.FileStream($path, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 4MB, [IO.FileOptions]::WriteThrough)
+          for ($i = 0; $i -lt 2048; $i++) { $fs.Write($buf, 0, $buf.Length) }
+          $fs.Close()
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| Disk sequential write, 8 GiB | {0:N0} s | {1:N0} MiB/s over 8 GiB |" -f $s, (8192 / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          Remove-Item $path -Force
+
+      - name: Download through stdout into NUL
+        run: |
+          refreshenv
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%PREFIX%/%OBJ% - > NUL"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| aws s3 cp to stdout, into NUL | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+
+      - name: Release pipeline (stdout into tar -x), with counters
+        run: |
+          refreshenv
+          New-Item -ItemType Directory -Force "$env:W\pipe" | Out-Null
+          # Sample CPU per process, the disk queue, and network receive every 5 s, to tell a
+          # pipeline that one side caps from one whose two sides never overlap. A process's
+          # % Processor Time runs to 100 per busy core.
+          $job = Start-Job {
+            Get-Counter -SampleInterval 5 -Continuous -ErrorAction SilentlyContinue -Counter @(
+              '\Process(*)\% Processor Time', '\PhysicalDisk(_Total)\Avg. Disk Queue Length',
+              '\PhysicalDisk(_Total)\Disk Write Bytes/sec', '\Network Interface(*)\Bytes Received/sec')
+          }
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%PREFIX%/%OBJ% - | tar -C %W%\pipe -xf -"
+          $exit = $LASTEXITCODE
+          $s = $sw.Elapsed.TotalSeconds
+          Stop-Job $job
+          if ($exit -ne 0) { exit $exit }
+          $line = "| Release pipeline, aws s3 cp to stdout into tar -x | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          (Receive-Job $job).CounterSamples |
+            Where-Object { $_.Path -notmatch '\\process\(' -or $_.InstanceName -match '^(aws|tar|python)' } |
+            Group-Object Path | ForEach-Object {
+              $v = $_.Group.CookedValue | Measure-Object -Average -Maximum
+              Write-Host ("{0}: average {1:N1}, max {2:N1}, {3} samples" -f $_.Name, $v.Average, $v.Maximum, $v.Count)
+            }
+          cmd /c "rmdir /s /q %W%\pipe"
+          exit 0
+
+      - name: Download to disk, default transfer settings
+        run: |
+          refreshenv
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          aws s3 cp "s3://$env:BUCKET/$env:PREFIX/$env:OBJ" "$env:W\tree.tar" --only-show-errors
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| aws s3 cp to disk, defaults | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          Remove-Item "$env:W\tree.tar" -Force
+
+      - name: Download through stdout into NUL, 64 concurrent 64 MiB parts
+        run: |
+          refreshenv
+          # Set for this step and the next. The step after them puts the defaults back.
+          aws configure set default.s3.max_concurrent_requests 64
+          aws configure set default.s3.multipart_chunksize 64MB
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%PREFIX%/%OBJ% - > NUL"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| aws s3 cp to stdout into NUL, 64 concurrent 64 MiB parts | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+
+      - name: Download to disk, 64 concurrent 64 MiB parts
+        run: |
+          refreshenv
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          aws s3 cp "s3://$env:BUCKET/$env:PREFIX/$env:OBJ" "$env:W\tree.tar" --only-show-errors
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| aws s3 cp to disk, 64 concurrent 64 MiB parts | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          Remove-Item "$env:W\tree.tar" -Force
+
+      - name: Download to disk, CRT transfer client
+        run: |
+          refreshenv
+          # The defaults again (10 requests, 8 MiB parts), so only the client differs.
+          aws configure set default.s3.max_concurrent_requests 10
+          aws configure set default.s3.multipart_chunksize 8MB
+          aws configure set default.s3.preferred_transfer_client crt
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          aws s3 cp "s3://$env:BUCKET/$env:PREFIX/$env:OBJ" "$env:W\tree.tar" --only-show-errors
+          $exit = $LASTEXITCODE
+          $s = $sw.Elapsed.TotalSeconds
+          # The copy step at the end runs with the classic client, as the release's save does.
+          aws configure set default.s3.preferred_transfer_client classic
+          if ($exit -ne 0) { exit $exit }
+          $line = "| aws s3 cp to disk, CRT client | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+
+      - name: Extract from the local tar
+        run: |
+          New-Item -ItemType Directory -Force "$env:W\x" | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "tar -C %W%\x -xf %W%\tree.tar"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| tar -x from the downloaded file | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          # What the tree holds, by top-level directory, for weighing what it could leave out.
+          $roots = Get-Item -Force "$env:W\x\actions-runner\_work\*\*\target\release\*", "$env:W\x\actions-runner\_work\*\*\target\maturin", "$env:W\x\Users\*\.cargo\registry\*" -ErrorAction SilentlyContinue
+          # robocopy /L lists without copying, in one native pass per root, and prints its totals.
+          foreach ($r in $roots) {
+            Write-Host $r.FullName.Substring($env:W.Length)
+            robocopy $r.FullName NUL /L /E /NJH /NFL /NDL /NP /BYTES /R:0 | Select-String '^\s+(Files|Bytes) :' | Write-Host
+          }
+          cmd /c "rmdir /s /q %W%\x"
+          exit 0
+
+      - name: Extract from the local tar, six tar processes at once
+        run: |
+          # Each process reads the whole (cached) tar and writes only the entries under its
+          # directory, which stands in for a tree saved as one tar per top-level directory. bsdtar
+          # anchors an --include pattern at the path's start, lets * cross slashes, and takes in
+          # everything below a match. The file count printed below checks the six cover the tree.
+          $patterns = @('*/target/release/deps', '*/target/release/build', '*/target/release/.fingerprint', '*/target/maturin', '*/.cargo/registry/src', '*/.cargo/registry/cache')
+          New-Item -ItemType Directory -Force "$env:W\par" | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          $procs = foreach ($p in $patterns) {
+            $proc = Start-Process tar -ArgumentList @('-C', "$env:W\par", '-xf', "$env:W\tree.tar", '--include', "`"$p`"") -NoNewWindow -PassThru
+            # Windows PowerShell leaves ExitCode empty unless the handle is opened before exit.
+            $null = $proc.Handle
+            $proc
+          }
+          $procs | Wait-Process
+          $s = $sw.Elapsed.TotalSeconds
+          $codes = ($procs | ForEach-Object { $_.ExitCode }) -join ','
+          $files = (robocopy "$env:W\par" NUL /L /E /NJH /NFL /NDL /NP /R:0 | Select-String '^\s+Files :') -join ''
+          $line = "| Six tar -x processes, one per top-level directory (exits $codes) | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Write-Host "Extracted: $files"
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          cmd /c "rmdir /s /q %W%\par"
+          exit 0
+
+      - name: Extract from the local tar, Defender real-time scanning off
+        run: |
+          try {
+            Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction Stop
+            Write-Host "Defender real-time protection: $((Get-MpComputerStatus).RealTimeProtectionEnabled)"
+          } catch {
+            Write-Host "Could not turn real-time scanning off: $_"
+          }
+          New-Item -ItemType Directory -Force "$env:W\d" | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "tar -C %W%\d -xf %W%\tree.tar"
+          $exit = $LASTEXITCODE
+          $s = $sw.Elapsed.TotalSeconds
+          try { Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop } catch { Write-Host "Could not turn real-time scanning back on: $_" }
+          if ($exit -ne 0) { exit $exit }
+          $line = "| tar -x from the downloaded file, Defender real-time scanning off | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          cmd /c "rmdir /s /q %W%\d"
+          exit 0
+
+      - name: Compress with zstd, then decompress into tar -x
+        run: |
+          refreshenv
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          zstd -T0 -3 -q "$env:W\tree.tar" -o "$env:W\tree.tar.zst"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $c = $sw.Elapsed.TotalSeconds
+          $zbytes = (Get-Item "$env:W\tree.tar.zst").Length
+          $line = "| zstd -3 -T0 compress (save side), {0:N2} GiB to {1:N2} GiB | {2:N0} s | {3:N0} MiB/s |" -f ($env:OBJ_BYTES / 1GB), ($zbytes / 1GB), $c, ($env:OBJ_BYTES / 1MB / $c)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          Remove-Item "$env:W\tree.tar" -Force
+          New-Item -ItemType Directory -Force "$env:W\z" | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "zstd -d -q -c %W%\tree.tar.zst | tar -C %W%\z -xf -"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| zstd -d from local file into tar -x | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          # The repeat of the release pipeline next needs the space.
+          cmd /c "rmdir /s /q %W%\z"
+          Remove-Item "$env:W\tree.tar.zst" -Force
+          exit 0
+
+      - name: Release pipeline again, for drift since the first run
+        run: |
+          refreshenv
+          New-Item -ItemType Directory -Force "$env:W\pipe" | Out-Null
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%PREFIX%/%OBJ% - | tar -C %W%\pipe -xf -"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $s = $sw.Elapsed.TotalSeconds
+          $line = "| Release pipeline again, after every other step | {0:N0} s | {1:N0} MiB/s |" -f $s, ($env:OBJ_BYTES / 1MB / $s)
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+
+      - name: Copy a tree onto itself, as the save step's refresh does
+        run: |
+          # The refresh copies the live tree onto itself on every exact hit. This exercises the
+          # same command on a copy under a scratch key, so the live trees are never written, and
+          # the bucket's expiry rule removes the copy after 30 days.
+          refreshenv
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%PREFIX%/%OBJ% s3://%BUCKET%/%SCRATCH_KEY% --storage-class INTELLIGENT_TIERING --only-show-errors"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $line = "| S3 copy of the tree to a scratch key | {0:N0} s | |" -f $sw.Elapsed.TotalSeconds
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          $before = (cmd /c "aws s3api head-object --bucket %BUCKET% --key %SCRATCH_KEY% --query LastModified --output text") -join ''
+          Start-Sleep -Seconds 5
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          cmd /c "aws s3 cp s3://%BUCKET%/%SCRATCH_KEY% s3://%BUCKET%/%SCRATCH_KEY% --metadata-directive REPLACE --storage-class INTELLIGENT_TIERING"
+          $exit = $LASTEXITCODE
+          $s = $sw.Elapsed.TotalSeconds
+          $after = (cmd /c "aws s3api head-object --bucket %BUCKET% --key %SCRATCH_KEY% --query LastModified --output text") -join ''
+          $line = "| Same-key copy with REPLACE: exit $exit, LastModified $before to $after | {0:N0} s | |" -f $s
+          Write-Host $line
+          Add-Content $env:GITHUB_STEP_SUMMARY $line
+          if ($exit -ne 0) { exit $exit }
+          if ($before -eq $after) { throw "the same-key copy left LastModified unchanged" }
+          exit 0
+
+  stop-self-hosted-runner:
+    name: Stop self-hosted EC2 runner
+    needs:
+      - start-self-hosted-runner
+      - measure
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.AWS_ROLE }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Stop EC2 runner
+        uses: Oxen-AI/ec2-github-runner-windows@v2.1.0
+        with:
+          mode: stop
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          label: ${{ needs.start-self-hosted-runner.outputs.label }}
+          ec2-instance-id: ${{ needs.start-self-hosted-runner.outputs.ec2-instance-id }}
