@@ -8,6 +8,7 @@ use utoipa::ToSchema;
 
 use crate::core::repo_locks;
 use crate::error::OxenError;
+use crate::tasks;
 use crate::util::fs::AtomicFile;
 use crate::{model::LocalRepository, util};
 use std::path::PathBuf;
@@ -185,6 +186,12 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
         status,
         size: figure.unwrap_or(0),
     }
+}
+
+/// [`get_size`], off the async worker.
+pub async fn get_size_async(repo: &LocalRepository) -> Result<RepoSizeFile, OxenError> {
+    let repo = repo.clone();
+    Ok(tasks::spawn_blocking(move || get_size(&repo)).await?)
 }
 
 /// Where `repo`'s recorded size is kept, as a JSON number.
