@@ -1000,90 +1000,85 @@ mod tests {
 
     #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
     #[tokio::test]
-    async fn test_download_file_large() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("large_files", |local_repo, remote_repo| async move {
-            let remote_path = Path::new("large_files").join("test.csv");
-            let revision = DEFAULT_BRANCH_NAME;
+    async fn test_download_entry() -> Result<(), OxenError> {
+        test::run_select_data_sync_remote(
+            "annotations large_files",
+            |local_repo, remote_repo| async move {
+                let large_csv = Path::new("large_files").join("test.csv");
+                let readme = Path::new("annotations").join("README.md");
+                let revision = DEFAULT_BRANCH_NAME;
 
-            let local_path = local_repo.path.join("data.csv");
-            download_entry(&remote_repo, &remote_path, &local_path, revision).await?;
-            assert!(
-                local_path.exists(),
-                "a download to a file path writes that file"
-            );
+                let local_path = local_repo.path.join("data.csv");
+                download_entry(&remote_repo, &large_csv, &local_path, revision).await?;
+                assert!(
+                    local_path.exists(),
+                    "a download to a file path writes that file"
+                );
 
-            let local_dir = local_repo.path.join("I_DO_EXIST");
-            util::fs::create_dir_all(&local_dir)?;
-            download_entry(&remote_repo, &remote_path, &local_dir, revision).await?;
-            assert!(
-                local_dir.join("test.csv").exists(),
-                "a download into an existing directory keeps the file's name"
-            );
+                let local_dir = local_repo.path.join("I_DO_EXIST");
+                util::fs::create_dir_all(&local_dir)?;
+                download_entry(&remote_repo, &large_csv, &local_dir, revision).await?;
+                assert!(
+                    local_dir.join("test.csv").exists(),
+                    "a download into an existing directory keeps the file's name"
+                );
 
-            let missing_dir = local_repo.path.join("I_DO_NOT_EXIST").join("put_it_here");
-            let result = download_entry(&remote_repo, &remote_path, &missing_dir, revision).await;
-            assert!(
-                result.is_err(),
-                "a download under a missing directory fails"
-            );
+                let missing_dir = local_repo.path.join("I_DO_NOT_EXIST").join("put_it_here");
+                let result = download_entry(&remote_repo, &large_csv, &missing_dir, revision).await;
+                assert!(
+                    result.is_err(),
+                    "a download under a missing directory fails"
+                );
 
-            Ok(remote_repo)
-        })
-        .await
-    }
+                download_entry(&remote_repo, &readme, &local_dir, revision).await?;
+                assert!(
+                    local_dir.join("README.md").exists(),
+                    "a small file downloads into an existing directory under its own name"
+                );
 
-    #[cfg_attr(windows, ignore = "oxen-server is not supported on Windows")]
-    #[tokio::test]
-    async fn test_download_annotations() -> Result<(), OxenError> {
-        test::run_select_data_sync_remote("annotations", |local_repo, remote_repo| async move {
-            let readme = Path::new("annotations").join("README.md");
-            let revision = DEFAULT_BRANCH_NAME;
+                let data_dir = local_repo.path.join("data");
+                download_entry(&remote_repo, Path::new("annotations"), &data_dir, revision).await?;
+                let annotations = data_dir.join("annotations");
+                assert!(
+                    annotations.join("README.md").exists(),
+                    "a directory downloads whole"
+                );
+                assert!(
+                    annotations.join("train").join("bounding_box.csv").exists(),
+                    "a directory download includes its subdirectories"
+                );
 
-            let local_dir = local_repo.path.join("I_DO_EXIST");
-            util::fs::create_dir_all(&local_dir)?;
-            download_entry(&remote_repo, &readme, &local_dir, revision).await?;
-            assert!(
-                local_dir.join("README.md").exists(),
-                "a small file downloads into an existing directory under its own name"
-            );
-
-            let data_dir = local_repo.path.join("data");
-            download_entry(&remote_repo, Path::new("annotations"), &data_dir, revision).await?;
-            let annotations = data_dir.join("annotations");
-            assert!(
-                annotations.join("README.md").exists(),
-                "a directory downloads whole"
-            );
-            assert!(
-                annotations.join("train").join("bounding_box.csv").exists(),
-                "a directory download includes its subdirectories"
-            );
-
-            // A wrong expected hash leaves the destination unwritten and reports both hashes.
-            let local_path = local_repo.path.join("never-published.md");
-            let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
-            let result =
-                download_small_entry(&remote_repo, &readme, &local_path, revision, bogus_expected)
-                    .await;
-            match result {
-                Err(OxenError::HashMismatch {
-                    path,
-                    expected,
-                    actual,
-                }) => {
-                    assert_eq!(path, local_path);
-                    assert_eq!(expected, bogus_expected);
-                    assert_ne!(actual, bogus_expected);
+                // A wrong expected hash leaves the destination unwritten and reports both hashes.
+                let unpublished = local_repo.path.join("never-published.md");
+                let bogus_expected = MerkleHash::new(0xdead_beef_dead_beef_dead_beef_dead_beefu128);
+                let result = download_small_entry(
+                    &remote_repo,
+                    &readme,
+                    &unpublished,
+                    revision,
+                    bogus_expected,
+                )
+                .await;
+                match result {
+                    Err(OxenError::HashMismatch {
+                        path,
+                        expected,
+                        actual,
+                    }) => {
+                        assert_eq!(path, unpublished);
+                        assert_eq!(expected, bogus_expected);
+                        assert_ne!(actual, bogus_expected);
+                    }
+                    other => panic!("expected HashMismatch, got {other:?}"),
                 }
-                other => panic!("expected HashMismatch, got {other:?}"),
-            }
-            assert!(
-                !local_path.exists(),
-                "destination should not have been published"
-            );
+                assert!(
+                    !unpublished.exists(),
+                    "destination should not have been published"
+                );
 
-            Ok(remote_repo)
-        })
+                Ok(remote_repo)
+            },
+        )
         .await
     }
 }
