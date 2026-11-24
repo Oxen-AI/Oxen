@@ -4,7 +4,7 @@
 use liboxen::opts::DFOpts;
 use pyo3::prelude::*;
 
-use pyo3_polars::PyDataFrame;
+use crate::py_data_frame::PyDataFrame;
 
 use crate::error::PyOxenError;
 

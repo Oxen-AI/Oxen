@@ -1,6 +1,6 @@
+use crate::py_data_frame::PyDataFrame;
 use liboxen::model::diff::tabular_diff::TabularDiff;
 use pyo3::prelude::*;
-use pyo3_polars::PyDataFrame;
 
 use liboxen::model::data_frame::schema::Schema;
 use liboxen::model::diff::AddRemoveModifyCounts;
@@ -25,7 +25,7 @@ pub struct PyTabularDiff {
 #[pymethods]
 impl PyTabularDiff {
     fn __repr__(&self) -> String {
-        let df = self.data.as_ref();
+        let df = &self.data.0;
         format!(
             "PyTabularDiff(shape=({},{}))\n{:?}",
             df.height(),

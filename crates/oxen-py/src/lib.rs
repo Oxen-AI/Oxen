@@ -16,6 +16,7 @@ pub mod error;
 pub mod py_branch;
 pub mod py_clean_result;
 pub mod py_commit;
+mod py_data_frame;
 pub mod py_dataset;
 pub mod py_diff;
 pub mod py_entry;
