@@ -342,6 +342,9 @@ jobs:
         # binaries and wheels already built.
         continue-on-error: true
         run: |
+          # choco added the AWS CLI to the machine PATH, which this step's shell has only after
+          # refreshenv, and both branches below call aws.
+          refreshenv
           # Skip only on an exact-key hit. A fallback restore still has to write
           # the tree under the current key so the next release hits exactly.
           if ($env:DEPTREE_EXACT_HIT -eq "1") {
@@ -354,7 +357,6 @@ jobs:
             else { Write-Host "DEPTREE exact hit, refreshed the tree's age" }
             exit 0
           }
-          refreshenv
           $rel = "${{ github.workspace }}\target".Substring(3) -replace '\\','/'
           $list = @("$rel/release/.fingerprint", "$rel/release/deps", "$rel/release/build")
           # target/maturin holds the PyO3 config file maturin writes for the wheel build. Restored
