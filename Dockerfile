@@ -63,21 +63,13 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
-# Defaults to what `[profile.release]` in Cargo.toml already sets, so a build passing
-# no override compiles exactly what a plain release build compiles. Cargo reads this
-# as a profile override, the same mechanism release_windows.yml uses to select thin
-# LTO. It is re-declared as `ENV` because an `ARG` alone is not reliably present in
-# the `RUN` process environment.
-#
-# Must precede cook: the profile a dependency compiled under is part of its cached
-# artifact, so cooking and building under different profiles discards cook's work.
-ARG CARGO_PROFILE_RELEASE_LTO=true
-ENV CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO}
-
 # Keeps the symbol table in the server binary, so a panic reported to Sentry names its frames.
 # `debuginfo` drops DWARF, so a frame carries a function name but no file or line. Scoped to this
 # image: every other build of the workspace uses the `strip` setting in `[profile.release]`.
-# Also a profile setting, so it precedes cook for the reason the LTO override above gives.
+# Cargo reads it as a profile override, re-declared as `ENV` because an `ARG` alone is not
+# reliably present in the `RUN` process environment. It must precede cook: the profile a
+# dependency compiled under is part of its cached artifact, so cooking and building under
+# different profiles discards cook's work.
 ARG CARGO_PROFILE_RELEASE_STRIP=debuginfo
 ENV CARGO_PROFILE_RELEASE_STRIP=${CARGO_PROFILE_RELEASE_STRIP}
 

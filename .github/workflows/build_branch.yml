@@ -96,11 +96,9 @@ jobs:
         with:
           driver: docker-container
 
-      # Thin LTO in place of the release profile's fat LTO, a serial link-time pass
-      # that reruns whenever this repository's own crates change, so no layer cache
-      # can avoid it. `release_docker.yml` selects it too, so both server images this
-      # repository publishes are built the same way. `codegen-units` stays at 1,
-      # since raising it trades binary size for less time than this saves.
+      # `branch` can name any ref, and the Dockerfile of a ref from before thin LTO became
+      # the release profile's default selects fat through this build argument. Passing thin
+      # keeps every ref on the same LTO setting; a newer Dockerfile ignores the argument.
       - name: Build oxen-server Docker Image (${{ inputs.ARCHITECTURE }})
         env:
           # Per architecture: a shared ref would have each build overwrite the other.
