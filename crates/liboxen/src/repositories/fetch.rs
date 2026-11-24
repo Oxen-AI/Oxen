@@ -132,6 +132,7 @@ mod tests {
     use crate::api;
 
     use crate::constants::DEFAULT_BRANCH_NAME;
+    use crate::core::v_latest::fetch::fetch_base;
     use crate::error::OxenError;
     use crate::opts::fetch_opts::FetchOpts;
     use crate::repositories;
@@ -177,12 +178,27 @@ mod tests {
                 // Move the clone to the newest branch, so main and test_moo are behind its
                 // HEAD, then advance main on the remote, so it is on a line HEAD is not on.
                 repositories::checkout(&cloned_repo, "test_moo_2").await?;
+                // main is in HEAD's history, so HEAD reaches everything main's commit does and
+                // a fetch of main downloads from HEAD.
+                let head = repositories::commits::head_commit(&cloned_repo)?;
+                let base = fetch_base(
+                    &cloned_repo,
+                    &remote_repo,
+                    DEFAULT_BRANCH_NAME,
+                    head.clone(),
+                );
+                assert_eq!(base.await?, Some(head));
                 repositories::checkout(&repo, DEFAULT_BRANCH_NAME).await?;
                 let filepath = repo.path.join("file_main.txt");
                 test::write_txt_file_to_path(&filepath, "a second file on main")?;
                 repositories::add(&repo, &filepath).await?;
                 let main_commit = repositories::commit(&repo, "Adding a second file on main")?;
                 repositories::push(&repo).await?;
+                // test_moo_2 went its own way from main, so a fetch of it from main downloads
+                // from its own commit.
+                let moo_2 = repositories::branches::get_by_name(&repo, "test_moo_2")?;
+                let base = fetch_base(&repo, &remote_repo, "test_moo_2", main_commit.clone());
+                assert_eq!(base.await?.map(|commit| commit.id), Some(moo_2.commit_id));
 
                 let fetched = repositories::fetch_all(&cloned_repo, &FetchOpts::new()).await?;
                 let mut fetched_names: Vec<&str> =
@@ -211,6 +227,16 @@ mod tests {
                         .await?,
                     "fetch downloads the new commit's version file"
                 );
+
+                // A HEAD the server doesn't have can't be the base, so test_moo, which is in its
+                // history, downloads from its own commit instead.
+                let filepath = cloned_repo.path.join("file_unpushed.txt");
+                test::write_txt_file_to_path(&filepath, "not pushed")?;
+                repositories::add(&cloned_repo, &filepath).await?;
+                let unpushed = repositories::commit(&cloned_repo, "Adding a file not pushed")?;
+                let moo = repositories::branches::get_by_name(&cloned_repo, "test_moo")?;
+                let base = fetch_base(&cloned_repo, &remote_repo, "test_moo", unpushed);
+                assert_eq!(base.await?.map(|commit| commit.id), Some(moo.commit_id));
 
                 api::client::repositories::delete(&remote_repo).await?;
 

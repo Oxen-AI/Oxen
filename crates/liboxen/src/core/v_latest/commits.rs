@@ -913,6 +913,30 @@ fn list_head_only(
     Ok(walk_back_from(repo, head, &on_base)?.0)
 }
 
+/// Whether the commit `ancestor_id` is `descendant` or in its history. The walk stops as soon as
+/// it reaches `ancestor_id`.
+pub(crate) fn is_ancestor(
+    repo: &LocalRepository,
+    ancestor_id: &str,
+    descendant: &Commit,
+) -> Result<bool, OxenError> {
+    let mut seen = HashSet::from([descendant.id.clone()]);
+    let mut stack = vec![descendant.clone()];
+    while let Some(commit) = stack.pop() {
+        if commit.id == ancestor_id {
+            return Ok(true);
+        }
+        for parent_id in &commit.parent_ids {
+            if seen.insert(parent_id.clone())
+                && let Some(parent) = get_by_hash(repo, &parent_id.parse()?)?
+            {
+                stack.push(parent);
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// The commits reachable from `head` without passing through a commit in `stop`, newest first,
 /// and whether that walk reached a commit with no parents or with a parent missing from the
 /// store, which is where a path that avoids every commit in `stop` ends.
