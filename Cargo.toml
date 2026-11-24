@@ -39,8 +39,10 @@ async-tar = "0.6"
 async-trait = "0.1.80"
 async-walkdir = "2.1.0"
 async_zip = { version = "0.0.19", features = ["full"] }
-aws-config = "1.10.1"
-aws-sdk-s3 = "1.152.0"
+# aws-config and aws-sdk-s3 come from one AWS SDK release and share its aws-smithy-* crates, so bump
+# the two together: aws-config 1.12.0 does not compile beside aws-sdk-s3 1.161.0.
+aws-config = "1.13.3"
+aws-sdk-s3 = "1.161.0"
 aws-smithy-runtime-api = "1.14.0"
 bytecount = "0.6.3"
 bytes = "1.5.0"
