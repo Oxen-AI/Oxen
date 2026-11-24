@@ -142,12 +142,12 @@ fn walk_and_record(repo: &LocalRepository) -> bool {
     }
 }
 
-/// The figure recorded for `repo` and the state of the calculation behind it, starting a
-/// recalculation when nothing is recorded.
+/// The figure recorded for `repo` and the state of the calculation behind it. Records nothing and
+/// starts no recalculation, so a repository with no figure reports `Pending` at zero until
+/// [`update_size`] records one.
 ///
 /// `Pending` and `Error` describe passes in this process, so a repository whose walk a restart
-/// killed reports the figure that walk was replacing. A recalculation a maintenance operation
-/// refuses is `Error` as well.
+/// killed reports the figure that walk was replacing.
 pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
     let (running, last_failed) = PASSES
         .lock()
@@ -165,21 +165,7 @@ pub fn get_size(repo: &LocalRepository) -> RepoSizeFile {
     } else if figure.is_some() {
         SizeStatus::Done
     } else {
-        tracing::info!(
-            oxen.repository_path = %repo.path.display(),
-            "No size figure recorded, starting a recalculation"
-        );
-        match update_size(repo) {
-            Ok(()) => SizeStatus::Pending,
-            Err(cause) => {
-                tracing::error!(
-                    oxen.repository_path = %repo.path.display(),
-                    exception.message = ?cause,
-                    "Could not start the recalculation a repository with no figure needs"
-                );
-                SizeStatus::Error
-            }
-        }
+        SizeStatus::Pending
     };
 
     RepoSizeFile {
@@ -200,7 +186,7 @@ pub fn repo_size_path(repo: &LocalRepository) -> PathBuf {
 }
 
 /// Poll the figure recorded for `repo` until a recalculation lands, erroring on a reported failure
-/// and panicking past 30s.
+/// and panicking past 30s. A read starts no recalculation, so the caller starts one first.
 #[cfg(test)]
 pub(crate) fn wait_for_recorded_size(repo: &LocalRepository) -> Result<u64, OxenError> {
     use std::time::{Duration, Instant};
@@ -279,11 +265,27 @@ mod tests {
         (reached_rx, release_tx)
     }
 
-    // Calls made while a pass walks cost one more walk between them, and the figure that walk
-    // records includes what changed after the walking pass had summed the repository.
+    // A read of a repository with no figure records nothing and starts no pass. Calls made while a
+    // pass walks cost one more walk between them, and the figure that walk records includes what
+    // changed after the walking pass had summed the repository.
     #[tokio::test]
-    async fn test_calls_during_a_pass_coalesce_into_one_follow_up() -> Result<(), OxenError> {
+    async fn test_a_read_starts_no_pass_and_calls_during_one_coalesce() -> Result<(), OxenError> {
         test::run_one_commit_local_repo_test_async(|repo| async move {
+            let never_sized = get_size(&repo);
+            assert_eq!(
+                (never_sized.status, never_sized.size),
+                (SizeStatus::Pending, 0),
+                "a repository with no figure should report pending at zero"
+            );
+            assert!(
+                !repo_size_path(&repo).exists(),
+                "a read should record nothing"
+            );
+            assert!(
+                !PASSES.lock().contains_key(&repo.path) && !WALKS.lock().contains_key(&repo.path),
+                "a read should start no pass"
+            );
+
             let (reached, release) = hold_next_walk(&repo.path);
             update_size(&repo)?;
             reached

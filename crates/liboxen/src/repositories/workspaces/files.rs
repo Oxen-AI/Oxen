@@ -159,10 +159,17 @@ mod tests {
                 size::repo_size_path(&repo),
                 r#"{"status":"pending","size":7}"#,
             )?;
+            let reported = size::get_size(&repo);
+            assert_eq!(
+                (reported.status, reported.size),
+                (size::SizeStatus::Pending, 0),
+                "a record no pass stands behind counts as no figure rather than being believed"
+            );
+            size::update_size(&repo)?;
             assert_eq!(
                 size::wait_for_recorded_size(&repo)?,
                 repo.version_bytes()?,
-                "a record no pass stands behind is recalculated rather than believed"
+                "a recalculation replaces a record no pass stands behind"
             );
 
             Ok(())
