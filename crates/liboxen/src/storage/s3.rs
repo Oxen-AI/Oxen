@@ -29,7 +29,9 @@ use tokio_util::io::StreamReader;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, Span};
 
-use super::version_store::{BoxedByteStream, VersionLocation, VersionStore, VersionUpload};
+use super::version_store::{
+    BoxedByteStream, VersionLocation, VersionStore, VersionStream, VersionUpload,
+};
 use crate::constants::VERSION_FILE_NAME;
 use crate::util::fs::AtomicFile;
 use crate::util::hasher;
@@ -721,7 +723,7 @@ impl VersionStore for S3VersionStore {
 
     /// A version file larger than one ranged part streams from several ranged GETs at once,
     /// holding at most `RANGE_READS_IN_FLIGHT` parts in memory.
-    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
+    async fn get_version_stream(&self, hash: &str) -> Result<VersionStream, OxenError> {
         let client = self.client().await;
         let key = self.generate_key(hash);
 
@@ -741,21 +743,34 @@ impl VersionStore for S3VersionStore {
                     .raw_response()
                     .is_some_and(|r| r.status().as_u16() == 416) =>
             {
-                return Ok(Box::new(stream::empty()));
+                return Ok(VersionStream::new(0, Box::new(stream::empty())));
             }
             Err(err) => return Err(object_read_error(hash, &key, err)),
         };
 
-        // `Content-Range` ends in the object's total size, as in `bytes 0-9/1234`.
-        let size = resp
-            .content_range()
-            .and_then(|range| range.rsplit_once('/'))
-            .and_then(|(_, total)| total.parse::<u64>().ok());
-        let Some(size) = size.filter(|&size| size > part_size) else {
-            // The entire file will be returned in the first call (either it's smaller than the part
-            // size or S3 ignored our range request and is returning the whole file)
-            return Ok(Box::new(ByteStreamAdapter { inner: resp.body }));
+        // `Content-Range` ends in the object's total size, as in `bytes 0-9/1234`. Without one, S3
+        // ignored the range and is sending the whole object.
+        let size = match resp.content_range() {
+            Some(range) => range
+                .rsplit_once('/')
+                .and_then(|(_, total)| total.parse::<u64>().ok())
+                .ok_or_else(|| {
+                    OxenError::internal_error(format!(
+                        "S3 sent an unreadable Content-Range for key {key}: {range}"
+                    ))
+                })?,
+            None => resp
+                .content_length()
+                .and_then(|len| u64::try_from(len).ok())
+                .ok_or_else(|| {
+                    OxenError::internal_error(format!("S3 sent no length for key {key}"))
+                })?,
         };
+        if size <= part_size || resp.content_range().is_none() {
+            // The first response holds the whole file.
+            let body = ByteStreamAdapter { inner: resp.body };
+            return Ok(VersionStream::new(size, Box::new(body)));
+        }
 
         // The first part is the response already open and the rest come from ranged GETs, all
         // yielded in order.
@@ -787,7 +802,7 @@ impl VersionStore for S3VersionStore {
             async move { task.await.map_err(io::Error::other)? }
         });
         let parts = stream::iter(spawned).buffered(RANGE_READS_IN_FLIGHT);
-        Ok(Box::new(parts))
+        Ok(VersionStream::new(size, Box::new(parts)))
     }
 
     async fn get_version_derived_stream(
@@ -1732,13 +1747,9 @@ pub(crate) mod tests {
         let retrieved = store.get_version(&hash).await.unwrap();
         assert!(retrieved.is_empty());
 
-        let streamed: Vec<Bytes> = store
-            .get_version_stream(&hash)
-            .await
-            .unwrap()
-            .try_collect()
-            .await
-            .unwrap();
+        let stream = store.get_version_stream(&hash).await.unwrap();
+        assert_eq!(stream.size(), 0, "an empty version file has no bytes");
+        let streamed: Vec<Bytes> = stream.try_collect().await.unwrap();
         assert!(
             streamed.concat().is_empty(),
             "an empty version file streams back empty, though S3 refuses any range of it"
@@ -1778,13 +1789,13 @@ pub(crate) mod tests {
             .store_version(&whole_parts_hash, Bytes::from_static(whole_parts))
             .await
             .unwrap();
-        let streamed: Vec<Bytes> = store
-            .get_version_stream(&whole_parts_hash)
-            .await
-            .unwrap()
-            .try_collect()
-            .await
-            .unwrap();
+        let stream = store.get_version_stream(&whole_parts_hash).await.unwrap();
+        assert_eq!(
+            stream.size(),
+            whole_parts.len() as u64,
+            "a file of several parts gets its size from the first part's Content-Range"
+        );
+        let streamed: Vec<Bytes> = stream.try_collect().await.unwrap();
         assert_eq!(
             streamed.concat(),
             whole_parts,
@@ -1797,13 +1808,13 @@ pub(crate) mod tests {
             .store_version(&under_a_part_hash, Bytes::from_static(under_a_part))
             .await
             .unwrap();
-        let streamed: Vec<Bytes> = store
-            .get_version_stream(&under_a_part_hash)
-            .await
-            .unwrap()
-            .try_collect()
-            .await
-            .unwrap();
+        let stream = store.get_version_stream(&under_a_part_hash).await.unwrap();
+        assert_eq!(
+            stream.size(),
+            under_a_part.len() as u64,
+            "a file smaller than one part gets its size from the first ranged GET"
+        );
+        let streamed: Vec<Bytes> = stream.try_collect().await.unwrap();
         assert_eq!(
             streamed.concat(),
             under_a_part,

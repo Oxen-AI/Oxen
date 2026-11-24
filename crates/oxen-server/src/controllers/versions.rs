@@ -11,7 +11,7 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use async_compression::tokio::write::GzipEncoder;
 use async_zip::Compression;
 use async_zip::base::write::ZipFileWriter;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use flate2::read::GzDecoder;
 use futures_util::{Stream, StreamExt, TryStreamExt as _, stream};
 use liboxen::core::repo_locks;
@@ -20,6 +20,7 @@ use liboxen::model::LocalRepository;
 use liboxen::model::metadata::metadata_image::ImgResize;
 use liboxen::repositories;
 use liboxen::repositories::versions::previews;
+use liboxen::storage::{VersionStore, VersionStream};
 use liboxen::util;
 use liboxen::view::versions::{CleanCorruptedVersionsResponse, VersionFile, VersionFileResponse};
 use liboxen::view::{ErrorFileInfo, ErrorFilesResponse, FileWithHash, StatusMessage};
@@ -34,6 +35,7 @@ use tokio_tar::Builder;
 use tokio_util::compat::FuturesAsyncWriteCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tokio_util::io::{ReaderStream, StreamReader};
+use tokio_util::task::AbortOnDropHandle;
 use utoipa::ToSchema;
 
 const DOWNLOAD_BUFFER_SIZE: usize = 2 * 1024 * 1024;
@@ -259,6 +261,47 @@ pub async fn batch_download(
     stream_versions_tar_gz(&repo, file_hashes).await
 }
 
+/// How many files a batch download fetches at once, in order, ahead of the archive it writes: 32.
+const BATCH_DOWNLOAD_FETCHES_IN_FLIGHT: usize = 32;
+
+/// The largest file a batch download reads into memory while it waits its turn: 4 MiB, one ranged
+/// read of an S3 version file. With [`BATCH_DOWNLOAD_FETCHES_IN_FLIGHT`] fetches, a batch download
+/// holds at most 128 MiB of files ahead of its archive.
+const BATCH_DOWNLOAD_MAX_READ_AHEAD_BYTES: u64 = 4 * 1024 * 1024;
+
+/// A version file a batch download has fetched for its archive.
+enum FetchedVersion {
+    /// The whole file, read into memory.
+    Read(Bytes),
+    /// A file over [`BATCH_DOWNLOAD_MAX_READ_AHEAD_BYTES`], opened and not yet read.
+    Unread(VersionStream),
+}
+
+impl FetchedVersion {
+    fn size(&self) -> u64 {
+        match self {
+            FetchedVersion::Read(bytes) => bytes.len() as u64,
+            FetchedVersion::Unread(stream) => stream.size(),
+        }
+    }
+}
+
+/// Open the version file `file_hash`, reading it into memory when it is small enough to hold.
+async fn fetch_version(
+    version_store: Arc<dyn VersionStore>,
+    file_hash: String,
+) -> Result<FetchedVersion, OxenError> {
+    let mut stream = version_store.get_version_stream(&file_hash).await?;
+    if stream.size() > BATCH_DOWNLOAD_MAX_READ_AHEAD_BYTES {
+        return Ok(FetchedVersion::Unread(stream));
+    }
+    let mut bytes = BytesMut::with_capacity(stream.size() as usize);
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    Ok(FetchedVersion::Read(bytes.freeze()))
+}
+
 pub async fn stream_versions_tar_gz(
     repo: &LocalRepository,
     file_hashes: Vec<String>,
@@ -284,66 +327,32 @@ pub async fn stream_versions_tar_gz(
 
     let (writer, reader) = tokio::io::duplex(DOWNLOAD_BUFFER_SIZE);
 
-    let version_store_clone = version_store.clone();
-    let file_hashes_clone = file_hashes.clone();
-
     let (error_tx, error_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let writer_task = async move {
         let enc = GzipEncoder::new(writer);
         let mut tar = Builder::new(enc);
 
+        // Each fetch runs in a task of its own, so the files after the one being written keep
+        // arriving while it is appended, and dropping `fetches` aborts the fetches still running.
+        let mut fetches = stream::iter(file_hashes)
+            .map(|file_hash| {
+                let fetch = fetch_version(Arc::clone(&version_store), file_hash.clone());
+                let task = AbortOnDropHandle::new(tasks::spawn(fetch));
+                async move { (file_hash, task.await) }
+            })
+            .buffered(BATCH_DOWNLOAD_FETCHES_IN_FLIGHT);
+
         let mut had_error = false;
         let mut client_gone = false;
-        for file_hash in file_hashes_clone.iter() {
-            match version_store_clone.get_version_stream(file_hash).await {
-                Ok(data) => {
-                    let file_size = match version_store_clone.get_version_size(file_hash).await {
-                        Ok(size) => size,
-                        Err(e) => {
-                            tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to get version file size");
-                            error_tx
-                                .send(OxenError::VersionFetchFailed {
-                                    file_hash: file_hash.clone(),
-                                    source: Box::new(e),
-                                })
-                                .ok();
-                            had_error = true;
-                            break;
-                        }
-                    };
-
-                    let mut header = tokio_tar::Header::new_gnu();
-                    header.set_size(file_size as u64);
-                    if let Err(e) = header.set_path(file_hash) {
-                        tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to set tar path for version");
-                        error_tx
-                            .send(OxenError::basic_str(format!(
-                                "Failed to set path for {file_hash}: {e}"
-                            )))
-                            .ok();
-                        had_error = true;
-                        break;
-                    }
-                    header.set_mode(0o644);
-                    header.set_uid(0);
-                    header.set_gid(0);
-                    header.set_cksum();
-
-                    let mut reader = StreamReader::new(data);
-                    if let Err(e) = tar.append(&header, &mut reader).await {
-                        if is_client_disconnect(&e) {
-                            log::debug!("Client stopped reading at version {file_hash}");
-                            client_gone = true;
-                        } else {
-                            tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to append version to tar");
-                            error_tx.send(OxenError::IO(e)).ok();
-                            had_error = true;
-                        }
-                        break;
-                    }
-                    log::debug!("Successfully appended data to tarball for hash: {file_hash}");
-                }
+        while let Some((file_hash, fetched)) = fetches.next().await {
+            let fetched = fetched
+                .map_err(|join_err| {
+                    OxenError::internal_error(format!("version fetch task failed: {join_err}"))
+                })
+                .flatten();
+            let fetched = match fetched {
+                Ok(fetched) => fetched,
                 Err(e) => {
                     tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to get version");
                     // Wrap with the hash so the streaming-response error names the specific
@@ -352,15 +361,53 @@ pub async fn stream_versions_tar_gz(
                     // (and server logs further upstream) can identify the failing object.
                     error_tx
                         .send(OxenError::VersionFetchFailed {
-                            file_hash: file_hash.clone(),
+                            file_hash,
                             source: Box::new(e),
                         })
                         .ok();
                     had_error = true;
                     break;
                 }
+            };
+
+            let mut header = tokio_tar::Header::new_gnu();
+            header.set_size(fetched.size());
+            if let Err(e) = header.set_path(&file_hash) {
+                tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to set tar path for version");
+                error_tx
+                    .send(OxenError::basic_str(format!(
+                        "Failed to set path for {file_hash}: {e}"
+                    )))
+                    .ok();
+                had_error = true;
+                break;
             }
+            header.set_mode(0o644);
+            header.set_uid(0);
+            header.set_gid(0);
+            header.set_cksum();
+
+            let appended = match fetched {
+                FetchedVersion::Read(bytes) => tar.append(&header, &bytes[..]).await,
+                FetchedVersion::Unread(stream) => {
+                    tar.append(&header, StreamReader::new(stream)).await
+                }
+            };
+            if let Err(e) = appended {
+                if is_client_disconnect(&e) {
+                    log::debug!("Client stopped reading at version {file_hash}");
+                    client_gone = true;
+                } else {
+                    tracing::error!(oxen.file_hash = %file_hash, exception.message = %e, "Failed to append version to tar");
+                    error_tx.send(OxenError::IO(e)).ok();
+                    had_error = true;
+                }
+                break;
+            }
+            log::debug!("Successfully appended data to tarball for hash: {file_hash}");
         }
+        // Stop the fetches still running before finishing the archive.
+        drop(fetches);
 
         // Finishing the tar and the encoder writes the trailing bytes of the response body, which
         // a client that has stopped reading cannot receive.
@@ -724,7 +771,7 @@ mod tests {
     use liboxen::util::fs::AtomicFile;
     use liboxen::view::{ErrorFilesResponse, StatusMessageDescription};
     use mime;
-    use std::io::Write;
+    use std::io::{Read, Write};
 
     #[actix_web::test]
     async fn test_a_writer_failure_after_the_last_chunk_still_reaches_the_caller() {
@@ -1069,6 +1116,59 @@ mod tests {
                 assert_eq!(&version_store.get_version(&hash).await?, file, "{name}");
             }
         }
+
+        // A batch download writes every file in the order asked, with more files than it fetches
+        // at once and one too large to read ahead early in the batch.
+        let mut files: Vec<Vec<u8>> = (0..40)
+            .map(|i| format!("batch download file {i}").into_bytes())
+            .collect();
+        files.insert(1, vec![3; 4 * 1024 * 1024 + 1]);
+        files.insert(2, Vec::new());
+        let mut batch_hashes = Vec::new();
+        for file in &files {
+            let hash = util::hasher::hash_buffer(file);
+            version_store
+                .store_version(&hash, Bytes::from(file.clone()))
+                .await?;
+            batch_hashes.push(hash);
+        }
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(OxenAppData::new(sync_dir.clone()))
+                .route(
+                    "/oxen/{namespace}/{repo_name}/versions/batch-download",
+                    web::post().to(controllers::versions::batch_download),
+                ),
+        )
+        .await;
+        let req = actix_web::test::TestRequest::post()
+            .uri(&format!(
+                "/oxen/{namespace}/{repo_name}/versions/batch-download"
+            ))
+            .app_data(OxenAppData::new(sync_dir.to_path_buf()))
+            .set_payload(test::gzip(
+                batch_hashes.join("\n").as_bytes(),
+                Compression::default(),
+            )?)
+            .to_request();
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = actix_http::body::to_bytes(resp.into_body()).await.unwrap();
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(&body[..]));
+        let mut downloaded = Vec::new();
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.to_string_lossy().into_owned();
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes)?;
+            downloaded.push((path, bytes));
+        }
+        let expected: Vec<(String, Vec<u8>)> = batch_hashes.into_iter().zip(files).collect();
+        assert!(
+            downloaded == expected,
+            "the archive holds each file asked for, in order: got {:?}",
+            downloaded.iter().map(|(path, _)| path).collect::<Vec<_>>()
+        );
 
         test::cleanup_repo_and_sync_dir(repo, &sync_dir)?;
         Ok(())
