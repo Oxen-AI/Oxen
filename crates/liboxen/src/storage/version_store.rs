@@ -470,7 +470,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     ///
     /// The URL carries its own authorization, so anyone holding it can read the version file until
     /// it expires: keep it out of logs, errors, and responses.
-    async fn read_url(&self, _hash: &str, _valid_for: Duration) -> Result<Option<Url>, OxenError> {
+    async fn read_url(
+        &self,
+        _hash: MerkleHash,
+        _valid_for: Duration,
+    ) -> Result<Option<Url>, OxenError> {
         Ok(None)
     }
 

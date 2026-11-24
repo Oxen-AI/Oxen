@@ -850,8 +850,12 @@ impl VersionStore for S3VersionStore {
         })
     }
 
-    async fn read_url(&self, hash: &str, valid_for: Duration) -> Result<Option<Url>, OxenError> {
-        let key = self.generate_key(hash);
+    async fn read_url(
+        &self,
+        hash: MerkleHash,
+        valid_for: Duration,
+    ) -> Result<Option<Url>, OxenError> {
+        let key = self.generate_key(&hash.to_string());
         let presigning = PresigningConfig::expires_in(valid_for).map_err(|err| {
             OxenError::internal_error(format!("Invalid S3 presigning lifetime: {err}"))
         })?;

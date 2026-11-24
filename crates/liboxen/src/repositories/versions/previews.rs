@@ -344,7 +344,7 @@ async fn generate_video_thumbnail_version_store(
 
     // A store that hands out a URL lets FFmpeg read only the byte ranges the first frame needs.
     let from_url = match version_store
-        .read_url(video_hash, VIDEO_READ_URL_LIFETIME)
+        .read_url(video_hash.parse()?, VIDEO_READ_URL_LIFETIME)
         .await?
     {
         Some(url) => match thumbnail_from(Location::Network(url)).await? {
