@@ -193,8 +193,16 @@ async fn push_to_existing_branch(
                     remote_branch.name,
                     commit.id
                 );
-                let latest_remote_commit = find_latest_remote_commit(repo, remote_repo).await?;
-                let history = repositories::commits::list_from(repo, &commit.id)?;
+                // The remote's own head for this branch, rather than its default branch, so both
+                // the upload filter and the repair are scoped to what this branch adds. The
+                // default branch still stands in where this clone has never fetched that head,
+                // which keeps the upload filter a base rather than none.
+                let latest_remote_commit =
+                    match repositories::commits::get_by_id(repo, &remote_branch.commit_id)? {
+                        Some(remote_head) => Some(remote_head),
+                        None => find_latest_remote_commit(repo, remote_repo).await?,
+                    };
+                let history = commits;
 
                 push_commits(
                     repo,

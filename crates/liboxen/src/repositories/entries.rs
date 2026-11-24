@@ -2,6 +2,7 @@
 //!
 
 use crate::core;
+use crate::core::v_latest::commits::list_head_only;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{DirNode, FileNode};
 use crate::opts::{PaginateOpts, SortOpts};
@@ -226,7 +227,7 @@ pub fn compute_entries_size(entries: &[CommitEntry]) -> Result<u64, OxenError> {
     Ok(total_size)
 }
 
-/// The files of `head_commit_id`, or of every commit after `base_commit_id` up to it, whose version
+/// The files of `head_commit_id`, and of every commit it adds over `base_commit_id`, whose version
 /// files the version store lacks, one entry per path. A base the repository lacks counts as none.
 pub async fn list_missing_files_in_commit_range(
     repo: &LocalRepository,
@@ -237,6 +238,8 @@ pub async fn list_missing_files_in_commit_range(
     let repo = repo.clone();
     let base_commit_id = base_commit_id.map(str::to_string);
     let head_commit_id = head_commit_id.to_string();
+    // Sync core: the lookups, the graph walk, and each tree listing are sync DB reads, one
+    // blocking unit.
     let entries = tasks::spawn_blocking(move || -> Result<_, OxenError> {
         let head_commit = repositories::commits::get_by_id(&repo, &head_commit_id)?
             .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.as_str().into()))?;
@@ -244,15 +247,24 @@ pub async fn list_missing_files_in_commit_range(
             .map(|id| repositories::commits::get_by_id(&repo, id))
             .transpose()?
             .flatten();
+        // The head commit's whole tree, which a repair has to cover even where the range below
+        // comes back empty because the base already reaches the head.
+        let mut entries = list_for_commit(&repo, &head_commit)?;
         let Some(base_commit) = base_commit else {
-            return list_for_commit(&repo, &head_commit);
+            return Ok(entries);
         };
-        let mut entries = Vec::new();
-        for commit in repositories::commits::list_between(&repo, &base_commit, &head_commit)? {
-            entries.extend(list_for_commit(&repo, &commit)?);
+        // Reachability, rather than a walk that stops at `base_commit`: a base off the branch is
+        // never reached, so that walk lists the tree of every commit back to the root.
+        let added = list_head_only(&repo, &base_commit, &head_commit)?;
+        let mut seen: HashSet<PathBuf> = entries.iter().map(|entry| entry.path.clone()).collect();
+        for commit in added.iter().filter(|c| c.id != head_commit.id) {
+            for entry in list_for_commit(&repo, commit)? {
+                if !seen.contains(&entry.path) {
+                    seen.insert(entry.path.clone());
+                    entries.push(entry);
+                }
+            }
         }
-        entries.sort_by(|a, b| a.path.cmp(&b.path));
-        entries.dedup_by(|a, b| a.path == b.path);
         Ok(entries)
     })
     .await??;
@@ -283,13 +295,14 @@ pub async fn list_tabular_files_in_repo_async(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use uuid::Uuid;
 
+    use crate::constants::DEFAULT_BRANCH_NAME;
     use crate::error::OxenError;
     use crate::model::MerkleHash;
-    use crate::opts::{PaginateOpts, SortBy, SortOpts};
+    use crate::opts::{PaginateOpts, RmOpts, SortBy, SortOpts};
     use crate::repositories;
     use crate::repositories::workspaces::{self, data_frames};
     use crate::repositories::{commits, tree};
@@ -301,7 +314,7 @@ mod tests {
     use super::{
         count_for_commit, get_directory, get_directory_async, get_meta_entry, get_meta_entry_async,
         list_directory, list_directory_w_workspace_depth, list_directory_w_workspace_depth_async,
-        list_for_commit,
+        list_for_commit, list_missing_files_in_commit_range,
     };
 
     #[tokio::test]
@@ -694,6 +707,72 @@ mod tests {
             assert!(
                 newer.latest_commit().is_some(),
                 "an entry whose commit is present still carries it"
+            );
+
+            Ok(())
+        })
+        .await
+    }
+
+    // The range a repair asks the remote for covers the commit being pushed and the commits it
+    // adds over the base, whichever branch the base sits on. A base off the branch used to send
+    // the walk to the root, listing the tree of every commit in the history.
+    #[tokio::test]
+    async fn test_list_missing_files_in_commit_range_scopes_to_what_the_head_adds()
+    -> Result<(), OxenError> {
+        test::run_empty_local_repo_test_async(|repo| async move {
+            let kept = repo.path.join("kept.txt");
+            let dropped = repo.path.join("dropped.txt");
+            fs::write_to_path(&kept, "kept")?;
+            fs::write_to_path(&dropped, "dropped")?;
+            repositories::add(&repo, &kept).await?;
+            repositories::add(&repo, &dropped).await?;
+            let with_dropped = repositories::commit(&repo, "Add kept.txt and dropped.txt")?;
+
+            repositories::rm(&repo, &RmOpts::from_path("dropped.txt")).await?;
+            repositories::commit(&repo, "Remove dropped.txt")?;
+
+            repositories::branches::create_checkout(&repo, "feature")?;
+            let feature_file = repo.path.join("feature.txt");
+            fs::write_to_path(&feature_file, "feature")?;
+            repositories::add(&repo, &feature_file).await?;
+            let head = repositories::commit(&repo, "Add feature.txt")?;
+
+            repositories::checkout(&repo, DEFAULT_BRANCH_NAME).await?;
+            let main_file = repo.path.join("main.txt");
+            fs::write_to_path(&main_file, "main")?;
+            repositories::add(&repo, &main_file).await?;
+            let base = repositories::commit(&repo, "Add main.txt")?;
+
+            // Only a file the store lacks is reported, so every candidate has to be absent for
+            // the range itself to decide the answer.
+            let mut hashes = Vec::new();
+            for commit in [&with_dropped, &head, &base] {
+                hashes.extend(list_for_commit(&repo, commit)?.into_iter().map(|e| e.hash));
+            }
+            repo.version_store().delete_versions(hashes).await?;
+
+            let paths: Vec<PathBuf> =
+                list_missing_files_in_commit_range(&repo, Some(&base.id), &head.id)
+                    .await?
+                    .into_iter()
+                    .map(|entry| entry.path)
+                    .collect();
+            assert!(
+                paths.contains(&PathBuf::from("feature.txt")),
+                "the range covers what the head commit adds, got {paths:?}"
+            );
+            assert!(
+                paths.contains(&PathBuf::from("kept.txt")),
+                "the range covers what the head commit inherits, got {paths:?}"
+            );
+            assert!(
+                !paths.contains(&PathBuf::from("dropped.txt")),
+                "a file only the base's side of the fork still carries is out of the range, got {paths:?}"
+            );
+            assert!(
+                !paths.contains(&PathBuf::from("main.txt")),
+                "the base commit's own tree is out of the range, got {paths:?}"
             );
 
             Ok(())
