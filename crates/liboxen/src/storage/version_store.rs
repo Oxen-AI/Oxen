@@ -4,7 +4,7 @@ use std::future;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -12,6 +12,7 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use serde::{Deserialize, Deserializer, Serialize};
 use tokio::io::AsyncRead;
 use tokio_stream::Stream;
+use url::Url;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -463,6 +464,15 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// # Arguments
     /// * `hash` - The content hash of the version file
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError>;
+
+    /// A URL that answers a plain HTTP GET, ranged or whole, with the version file's bytes for
+    /// `valid_for`, or `None` for a store that has no such URL, such as one on local disk.
+    ///
+    /// The URL carries its own authorization, so anyone holding it can read the version file until
+    /// it expires: keep it out of logs, errors, and responses.
+    async fn read_url(&self, _hash: &str, _valid_for: Duration) -> Result<Option<Url>, OxenError> {
+        Ok(None)
+    }
 
     /// Copy a versioned file from the version store to a destination path on the local filesystem.
     /// Missing parent directories of `dest_path` are created, so callers do not need to create them

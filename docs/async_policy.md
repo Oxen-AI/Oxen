@@ -44,7 +44,7 @@ Oxen uses a **sync core, async edge** philosophy: a popular Rust philosophy used
 
 Avoid situations where sync code calls async code. Public sync functions should not call async functions (e.g. via `handle.block_on`) if it can be avoided.
 
-All **network IO** code must be async. This encompasses all communication over a socket (e.g. HTTP, gRPC, S3, etc.).
+All **network IO** code must be async. This encompasses all communication over a socket (e.g. HTTP, gRPC, S3, etc.). A sync C library that opens a URL itself, as FFmpeg does when it reads a video by URL to thumbnail it, cannot be made async: call it inside `spawn_blocking` like any other sync library, with a read timeout set so a stalled connection gives the thread back.
 
 Not all Oxen code should be async. All filesystem operations should be sync. Most logic should be sync. As much as possible, logic should be factored out into sync functions and used in `async fn` when the logic needs to be used in some specific async context.
 
