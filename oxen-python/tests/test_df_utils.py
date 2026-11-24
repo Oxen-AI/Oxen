@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 import polars as pl
+import pyarrow as pa
 import pytest
 from polars.testing import assert_frame_equal
 
@@ -44,16 +45,28 @@ def test_df_utils_save_load_round_trips_every_dtype(tmp_path):
             dtype=pl.Struct({"x": pl.Int64, "y": pl.String}),
         ),
     }
-    half = pl.DataFrame(columns)
-    # Two chunks, so the frame crosses into Rust as more than one Arrow batch.
-    df = pl.concat([half, half], rechunk=False)
-    assert df.n_chunks() == 2
+    df = pl.DataFrame(columns)
 
     path = tmp_path / "every_dtype.arrow"
     df_utils.save(df, path)
     loaded = df_utils.load(path)
 
     assert_frame_equal(loaded, df)
+
+    # polars exports a frame as one Arrow batch, so a pyarrow stream supplies two.
+    first = pa.RecordBatch.from_pydict({"a": [1, 2], "b": ["x", "y"]})
+    second = pa.RecordBatch.from_pydict({"a": [3], "b": ["z"]})
+
+    class TwoBatchFrame(pl.DataFrame):
+        def __arrow_c_stream__(self, requested_schema=None):
+            reader = pa.RecordBatchReader.from_batches(first.schema, [first, second])
+            return reader.__arrow_c_stream__(requested_schema)
+
+    df_utils.save(TwoBatchFrame(), path)
+    assert_frame_equal(
+        df_utils.load(path),
+        pl.DataFrame({"a": [1, 2, 3], "b": ["x", "y", "z"]}),
+    )
 
     with pytest.raises(TypeError, match="expected a polars.DataFrame, got dict"):
         df_utils.save(columns, path)
