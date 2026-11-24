@@ -150,9 +150,13 @@ jobs:
           # intact) so cargo marks them Fresh and only workspace crates rebuild.
           # The key hashes the third-party lockfile entries plus toolchain, so a
           # workspace version bump alone keeps the same key. DEPTREE_PREFIX carries the generation.
+          # It also hashes the maturin version, since maturin writes the PyO3 config file the wheel
+          # build reads, and an exact hit never saves, so a tree has to be re-saved when it moves.
           $depText = ((Get-Content Cargo.lock -Raw) -split '\[\[package\]\]' | Where-Object { $_ -match 'source = ' }) -join ''
           $rv = (cmd /c "rustc -V 2>nul") -join ''
-          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|$depText"))).Replace("-","").Substring(0,32)
+          $maturinVersion = (Select-String -Path tool-versions.env -Pattern '^MATURIN_VERSION=(.+)$').Matches.Groups[1].Value
+          if (-not $maturinVersion) { throw "MATURIN_VERSION missing from tool-versions.env" }
+          $sha = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([System.Text.Encoding]::UTF8.GetBytes("$rv|maturin $maturinVersion|$depText"))).Replace("-","").Substring(0,32)
           echo "DEPTREE_KEY=$sha" >> $env:GITHUB_ENV
           # Listing lines are "<date> <time> <bytes> <key>.tar", so a plain sort is oldest-first.
           $names = aws s3 ls "s3://${env:DEPTREE_BUCKET}/${env:DEPTREE_PREFIX}/" | Where-Object { $_ -match '\.tar$' } | Sort-Object | ForEach-Object { (-split $_)[3] }
@@ -217,6 +221,9 @@ jobs:
           uv python install @versions
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+          $maturinVersion = (Select-String -Path tool-versions.env -Pattern '^MATURIN_VERSION=(.+)$').Matches.Groups[1].Value
+          if (-not $maturinVersion) { throw "MATURIN_VERSION missing from tool-versions.env" }
+
           cd ${{ github.workspace }}\oxen-python
 
           # The glob reaches maturin literally, never expanded: it resolves to nothing, so maturin
@@ -225,7 +232,7 @@ jobs:
           # with no interpreter given, maturin falls back to PYO3_PYTHON or whatever python is on
           # PATH, which is a less predictable input than a glob it ignores.
           foreach ($version in $versions) {
-              uvx maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
+              uvx --from "maturin==$maturinVersion" maturin build --release --interpreter "C:\Users\Administrator\AppData\Roaming\uv\python\cpython-$version.*\python.exe"
               if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
@@ -234,7 +241,26 @@ jobs:
           # Names the wheel build's units for the prune, fresh ones included, since maturin reports
           # no artifact list of its own. Mirrors the invocation maturin wraps, taking the manifest
           # and features from oxen-python/pyproject.toml, so every unit is already fresh and nothing
-          # recompiles here; v0.52.6 measured it at 0.76s.
+          # recompiles here. With no interpreter to run, maturin hands cargo a PyO3 config file it
+          # writes under target\maturin, and pyo3-ffi's build script reruns whenever
+          # PYO3_CONFIG_FILE changes, unset included, so the listing points at the same file.
+          $maturinDir = "${{ github.workspace }}\target\maturin"
+          $pyo3Config = @(Get-ChildItem "$maturinDir\pyo3-config-*.txt" -ErrorAction SilentlyContinue)
+          if ($pyo3Config.Count -gt 1) {
+            # The restored tree brought an earlier release's file, say from an older abi3 floor,
+            # and maturin wrote its own beside it. Restored files keep their archived mtimes, older
+            # than the stamp this run's build started with, so deleting them leaves the saved tree
+            # only the file this release's wheel graph was built against.
+            $stamp = (Get-Item C:\deptree-build-start).LastWriteTime
+            $restored, $pyo3Config = $pyo3Config.Where({ $_.LastWriteTime -lt $stamp }, 'Split')
+            $restored | Remove-Item -Force
+          }
+          if ($pyo3Config.Count -eq 1) { $env:PYO3_CONFIG_FILE = $pyo3Config[0].FullName }
+          else {
+            # No file maturin can be shown to have used, so none is worth saving.
+            Remove-Item -Recurse -Force $maturinDir -ErrorAction SilentlyContinue
+            Write-Host "::warning::DEPTREE found no single PyO3 config file maturin used, so the listing build recompiles the wheel graph"
+          }
           cargo build --release --manifest-path ${{ github.workspace }}\crates\oxen-py\Cargo.toml --features pyo3/extension-module --message-format=json-render-diagnostics | Add-Content C:\deptree-live.json
           # Best-effort: without this list the wheel's units are pruned and recompile next release.
           if ($LASTEXITCODE -ne 0) { Write-Host "::warning::DEPTREE could not enumerate the wheel graph" }
@@ -329,9 +355,16 @@ jobs:
             exit 0
           }
           refreshenv
-          $target = "${{ github.workspace }}\target\release"
-          $rel = $target.Substring(3) -replace '\\','/'
-          $list = @("$rel/.fingerprint", "$rel/deps", "$rel/build", "Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
+          $rel = "${{ github.workspace }}\target".Substring(3) -replace '\\','/'
+          $list = @("$rel/release/.fingerprint", "$rel/release/deps", "$rel/release/build")
+          # target/maturin holds the PyO3 config file maturin writes for the wheel build. Restored
+          # with its mtime, maturin finds the content unchanged and leaves it alone, while a fresh
+          # copy is newer than pyo3-ffi's last build script run and recompiles the wheel graph. The
+          # wheel step removes it when it cannot tell which file maturin used, and tar fails on a
+          # missing path.
+          if (Test-Path "${{ github.workspace }}\target\maturin") { $list += "$rel/maturin" }
+          # The registry goes last, which the restore's cleanup after a truncated stream relies on.
+          $list += @("Users/Administrator/.cargo/registry/src", "Users/Administrator/.cargo/registry/cache")
           $list | Set-Content C:\deptree-list.txt
           # cmd (not PowerShell) runs the pipe so the bytes pass through raw; a
           # PowerShell pipe re-encodes the stream and corrupts the tar. Streaming
