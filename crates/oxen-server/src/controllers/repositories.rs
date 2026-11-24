@@ -1,7 +1,7 @@
 use crate::app_data::OxenAppData;
 use crate::config::identity_policy::IdentitySource;
 use crate::errors::OxenHttpError;
-use crate::helpers::{get_repo, get_repo_async};
+use crate::helpers::get_repo_async;
 use crate::params::{
     app_data, path_param, reject_invalid_namespace_name, reject_invalid_repo_name,
 };
@@ -175,51 +175,27 @@ pub async fn show(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpE
 )]
 pub async fn stats(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenHttpError> {
     let app_data = app_data(&req)?;
+    let namespace = path_param(&req, "namespace")?.to_string();
+    let name = path_param(&req, "repo_name")?.to_string();
 
-    let namespace: Option<&str> = path_param(&req, "namespace").ok();
-    let name: Option<&str> = path_param(&req, "repo_name").ok();
-    if let (Some(name), Some(namespace)) = (name, namespace) {
-        match repositories::get_by_namespace_and_name(
-            &app_data.path,
-            namespace,
-            name,
-            app_data.config.storage.s3(),
-        ) {
-            Ok(Some(repo)) => {
-                let stats = repositories::stats::get_stats(&repo)?;
-                let data_types: Vec<DataTypeView> = stats
-                    .data_types
-                    .values()
-                    .map(|s| DataTypeView {
-                        data_type: s.data_type.to_owned(),
-                        file_count: s.file_count,
-                        data_size: s.data_size,
-                    })
-                    .collect();
-                Ok(HttpResponse::Ok().json(RepositoryStatsResponse {
-                    status: StatusMessage::resource_found(),
-                    repository: RepositoryStatsView {
-                        data_size: stats.data_size,
-                        data_types,
-                    },
-                }))
-            }
-            Ok(None) => {
-                log::debug!("404 Could not find repo: {name}");
-                Ok(HttpResponse::NotFound().json(StatusMessage::resource_not_found()))
-            }
-            Err(_) => {
-                // `get_by_namespace_and_name` reports the failure; it holds the repo directory.
-                Ok(
-                    HttpResponse::InternalServerError()
-                        .json(StatusMessage::internal_server_error()),
-                )
-            }
-        }
-    } else {
-        let msg = "Could not find `name` or `namespace` param...";
-        Ok(HttpResponse::BadRequest().json(StatusMessage::error(msg)))
-    }
+    let repo = get_repo_async(app_data, &namespace, &name).await?;
+    let stats = repositories::stats::get_stats(&repo).await?;
+    let data_types: Vec<DataTypeView> = stats
+        .data_types
+        .values()
+        .map(|s| DataTypeView {
+            data_type: s.data_type.to_owned(),
+            file_count: s.file_count,
+            data_size: s.data_size,
+        })
+        .collect();
+    Ok(HttpResponse::Ok().json(RepositoryStatsResponse {
+        status: StatusMessage::resource_found(),
+        repository: RepositoryStatsView {
+            data_size: stats.data_size,
+            data_types,
+        },
+    }))
 }
 
 /// Update repository size
@@ -243,7 +219,7 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let repository = get_repo(app_data, &namespace, &name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
     repositories::size::update_size(&repository)?;
 
     Ok(HttpResponse::Ok().json(StatusMessage::resource_updated()))
@@ -269,12 +245,12 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let namespace = path_param(&req, "namespace")?.to_string();
     let name = path_param(&req, "repo_name")?.to_string();
 
-    let repository = get_repo(app_data, &namespace, &name)?;
+    let repository = get_repo_async(app_data, &namespace, &name).await?;
     // `size::get_size` starts a recalculation when nothing is recorded (a GET that mutates —
     // tech-debt ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck)
     // blocks it.
     let _write = repo_locks::begin_write(&repository)?;
-    let size = repositories::size::get_size(&repository);
+    let size = repositories::size::get_size_async(&repository).await?;
     Ok(HttpResponse::Ok().json(size))
 }
 
