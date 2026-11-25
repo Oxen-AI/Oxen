@@ -106,13 +106,6 @@ The [Python interface](./oxen-python/README.md) uses [`liboxen`](./crates/liboxe
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-If you use [`mise`](https://mise.jdx.dev/) to manage Python installs, you may hit an error where the `oxen-py` crate can't find the Python dynamic library (e.g. `dyld[31558]: Library not loaded: @rpath/libpython3.13.dylib`). Fix it by adding this to `~/.config/mise/config.toml`:
-
-```toml
-[env]
-DYLD_LIBRARY_PATH = "{{ exec(command='mise where python') }}/lib"
-```
-
 Per-codebase build instructions live in [`crates/liboxen/README.md`](./crates/liboxen/README.md#-build--run) and [`oxen-python/README.md`](./oxen-python/README.md#build).
 
 ### Pre-Commit Hooks

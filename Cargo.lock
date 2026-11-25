@@ -5733,9 +5733,10 @@ version = "0.68.2"
 dependencies = [
  "liboxen",
  "log",
+ "polars",
+ "polars-arrow",
  "pyo3",
  "pyo3-async-runtimes",
- "pyo3-polars",
  "serde_json",
  "time",
  "tokio",
@@ -6309,7 +6310,6 @@ dependencies = [
  "object_store",
  "parking_lot",
  "polars-arrow-format",
- "pyo3",
  "regex",
  "signal-hook 0.4.4",
  "simdutf8",
@@ -6340,16 +6340,6 @@ dependencies = [
  "recursive",
  "regex",
  "version_check",
-]
-
-[[package]]
-name = "polars-ffi"
-version = "0.55.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12b0201688b03f1647685c504c43784daeed5b2d42c6312e7b79fc13686f32c8"
-dependencies = [
- "polars-arrow",
- "polars-core",
 ]
 
 [[package]]
@@ -7020,24 +7010,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "pyo3-polars"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edbd5831456c88d2ba153608fd9cca4baf3dbc6364ed4628d1e12ca6122b7ddb"
-dependencies = [
- "libc",
- "once_cell",
- "polars",
- "polars-arrow",
- "polars-config",
- "polars-core",
- "polars-error",
- "polars-ffi",
- "pyo3",
- "thiserror 2.0.21",
 ]
 
 [[package]]

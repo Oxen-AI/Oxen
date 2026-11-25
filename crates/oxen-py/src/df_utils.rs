@@ -2,8 +2,8 @@ use pyo3::prelude::*;
 use std::path::PathBuf;
 
 use crate::error::PyOxenError;
+use crate::py_data_frame::PyDataFrame;
 use liboxen::{core::df::tabular, opts::DFOpts};
-use pyo3_polars::PyDataFrame;
 
 #[pyfunction]
 pub fn load(path: PathBuf) -> Result<PyDataFrame, PyOxenError> {
@@ -15,7 +15,7 @@ pub fn load(path: PathBuf) -> Result<PyDataFrame, PyOxenError> {
 
 #[pyfunction]
 pub fn save(df: PyDataFrame, path: PathBuf) -> Result<(), PyOxenError> {
-    let mut df = df.as_ref().clone();
+    let PyDataFrame(mut df) = df;
     tabular::write_df(&mut df, path)?;
     Ok(())
 }

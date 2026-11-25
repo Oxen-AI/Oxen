@@ -42,13 +42,6 @@ jobs:
           prefix-key: rust-test
           cache-all-crates: true
 
-      # The workspace build links the tests against libpython through pyo3 (pyo3-polars turns on
-      # polars' Python support), so pin the Python it links rather than taking the runner image's.
-      - name: Install Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11" # The earliest supported Python, as in ci_test.yml
-
       # Loopback NFS export, mounted back to this same runner.
       - name: Setup loopback NFS mount
         run: |
@@ -82,9 +75,10 @@ jobs:
           mkdir -p /tmp/oxen_sync/
 
       # Building the tests with the binaries resolves dev-dependency features once, so the test step
-      # reuses this build instead of compiling the dependencies a second time.
+      # reuses this build instead of compiling the dependencies a second time. oxen-py is a Python
+      # extension with no Rust tests, and ci_test.yml covers it.
       - name: Build oxen rust project
-        run: cargo build --workspace --bins --tests
+        run: cargo build --workspace --exclude oxen-py --bins --tests
 
       # Nightly and non-blocking, so run the whole suite on NFS rather than a guessed subset —
       # NFS-only failures can surface anywhere, not just in the transfer/storage paths.
@@ -99,7 +93,7 @@ jobs:
             if [ "$i" -eq 100 ]; then echo "oxen-server did not become healthy"; exit 1; fi
             sleep 0.1
           done
-          cargo test --workspace --no-fail-fast
+          cargo test --workspace --exclude oxen-py --no-fail-fast
 
       # Publish the server log so NFS failures on the server side (its SYNC_DIR is on the
       # NFS mount) can be inspected after the fact.

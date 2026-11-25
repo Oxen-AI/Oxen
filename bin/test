@@ -235,10 +235,7 @@ fi
 
 # Build the binaries and the tests in one invocation, so dev-dependency features resolve once and
 # the `cargo test` below reuses this build instead of compiling the dependencies a second time.
-# Both leave out oxen-py, which has no Rust tests and which `-p` builds with maturin: building it
-# here turns on pyo3 in polars, linking libpython into every binary and test, and on macOS those
-# then fail to start when that library is off dyld's default path and DYLD_LIBRARY_PATH, which SIP
-# strips at every system binary, doesn't reach them.
+# Both leave out oxen-py, which has no Rust tests and which `-p` builds with maturin.
 phase "Build"
 echo "==> Building oxen (cargo build --workspace --exclude oxen-py --bins --tests $FEATURE_ARGS)..."
 # shellcheck disable=SC2086

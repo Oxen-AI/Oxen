@@ -1,8 +1,8 @@
 //! Oxen Utils
 //!
 
+use crate::py_data_frame::PyDataFrame;
 use pyo3::prelude::*;
-use pyo3_polars::PyDataFrame;
 use std::path::PathBuf;
 
 use crate::error::PyOxenError;
