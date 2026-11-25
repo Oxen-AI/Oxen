@@ -14,10 +14,9 @@ use serde::Deserialize;
 /// TOML deserialization target for the server's `--config` flag.
 ///
 /// Future top-level keys (auth options, telemetry settings, etc.) land here without restructuring.
-/// An unrecognized table fails startup rather than being skipped: a misspelled section would
-/// otherwise leave the server silently running the default policy the admin meant to replace.
+/// Tables and keys this build doesn't know are ignored.
+/// A value it can't parse for a key it knows still fails startup.
 #[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub storage: StoragePolicy,
@@ -89,15 +88,16 @@ mod tests {
         );
     }
 
-    /// A misspelled section must stop startup rather than leaving the server on a default the
-    /// admin meant to replace.
     #[test]
-    fn rejects_an_unrecognized_section() {
-        let err = toml::from_str::<Config>("[storaje]\nbackends = [\"local\"]\n")
-            .expect_err("an unrecognized section must be rejected");
-        assert!(
-            err.to_string().contains("unknown field"),
-            "expected an unknown-field error, got: {err}",
+    fn ignores_an_unrecognized_section() {
+        let f: Config = toml::from_str(
+            "[storaje]\nbackends = [\"s3\"]\ns3_bucket = \"b\"\ns3_region = \"r\"\n",
+        )
+        .expect("an unrecognized section is ignored");
+        assert_eq!(
+            f.storage,
+            StoragePolicy::default(),
+            "a misspelled [storage] leaves the default policy in place of the one it names"
         );
     }
 }
