@@ -3,7 +3,9 @@ use std::fmt::Debug;
 use std::future;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::SystemTime;
 
 use async_trait::async_trait;
@@ -29,6 +31,35 @@ use crate::view::versions::CleanCorruptedVersionsResult;
 /// The shared return type of the version store's streaming reads and the
 /// client-side file streamer.
 pub type BoxedByteStream = Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin>;
+
+/// A version file's bytes as a stream, with the file's size in bytes.
+pub struct VersionStream {
+    size: u64,
+    bytes: BoxedByteStream,
+}
+
+impl VersionStream {
+    pub(crate) fn new(size: u64, bytes: BoxedByteStream) -> Self {
+        Self { size, bytes }
+    }
+
+    /// The version file's size in bytes, which is how many bytes the stream yields.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+impl Stream for VersionStream {
+    type Item = Result<Bytes, std::io::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.bytes).poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.bytes.size_hint()
+    }
+}
 
 /// A local filesystem path to a version file.
 ///
@@ -399,11 +430,11 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     /// * `hash` - The content hash of the version to retrieve
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError>;
 
-    /// Get a version file as a stream of bytes
+    /// Get a version file as a stream of bytes, with its size
     ///
     /// # Arguments
     /// * `hash` - The content hash of the version to retrieve
-    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError>;
+    async fn get_version_stream(&self, hash: &str) -> Result<VersionStream, OxenError>;
 
     /// Get the size in bytes of a derived file (e.g., resized image, video thumbnail).
     ///
@@ -733,7 +764,7 @@ impl VersionStore for UnconfiguredS3VersionStore {
         Err(OxenError::S3BackendMissingServerOpts)
     }
 
-    async fn get_version_stream(&self, _hash: &str) -> Result<BoxedByteStream, OxenError> {
+    async fn get_version_stream(&self, _hash: &str) -> Result<VersionStream, OxenError> {
         Err(OxenError::S3BackendMissingServerOpts)
     }
 

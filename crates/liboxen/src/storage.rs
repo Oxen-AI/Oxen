@@ -6,5 +6,5 @@ pub use local::LocalVersionStore;
 pub use s3::{S3Opts, S3VersionStore, verify_s3_bucket_reachable};
 pub use version_store::{
     BoxedByteStream, LocalFilePath, StorageConfig, StorageKind, VersionLocation, VersionStore,
-    VersionUpload, create_version_store,
+    VersionStream, VersionUpload, create_version_store,
 };

@@ -90,7 +90,7 @@ pub async fn get_version_stream_from_revision(
 
     let version_store = repo.version_store();
     if version_store.version_exists(&hash).await? {
-        return version_store.get_version_stream(&hash).await;
+        return Ok(Box::new(version_store.get_version_stream(&hash).await?));
     }
 
     // The file is known in the merkle tree but its bytes aren't stored locally;

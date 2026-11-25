@@ -9,7 +9,7 @@ use crate::constants::{VERSION_CHUNK_FILE_NAME, VERSION_CHUNKS_DIR, VERSION_FILE
 use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::storage::version_store::{
-    BoxedByteStream, LocalFilePath, VersionLocation, VersionStore, VersionUpload,
+    BoxedByteStream, LocalFilePath, VersionLocation, VersionStore, VersionStream, VersionUpload,
 };
 use crate::tasks;
 use crate::util::fs::{AtomicFile, AtomicFileBatch, AtomicPartsFile};
@@ -248,15 +248,19 @@ impl VersionStore for LocalVersionStore {
         Ok(metadata.len())
     }
 
-    async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
+    async fn get_version_stream(&self, hash: &str) -> Result<VersionStream, OxenError> {
         let path = self.version_path(hash);
         let file = File::open(&path)
             .await
             .map_err(|source| version_read_error(hash, &path, source))?;
-        let reader = BufReader::new(file);
-        let stream = ReaderStream::new(reader);
+        let size = file
+            .metadata()
+            .await
+            .map_err(|source| version_read_error(hash, &path, source))?
+            .len();
+        let stream = ReaderStream::new(BufReader::new(file));
 
-        Ok(Box::new(stream))
+        Ok(VersionStream::new(size, Box::new(stream)))
     }
 
     async fn get_version_derived_stream(
