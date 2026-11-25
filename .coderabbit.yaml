@@ -53,6 +53,7 @@ reviews:
     overrides:
       - enabled: false
         paths:
+          - ".github/**"
           - ".coderabbit.yaml"
           - "crates/liboxen/**/*merkle*"
           - "crates/liboxen/**/*merkle*/**"
