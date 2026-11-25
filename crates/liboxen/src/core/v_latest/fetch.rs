@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::constants::{OXEN_HIDDEN_DIR, stream_segment_size};
 use crate::core::refs::with_ref_manager;
+use crate::core::v_latest::commits;
 use crate::error::OxenError;
 use crate::model::merkle_tree::node::{EMerkleTreeNode, MerkleTreeNode};
 use crate::model::{Branch, Commit, CommitEntry, MerkleHash};
@@ -65,13 +66,14 @@ pub async fn fetch_remote_branch(
         } else if fetch_opts.all {
             fetch_full_tree_and_hashes(repo, remote_repo, &remote_branch, &pull_progress).await?;
         } else {
-            // Download the nodes from the commits between the head and the remote head
+            let base = fetch_base(repo, remote_repo, &fetch_opts.branch, head_commit).await?;
+            // Download the nodes from the commits between the base and the remote head
             sync_from_head(
                 repo,
                 remote_repo,
                 fetch_opts,
                 &remote_branch,
-                &head_commit,
+                base.as_ref(),
                 &pull_progress,
             )
             .await?;
@@ -167,12 +169,55 @@ pub async fn fetch_remote_branch(
     Ok(remote_branch)
 }
 
+/// The commit to download branch `branch_name`'s new commits from, or `None` when the server has
+/// neither HEAD nor the local branch's commit. The server sends the commits the remote branch has
+/// that the base can't reach, so the base that reaches more of them downloads less, and with no
+/// base it sends the remote branch's whole history.
+///
+/// HEAD, when the local branch's commit is in HEAD's history, since HEAD then reaches everything
+/// that commit does. Otherwise the local branch's own commit: a branch that went its own way from
+/// HEAD shares more of its history with the remote branch. Either one gives way to the other when
+/// the server doesn't have it, as for a HEAD not yet pushed.
+pub(crate) async fn fetch_base(
+    repo: &LocalRepository,
+    remote_repo: &RemoteRepository,
+    branch_name: &str,
+    head_commit: Commit,
+) -> Result<Option<Commit>, OxenError> {
+    let branch_commit = match repositories::branches::get_commit_id(repo, branch_name)? {
+        Some(id) if id != head_commit.id => repositories::commits::get_by_id(repo, &id)?,
+        _ => None,
+    };
+    let candidates = match branch_commit {
+        None => vec![head_commit],
+        Some(branch_commit) => {
+            let (repo, head, branch_id) =
+                (repo.clone(), head_commit.clone(), branch_commit.id.clone());
+            // Walks HEAD's history, so it runs off the async workers.
+            let covered =
+                tasks::spawn_blocking(move || commits::is_ancestor(&repo, &branch_id, &head))
+                    .await??;
+            if covered {
+                vec![head_commit, branch_commit]
+            } else {
+                vec![branch_commit, head_commit]
+            }
+        }
+    };
+    for candidate in candidates {
+        if api::client::tree::has_node(remote_repo, candidate.id.parse()?).await? {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
 #[tracing::instrument(
     skip_all,
     fields(
         oxen.repository_path = %repo.path.display(),
         oxen.branch_name = %branch.name,
-        oxen.head_commit_id = %head_commit.id,
+        oxen.base_commit_id = ?base.map(|commit| &commit.id),
     )
 )]
 async fn sync_from_head(
@@ -180,39 +225,35 @@ async fn sync_from_head(
     remote_repo: &RemoteRepository,
     fetch_opts: &FetchOpts,
     branch: &Branch,
-    head_commit: &Commit,
+    base: Option<&Commit>,
     pull_progress: &Arc<PullProgress>,
 ) -> Result<(), OxenError> {
     let repo_hidden_dir = util::fs::oxen_hidden_dir(&repo.path);
-    log::debug!("sync_from_head head_commit: {head_commit}");
     log::debug!("sync_from_head branch: {branch}");
 
-    // If HEAD commit IS on the remote server, that means we are behind the remote branch
-    if api::client::tree::has_node(remote_repo, head_commit.id.parse()?).await? {
-        log::debug!("sync_from_head has head commit: {head_commit}");
+    if let Some(base) = base {
+        log::debug!("sync_from_head base: {base}");
         pull_progress.set_message(format!(
             "Downloading commits from {} to {}",
-            head_commit.id, branch.commit_id
+            base.id, branch.commit_id
         ));
         api::client::tree::download_trees_between(
             repo,
             remote_repo,
-            &head_commit.id,
+            &base.id,
             &branch.commit_id,
             fetch_opts,
         )
         .await?;
         api::client::commits::download_base_head_dir_hashes(
             remote_repo,
-            &head_commit.id,
+            &base.id,
             &branch.commit_id,
             &repo_hidden_dir,
         )
         .await?;
     } else {
-        // If HEAD commit is NOT on the remote server, that means we are ahead of the remote branch
-        // If the node does not exist on the remote server,
-        // we need to sync all the commits from the commit id and their parents
+        // The server has no commit to start from, so it sends the remote branch's whole history.
         // TODO: This logic doesn't seem correct. Revisit this.
         sync_tree_from_commit(
             repo,

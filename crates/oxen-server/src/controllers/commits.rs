@@ -372,7 +372,7 @@ pub async fn download_dir_hashes_db(
                 let head_commit = repositories::revisions::get(&repository, &head_commit_id)?
                     .ok_or_else(|| OxenError::RevisionNotFound(head_commit_id.into()))?;
 
-                repositories::commits::list_between(&repository, &base_commit, &head_commit)?
+                repositories::commits::list_for_download(&repository, &base_commit, &head_commit)?
             }
             (revision, None) => repositories::commits::list_from(&repository, &revision)?,
         };

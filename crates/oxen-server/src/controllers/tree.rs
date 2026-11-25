@@ -406,19 +406,21 @@ fn get_commit_list(
     // Otherwise, we are downloading all commits from the base commit back to the first commit
     // This is the difference between the first pull and subsequent pulls
     // The first pull doesn't have a head commit, but subsequent pulls do
-    let mut commits = if let Some(head_commit_id) = maybe_head_commit_id {
+    if let Some(head_commit_id) = maybe_head_commit_id {
         let head_commit = repositories::commits::get_by_id(repository, head_commit_id)?
             .ok_or_else(|| OxenError::resource_not_found(head_commit_id))?;
-        repositories::commits::list_between(repository, base_commit, &head_commit)?
-    } else {
-        // If the subtree is specified, we only want to get the latest commit
-        if maybe_subtrees.is_some() {
-            vec![base_commit.clone()]
-        } else {
-            repositories::commits::list_from(repository, &base_commit.id)?
-        }
-    };
+        // The base commit comes first, so only the nodes it lacks are sent. Walking back from
+        // the head until the base turns up would list the whole history whenever the head is
+        // behind the base or on another branch.
+        return repositories::commits::list_for_download(repository, base_commit, &head_commit);
+    }
 
+    // If the subtree is specified, we only want to get the latest commit
+    if maybe_subtrees.is_some() {
+        return Ok(vec![base_commit.clone()]);
+    }
+
+    let mut commits = repositories::commits::list_from(repository, &base_commit.id)?;
     // Reverse the list so we get the commits in *chronological* order
     commits.reverse();
     Ok(commits)

@@ -183,6 +183,9 @@ pub use crate::core::v_latest::commits::list;
 /// List commits for the repository in no particular order
 pub use crate::core::v_latest::commits::list_all;
 
+/// List `base`, then the commits a client holding it downloads to reach `head`
+pub use crate::core::v_latest::commits::list_for_download;
+
 // Source
 pub use crate::core::v_latest::commits::get_commit_or_head;
 
@@ -997,6 +1000,33 @@ mod tests {
                 buggy.iter().any(|c| c.id == c1.id),
                 "list_between is expected to over-include base history here"
             );
+
+            // A download lists the base first, then only what the base can't reach.
+            let download_ids = |base: &Commit, head: &Commit| -> Result<Vec<String>, OxenError> {
+                let commits = repositories::commits::list_for_download(&repo, base, head)?;
+                Ok(commits.into_iter().map(|c| c.id).collect())
+            };
+            assert_eq!(
+                download_ids(&c3, &f2)?,
+                vec![
+                    c3.id.clone(),
+                    f1.id.clone(),
+                    merge.id.clone(),
+                    f2.id.clone()
+                ],
+                "head on another branch: the base, then feature's own commits oldest first"
+            );
+            assert_eq!(
+                download_ids(&f2, &c1)?,
+                vec![f2.id.clone(), c1.id.clone()],
+                "head behind the base: the head alone, not the history back to the root"
+            );
+            assert_eq!(
+                download_ids(&c2, &c3)?,
+                vec![c2.id.clone(), c3.id.clone()],
+                "head one commit ahead of the base"
+            );
+            assert_eq!(download_ids(&c2, &c2)?, vec![c2.id.clone()]);
 
             assert_all_pairs(&repo, &[&c1, &c2, &c3, &f1, &merge, &f2]).await;
             Ok(())

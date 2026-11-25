@@ -877,49 +877,124 @@ pub async fn list_between_exclusive(
     let repo = repo.clone();
     let base = base.clone();
     let head = head.clone();
-    tasks::spawn_blocking(move || -> Result<Vec<Commit>, OxenError> {
-        // Pass 1: mark everything reachable from base. Purely graph-based, so the
-        // outcome can't hinge on the order commits happen to sort in.
-        let mut on_base: HashSet<String> = HashSet::new();
-        let mut stack = vec![base.clone()];
-        on_base.insert(base.id.clone());
-        while let Some(commit) = stack.pop() {
-            for parent_id in &commit.parent_ids {
-                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
-                    continue;
-                };
-                if on_base.insert(parent.id.clone()) {
-                    stack.push(parent);
-                }
+    tasks::spawn_blocking(move || list_head_only(&repo, &base, &head)).await?
+}
+
+/// The commits reachable from `head` but not from `base`, newest first.
+fn list_head_only(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    // When every path back from head runs through base (head ahead of base on one line, as on
+    // every pull), stopping at base already gives the exact set, without walking base's history.
+    let (head_only, avoids_base) = walk_back_from(repo, head, &HashSet::from([base.id.clone()]))?;
+    if !avoids_base {
+        return Ok(head_only);
+    }
+
+    // Otherwise mark everything reachable from base. Purely graph-based, so the
+    // outcome can't hinge on the order commits happen to sort in.
+    let mut on_base = HashSet::from([base.id.clone()]);
+    let mut stack = vec![base.clone()];
+    while let Some(commit) = stack.pop() {
+        for parent_id in &commit.parent_ids {
+            if on_base.contains(parent_id) {
+                continue;
+            }
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                continue;
+            };
+            on_base.insert(parent.id.clone());
+            stack.push(parent);
+        }
+    }
+
+    Ok(walk_back_from(repo, head, &on_base)?.0)
+}
+
+/// Whether the commit `ancestor_id` is `descendant` or in its history. The walk stops as soon as
+/// it reaches `ancestor_id`.
+pub(crate) fn is_ancestor(
+    repo: &LocalRepository,
+    ancestor_id: &str,
+    descendant: &Commit,
+) -> Result<bool, OxenError> {
+    let mut seen = HashSet::from([descendant.id.clone()]);
+    let mut stack = vec![descendant.clone()];
+    while let Some(commit) = stack.pop() {
+        if commit.id == ancestor_id {
+            return Ok(true);
+        }
+        for parent_id in &commit.parent_ids {
+            if seen.insert(parent_id.clone())
+                && let Some(parent) = get_by_hash(repo, &parent_id.parse()?)?
+            {
+                stack.push(parent);
             }
         }
+    }
+    Ok(false)
+}
 
-        // Pass 2: emit head's ancestry that isn't on base, newest first.
-        let mut heap: BinaryHeap<TimestampedCommit> = BinaryHeap::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut results = vec![];
+/// The commits reachable from `head` without passing through a commit in `stop`, newest first,
+/// and whether that walk reached a commit with no parents or with a parent missing from the
+/// store, which is where a path that avoids every commit in `stop` ends.
+fn walk_back_from(
+    repo: &LocalRepository,
+    head: &Commit,
+    stop: &HashSet<String>,
+) -> Result<(Vec<Commit>, bool), OxenError> {
+    let mut heap = BinaryHeap::new();
+    let mut seen = HashSet::new();
+    let mut results = vec![];
+    let mut reached_end = false;
 
-        if !on_base.contains(&head.id) {
-            seen.insert(head.id.clone());
-            heap.push(TimestampedCommit(head.clone()));
-        }
+    if !stop.contains(&head.id) {
+        seen.insert(head.id.clone());
+        heap.push(TimestampedCommit(head.clone()));
+    }
 
-        while let Some(TimestampedCommit(commit)) = heap.pop() {
-            for parent_id in &commit.parent_ids {
-                let Some(parent) = get_by_hash(&repo, &parent_id.parse()?)? else {
-                    continue;
-                };
-                // An on_base parent (and everything above it) already lives on base.
-                if !on_base.contains(&parent.id) && seen.insert(parent.id.clone()) {
-                    heap.push(TimestampedCommit(parent));
-                }
+    while let Some(TimestampedCommit(commit)) = heap.pop() {
+        reached_end |= commit.parent_ids.is_empty();
+        for parent_id in &commit.parent_ids {
+            // A stop parent (and everything above it) is left out.
+            if stop.contains(parent_id) || seen.contains(parent_id) {
+                continue;
             }
-            results.push(commit);
+            let Some(parent) = get_by_hash(repo, &parent_id.parse()?)? else {
+                reached_end = true;
+                continue;
+            };
+            seen.insert(parent.id.clone());
+            heap.push(TimestampedCommit(parent));
         }
+        results.push(commit);
+    }
 
-        Ok(results)
-    })
-    .await?
+    Ok((results, reached_end))
+}
+
+/// The commits a client that holds `base` and its history downloads to reach `head`: `base`
+/// first, then every commit reachable from `head` but not from `base`, oldest first, ending with
+/// `head`. `head` is listed even when `base` already reaches it, so a client that holds only part
+/// of that history still receives the commit it asked for.
+pub fn list_for_download(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<Vec<Commit>, OxenError> {
+    let mut commits = vec![base.clone()];
+    if head.id == base.id {
+        return Ok(commits);
+    }
+    let head_only = list_head_only(repo, base, head)?;
+    if head_only.is_empty() {
+        commits.push(head.clone());
+    } else {
+        commits.extend(head_only.into_iter().rev());
+    }
+    Ok(commits)
 }
 
 /// Retrieve entries with filepaths matching a provided glob pattern
