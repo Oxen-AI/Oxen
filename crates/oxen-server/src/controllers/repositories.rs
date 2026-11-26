@@ -230,7 +230,9 @@ pub async fn update_size(req: HttpRequest) -> actix_web::Result<HttpResponse, Ox
     get,
     path = "/api/repos/{namespace}/{repo_name}/size",
     tag = "Repositories",
-    description = "Get the cached size of the repository in bytes.",
+    description = "Get the recorded size of the repository in bytes. A repository with no figure \
+                   recorded reports `pending` at zero until `POST /size`, a push, or a workspace \
+                   commit records one.",
     params(
         ("namespace" = String, Path, description = "Namespace of the repository", example = "ox"),
         ("repo_name" = String, Path, description = "Name of the repository", example = "ImageNet-1k"),
@@ -246,10 +248,6 @@ pub async fn get_size(req: HttpRequest) -> actix_web::Result<HttpResponse, OxenH
     let name = path_param(&req, "repo_name")?.to_string();
 
     let repository = get_repo_async(app_data, &namespace, &name).await?;
-    // `size::get_size` starts a recalculation when nothing is recorded (a GET that mutates —
-    // tech-debt ENG-1374); guard the whole handler so a stop-the-world op (migration/prune/fsck)
-    // blocks it.
-    let _write = repo_locks::begin_write(&repository)?;
     let size = repositories::size::get_size_async(&repository).await?;
     Ok(HttpResponse::Ok().json(size))
 }

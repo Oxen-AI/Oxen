@@ -36,9 +36,9 @@ pub fn list(path: &Path) -> Result<Vec<String>, OxenError> {
 /// `legacy_directory` (`name` when `None`) and the repositories placed by UUID that the name table
 /// records under `name`. `None` when it has neither.
 ///
-/// Starts a size recalculation for every repository that has no figure to count, so the total is a
-/// lower bound that later reads converge on, and a warning names how many repositories are counted
-/// at an unfinished figure.
+/// Each repository counts at the figure it has recorded, and one with none counts as nothing.
+/// Reading starts no recalculation, and a warning reports how many repositories are counted at a
+/// stale figure or none.
 pub fn get(
     data_dir: &Path,
     name: &str,
@@ -59,21 +59,6 @@ pub fn get(
     // Get storage per repo in parallel and sum up
     let figures: Vec<RepoSizeFile> = repos.par_iter().map(size::get_size).collect();
 
-    // A read reports a failed pass rather than starting another, so a repository left with no
-    // figure would count as nothing on every later read. Start one here for those.
-    for (repo, figure) in repos.iter().zip(&figures) {
-        if matches!(figure.status, SizeStatus::Error)
-            && figure.size == 0
-            && let Err(cause) = size::update_size(repo)
-        {
-            tracing::warn!(
-                oxen.repository_path = %repo.path.display(),
-                exception.message = ?cause,
-                "Could not start a size recalculation for a repository counted as nothing"
-            );
-        }
-    }
-
     let outstanding = figures
         .iter()
         .filter(|figure| !matches!(figure.status, SizeStatus::Done))
@@ -83,7 +68,8 @@ pub fn get(
             oxen.namespace = name,
             oxen.outstanding_repository_count = outstanding,
             oxen.repository_count = figures.len(),
-            "Reporting a storage total that counts some repositories at a figure no pass completed"
+            "Reporting a storage total that counts some repositories at a stale figure, or as nothing \
+             where none is recorded"
         );
     }
 
@@ -135,10 +121,17 @@ mod tests {
                 "a repository with no readable figure leaves the rest of the total intact"
             );
             assert_eq!(
-                size::wait_for_recorded_size(&second)?,
-                second.version_bytes()?,
-                "reading a namespace starts a recalculation for a repository with no figure"
+                size::get_size(&second).status,
+                SizeStatus::Pending,
+                "reading a namespace starts no recalculation for a repository with no figure"
             );
+            assert_eq!(
+                util::fs::read_from_path(repo_size_path(&second))?,
+                "not a size record",
+                "reading a namespace records nothing for a repository with no figure"
+            );
+            size::update_size(&second)?;
+            size::wait_for_recorded_size(&second)?;
 
             let gb = |bytes: u64| bytes as f64 / bytesize::GB as f64;
             let total = |name: &str, legacy_directory| {

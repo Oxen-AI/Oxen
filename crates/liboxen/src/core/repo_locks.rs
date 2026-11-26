@@ -286,7 +286,7 @@ mod tests {
                 "a rejected size recalculation records nothing at all"
             );
             assert!(
-                matches!(size::get_size(&repo).status, SizeStatus::Error),
+                !matches!(size::get_size(&repo).status, SizeStatus::Done),
                 "a repository whose recalculation was refused is not reported as sized"
             );
 
