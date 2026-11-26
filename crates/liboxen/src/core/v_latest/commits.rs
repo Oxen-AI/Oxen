@@ -824,7 +824,11 @@ pub fn count_from(
     Ok((count, false))
 }
 
-/// List the history between two commits
+/// List the history between two commits.
+///
+/// Walks from `head` and stops at `base`, so a `base` that is not an ancestor of `head` is never
+/// reached and the walk runs to the root. Use [`list_between_exclusive`] where the caller cannot
+/// show that `base` is an ancestor.
 pub fn list_between(
     repo: &LocalRepository,
     base: &Commit,
@@ -834,6 +838,20 @@ pub fn list_between(
     let (results, _) =
         list_recursive_paginated(repo, head.clone(), 0, usize::MAX, Some(base), None)?;
     Ok(results)
+}
+
+/// The commits reachable from exactly one of `base` and `head`, as `(base_only, head_only)`.
+/// Git's `log base...head` shows this set, marking which side each commit came from.
+pub async fn list_symmetric_difference(
+    repo: &LocalRepository,
+    base: &Commit,
+    head: &Commit,
+) -> Result<(Vec<Commit>, Vec<Commit>), OxenError> {
+    let (head_only, base_only) = tokio::try_join!(
+        list_between_exclusive(repo, base, head),
+        list_between_exclusive(repo, head, base),
+    )?;
+    Ok((base_only, head_only))
 }
 
 /// List commits reachable from `head` but not from `base` (equivalent to git's
@@ -854,34 +872,21 @@ pub fn list_between(
 /// The second walk pops by timestamp only to order the output newest first; a
 /// commit still always precedes its parents because a parent is pushed to the
 /// heap only after its child has been popped.
-/// The commits reachable from exactly one of `base` and `head`, as `(base_only, head_only)`.
-/// Git's `log base...head` shows this set, marking which side each commit came from.
-pub async fn list_symmetric_difference(
-    repo: &LocalRepository,
-    base: &Commit,
-    head: &Commit,
-) -> Result<(Vec<Commit>, Vec<Commit>), OxenError> {
-    let (head_only, base_only) = tokio::try_join!(
-        list_between_exclusive(repo, base, head),
-        list_between_exclusive(repo, head, base),
-    )?;
-    Ok((base_only, head_only))
-}
-
 pub async fn list_between_exclusive(
     repo: &LocalRepository,
     base: &Commit,
     head: &Commit,
 ) -> Result<Vec<Commit>, OxenError> {
-    // Sync core: both passes are sync RocksDB reads over the commit graph — one blocking unit.
+    // Sync core: the walk is sync RocksDB reads over the commit graph, one blocking unit.
     let repo = repo.clone();
     let base = base.clone();
     let head = head.clone();
     tasks::spawn_blocking(move || list_head_only(&repo, &base, &head)).await?
 }
 
-/// The commits reachable from `head` but not from `base`, newest first.
-fn list_head_only(
+/// The commits reachable from `head` but not from `base`, newest first. This is
+/// [`list_between_exclusive`] for a caller that is already inside a blocking closure.
+pub(crate) fn list_head_only(
     repo: &LocalRepository,
     base: &Commit,
     head: &Commit,
