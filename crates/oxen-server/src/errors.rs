@@ -456,6 +456,14 @@ impl error::ResponseError for OxenHttpError {
                             .insert_header(("Retry-After", "1"))
                             .json(error_json)
                     }
+                    OxenError::InvalidVersionHash(_) => {
+                        tracing::warn!(
+                            exception.message = %error,
+                            "Refused a request that gave something other than a version file hash"
+                        );
+                        HttpResponse::BadRequest()
+                            .json(StatusMessageDescription::bad_request(error.to_string()))
+                    }
                     OxenError::VersionUploadRefused(_) => {
                         tracing::warn!(%error, "Refused a version upload request");
                         HttpResponse::BadRequest()

@@ -816,6 +816,10 @@ mod tests {
             App::new()
                 .app_data(OxenAppData::new(sync_dir.clone()))
                 .route(
+                    "/oxen/{namespace}/{repo_name}/versions/{version_id}/metadata",
+                    web::get().to(controllers::versions::metadata),
+                )
+                .route(
                     "/oxen/{namespace}/{repo_name}/versions/{resource:.*}",
                     web::get().to(controllers::versions::download),
                 )
@@ -831,6 +835,23 @@ mod tests {
                 .app_data(OxenAppData::new(sync_dir.to_path_buf()))
                 .to_request()
         };
+
+        // A version id the store cannot turn into a path is answered, rather than taken as far
+        // as the store, and one that could name a version file is answered as absent.
+        for version_id in ["nonexistent", "zz"] {
+            let uri = format!("/oxen/{namespace}/{repo_name}/versions/{version_id}/metadata");
+            let resp = actix_web::test::call_service(&app, get(uri)).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::BAD_REQUEST,
+                "{version_id:?} is not a version file hash"
+            );
+        }
+        let uri = format!(
+            "/oxen/{namespace}/{repo_name}/versions/abcdef0123456789abcdef0123456789/metadata"
+        );
+        let resp = actix_web::test::call_service(&app, get(uri)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
         let uri = format!("/oxen/{namespace}/{repo_name}/versions/main/{relative_path}");
         let resp = actix_web::test::call_service(&app, get(uri)).await;

@@ -218,7 +218,19 @@ pub trait VersionUpload: Send + Sync {
     async fn abort(&self) -> Result<(), OxenError>;
 }
 
+/// Reads `hash` as a version file's hash, which is what a backend turns into a path or key.
+///
+/// A backend keys a version file by the hash's canonical spelling, so a caller that spells one
+/// differently, with leading zeros or in upper case, reaches the file it already stored.
+pub(crate) fn parse_version_hash(hash: &str) -> Result<MerkleHash, OxenError> {
+    hash.parse()
+        .map_err(|_| OxenError::InvalidVersionHash(hash.into()))
+}
+
 /// Trait defining operations for version file storage backends
+///
+/// Every method taking a `hash: &str` answers [`OxenError::InvalidVersionHash`] for a string
+/// [`parse_version_hash`] refuses, rather than building a location from it.
 #[async_trait]
 pub trait VersionStore: Debug + Send + Sync + 'static {
     /// Initialize the storage backend
@@ -574,7 +586,7 @@ pub trait VersionStore: Debug + Send + Sync + 'static {
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError>;
 
     /// Delete the version file of every hash in `hashes`, with its chunks and derived versions,
-    /// skipping any hash the store does not hold.
+    /// skipping any version file the store does not hold.
     ///
     /// The default implementation deletes each hash with `delete_version` in parallel, bounded by
     /// `MAX_CONCURRENT_VERSION_PROBES`.
