@@ -10,6 +10,7 @@ use crate::error::OxenError;
 use crate::model::MerkleHash;
 use crate::storage::version_store::{
     BoxedByteStream, LocalFilePath, VersionLocation, VersionStore, VersionUpload,
+    parse_version_hash,
 };
 use crate::tasks;
 use crate::util::fs::{AtomicFile, AtomicFileBatch, AtomicPartsFile};
@@ -69,31 +70,30 @@ impl LocalVersionStore {
     }
 
     /// Get the directory containing a version file
-    fn version_dir(&self, hash: &str) -> PathBuf {
-        let topdir = &hash[..2];
-        let subdir = &hash[2..];
-        self.root_path.join(topdir).join(subdir)
+    fn version_dir(&self, digest: MerkleHash) -> PathBuf {
+        self.root_path
+            .join(digest.to_hex_hash().version_store_prefix())
     }
 
     /// Get the full path for a version file
-    fn version_path(&self, hash: &str) -> PathBuf {
-        self.version_dir(hash).join(VERSION_FILE_NAME)
+    fn version_path(&self, digest: MerkleHash) -> PathBuf {
+        self.version_dir(digest).join(VERSION_FILE_NAME)
     }
 
     /// Get the directory containing all the chunks for a version file
-    fn version_chunks_dir(&self, hash: &str) -> PathBuf {
-        self.version_dir(hash).join(VERSION_CHUNKS_DIR)
+    fn version_chunks_dir(&self, digest: MerkleHash) -> PathBuf {
+        self.version_dir(digest).join(VERSION_CHUNKS_DIR)
     }
 
     /// Get the directory containing a version file
     /// .oxen/versions/{hash}/chunks
-    fn version_chunk_dir(&self, hash: &str, offset: u64) -> PathBuf {
-        self.version_chunks_dir(hash).join(offset.to_string())
+    fn version_chunk_dir(&self, digest: MerkleHash, offset: u64) -> PathBuf {
+        self.version_chunks_dir(digest).join(offset.to_string())
     }
 
     /// Get the directory containing a version file
-    fn version_chunk_file(&self, hash: &str, offset: u64) -> PathBuf {
-        self.version_chunk_dir(hash, offset)
+    fn version_chunk_file(&self, digest: MerkleHash, offset: u64) -> PathBuf {
+        self.version_chunk_dir(digest, offset)
             .join(VERSION_CHUNK_FILE_NAME)
     }
 }
@@ -113,10 +113,10 @@ impl VersionStore for LocalVersionStore {
         mut reader: Box<dyn tokio::io::AsyncRead + Send + Unpin>,
         _size: u64,
     ) -> Result<(), OxenError> {
-        let version_path = self.version_path(hash);
+        let expected_hash = parse_version_hash(hash)?;
+        let version_path = self.version_path(expected_hash);
 
         if !version_path.exists() {
-            let expected_hash: MerkleHash = hash.parse()?;
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
                 .stream_async(&mut *reader)
@@ -136,7 +136,7 @@ impl VersionStore for LocalVersionStore {
             let failed = files
                 .into_par_iter()
                 .filter_map(|(hash, path)| {
-                    let target = store.version_path(&hash.to_string());
+                    let target = store.version_path(hash);
                     if target.exists() {
                         return None;
                     }
@@ -156,7 +156,7 @@ impl VersionStore for LocalVersionStore {
         file: tempfile::NamedTempFile,
         _size: u64,
     ) -> Result<LocalFilePath, OxenError> {
-        let version_path = self.version_path(&hash.to_string());
+        let version_path = self.version_path(hash);
         let target = version_path.clone();
         tasks::spawn_blocking(move || {
             if target.exists() {
@@ -169,13 +169,13 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
-        let version_path = self.version_path(hash);
+        let expected_hash = parse_version_hash(hash)?;
+        let version_path = self.version_path(expected_hash);
 
         if version_path.exists() {
             return Ok(());
         }
 
-        let expected_hash: MerkleHash = hash.parse()?;
         tasks::spawn_blocking(move || {
             AtomicFile::new(&version_path)
                 .with_hash(expected_hash)
@@ -192,7 +192,9 @@ impl VersionStore for LocalVersionStore {
         derived_filename: &str,
         derived_data: Bytes,
     ) -> Result<(), OxenError> {
-        let path = self.version_dir(orig_hash).join(derived_filename);
+        let path = self
+            .version_dir(parse_version_hash(orig_hash)?)
+            .join(derived_filename);
         let path_for_log = path.clone();
         tasks::spawn_blocking(move || AtomicFile::new(&path).write(&derived_data)).await??;
         log::debug!("Saved derived version file {path_for_log:?}");
@@ -200,7 +202,7 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
-        let path = self.version_path(hash);
+        let path = self.version_path(parse_version_hash(hash)?);
         let metadata = fs::metadata(&path)
             .await
             .map_err(|source| version_read_error(hash, &path, source))?;
@@ -216,10 +218,12 @@ impl VersionStore for LocalVersionStore {
             hashes
                 .into_par_iter()
                 .map(|hash| {
-                    let path = store.version_path(&hash);
-                    let size = sync_metadata(&path)
-                        .map(|metadata| metadata.len())
-                        .map_err(|source| version_read_error(&hash, &path, source));
+                    let size = parse_version_hash(&hash).and_then(|digest| {
+                        let path = store.version_path(digest);
+                        sync_metadata(&path)
+                            .map(|metadata| metadata.len())
+                            .map_err(|source| version_read_error(&hash, &path, source))
+                    });
                     (hash, size)
                 })
                 .collect()
@@ -229,7 +233,7 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
-        let path = self.version_path(hash);
+        let path = self.version_path(parse_version_hash(hash)?);
         let data = fs::read(&path)
             .await
             .map_err(|source| version_read_error(hash, &path, source))?;
@@ -241,7 +245,9 @@ impl VersionStore for LocalVersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<u64, OxenError> {
-        let path = self.version_dir(orig_hash).join(derived_filename);
+        let path = self
+            .version_dir(parse_version_hash(orig_hash)?)
+            .join(derived_filename);
         let metadata = fs::metadata(&path)
             .await
             .map_err(|source| version_read_error(orig_hash, &path, source))?;
@@ -249,7 +255,7 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
-        let path = self.version_path(hash);
+        let path = self.version_path(parse_version_hash(hash)?);
         let file = File::open(&path)
             .await
             .map_err(|source| version_read_error(hash, &path, source))?;
@@ -264,7 +270,9 @@ impl VersionStore for LocalVersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<BoxedByteStream, OxenError> {
-        let path = self.version_dir(orig_hash).join(derived_filename);
+        let path = self
+            .version_dir(parse_version_hash(orig_hash)?)
+            .join(derived_filename);
         let file = File::open(&path)
             .await
             .map_err(|source| version_read_error(orig_hash, &path, source))?;
@@ -279,7 +287,9 @@ impl VersionStore for LocalVersionStore {
         orig_hash: &str,
         derived_filename: &str,
     ) -> Result<bool, OxenError> {
-        let derived_path = self.version_dir(orig_hash).join(derived_filename);
+        let derived_path = self
+            .version_dir(parse_version_hash(orig_hash)?)
+            .join(derived_filename);
         match metadata(derived_path).await {
             Ok(meta) => Ok(meta.is_file()),
             Err(err) => match err.kind() {
@@ -290,7 +300,9 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
-        Ok(VersionLocation::Local(self.version_path(hash)))
+        Ok(VersionLocation::Local(
+            self.version_path(parse_version_hash(hash)?),
+        ))
     }
 
     // TODO: (CleanCut) Do we need to make sure the destination path is outside the version store?
@@ -300,7 +312,7 @@ impl VersionStore for LocalVersionStore {
         dest_path: &Path,
         mtime: SystemTime,
     ) -> Result<(), OxenError> {
-        let version_path = self.version_path(hash);
+        let version_path = self.version_path(parse_version_hash(hash)?);
         log::debug!("copying version path: {version_path:?} to {dest_path:?}");
         // Distinguish "the version-store blob is missing" from generic copy errors so the
         // caller (oxen restore / merge / etc.) can surface a useful hint pointing the user
@@ -326,20 +338,23 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
-        Ok(self.version_path(hash).exists())
+        Ok(self.version_path(parse_version_hash(hash)?).exists())
     }
 
     async fn find_missing_versions(&self, hashes: &[String]) -> Result<Vec<String>, OxenError> {
         let store = LocalVersionStore::new(&self.root_path);
         let hashes: HashSet<String> = hashes.iter().cloned().collect();
-        let missing = tasks::spawn_blocking(move || {
+        tasks::spawn_blocking(move || {
             hashes
                 .into_par_iter()
-                .filter(|hash| !store.version_path(hash).exists())
-                .collect()
+                .map(|hash| {
+                    let digest = parse_version_hash(&hash)?;
+                    Ok((!store.version_path(digest).exists()).then_some(hash))
+                })
+                .filter_map(|missing| missing.transpose())
+                .collect::<Result<Vec<String>, OxenError>>()
         })
-        .await?;
-        Ok(missing)
+        .await?
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
@@ -350,7 +365,8 @@ impl VersionStore for LocalVersionStore {
         let store = LocalVersionStore::new(&self.root_path);
         tasks::spawn_blocking(move || -> Result<(), OxenError> {
             for hash in hashes {
-                match std::fs::remove_dir_all(store.version_dir(&hash)) {
+                let dir = store.version_dir(parse_version_hash(&hash)?);
+                match std::fs::remove_dir_all(dir) {
                     Err(e) if e.kind() == ErrorKind::NotFound => {}
                     result => result?,
                 }
@@ -394,6 +410,15 @@ impl VersionStore for LocalVersionStore {
                         top_name.to_string_lossy(),
                         sub_name.to_string_lossy()
                     );
+                    // A directory whose name is not a version file hash holds no version file,
+                    // and handing it back would give a caller a hash the store itself refuses.
+                    if parse_version_hash(&hash).is_err() {
+                        tracing::warn!(
+                            oxen.entry_name = %hash,
+                            "Version store has a directory that is not a version file's hash"
+                        );
+                        continue;
+                    }
                     versions.push(hash);
                 }
             }
@@ -412,7 +437,7 @@ impl VersionStore for LocalVersionStore {
         offset: u64,
         data: Bytes,
     ) -> Result<(), OxenError> {
-        let chunk_path = self.version_chunk_file(hash, offset);
+        let chunk_path = self.version_chunk_file(parse_version_hash(hash)?, offset);
 
         if chunk_path.exists() {
             return Ok(());
@@ -429,7 +454,7 @@ impl VersionStore for LocalVersionStore {
         offset: u64,
         size: u64,
     ) -> Result<Vec<u8>, OxenError> {
-        let version_file_path = self.version_path(hash);
+        let version_file_path = self.version_path(parse_version_hash(hash)?);
 
         let mut file = File::open(&version_file_path)
             .await
@@ -459,7 +484,7 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
-        let chunk_dir = self.version_chunks_dir(hash);
+        let chunk_dir = self.version_chunks_dir(parse_version_hash(hash)?);
         let mut chunks = Vec::new();
 
         let mut entries = fs::read_dir(&chunk_dir).await?;
@@ -476,17 +501,21 @@ impl VersionStore for LocalVersionStore {
     }
 
     async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
-        let version_path = self.version_path(hash);
-        let chunks_dir = self.version_chunks_dir(hash);
+        let expected_hash = parse_version_hash(hash)?;
+        let version_path = self.version_path(expected_hash);
+        let chunks_dir = self.version_chunks_dir(expected_hash);
         let chunk_offsets = self.list_version_chunks(hash).await?;
-        let expected_hash: MerkleHash = hash.parse()?;
         log::debug!(
             "combine_version_chunks found {} chunks",
             chunk_offsets.len()
         );
         let chunk_paths: Vec<PathBuf> = chunk_offsets
             .iter()
-            .map(|offset| self.version_chunk_file(hash, *offset))
+            .map(|offset| {
+                chunks_dir
+                    .join(offset.to_string())
+                    .join(VERSION_CHUNK_FILE_NAME)
+            })
             .collect();
 
         // Run the full read-chunks + atomic-write + cleanup sequence in one `spawn_blocking`
@@ -514,7 +543,7 @@ impl VersionStore for LocalVersionStore {
         size: u64,
         part_size: u64,
     ) -> Result<Box<dyn VersionUpload>, OxenError> {
-        let version_path = self.version_path(&hash.to_string());
+        let version_path = self.version_path(hash);
         let target = version_path.clone();
         let file = tasks::spawn_blocking(move || {
             AtomicFile::new(&target)
@@ -807,9 +836,10 @@ mod tests {
             .unwrap();
 
         // Verify the file exists with correct structure
-        let version_path = store.version_path(&hash);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
+        let version_path = store.version_path(digest);
         assert!(version_path.exists());
-        assert_eq!(version_path.parent().unwrap(), store.version_dir(&hash));
+        assert_eq!(version_path.parent().unwrap(), store.version_dir(digest));
 
         // Get and verify the data
         let retrieved = store.get_version(&hash).await.unwrap();
@@ -831,7 +861,8 @@ mod tests {
         let location = store.version_location(hash).await.unwrap();
         match location {
             VersionLocation::Local(path) => {
-                assert_eq!(path, store.version_path(hash));
+                let digest: MerkleHash = hash.parse().expect("a version file hash");
+                assert_eq!(path, store.version_path(digest));
             }
             other => panic!("expected Local variant, got {other:?}"),
         }
@@ -853,7 +884,8 @@ mod tests {
             .unwrap();
 
         // Verify the file exists
-        let version_path = store.version_path(&hash);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
+        let version_path = store.version_path(digest);
         assert!(version_path.exists());
 
         // Get and verify the data
@@ -871,7 +903,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             &*stored,
-            store.version_path(&moved_hash.to_string()).as_path(),
+            store.version_path(moved_hash).as_path(),
             "the local store hands back the version file to read"
         );
         assert!(
@@ -940,6 +972,7 @@ mod tests {
         let (_temp_dir, store) = setup().await;
         let data = b"test data";
         let hash = hasher::hash_buffer(data);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
 
         // Store and verify
         store
@@ -951,7 +984,11 @@ mod tests {
         // Delete and verify
         store.delete_version(&hash).await.unwrap();
         assert!(!store.version_exists(&hash).await.unwrap());
-        assert!(!store.version_dir(&hash).exists());
+        assert!(!store.version_dir(digest).exists());
+
+        // A hash the store does not have is not an error to delete, one at a time or in bulk.
+        let absent = hasher::hash_buffer(b"delta");
+        store.delete_version(&absent).await.unwrap();
 
         // The bulk delete removes every stored hash it gets and skips one the store lacks.
         let payloads: [&[u8]; 3] = [b"alpha", b"bravo", b"charlie"];
@@ -963,7 +1000,7 @@ mod tests {
                 .unwrap();
         }
         let mut doomed = hashes[..2].to_vec();
-        doomed.push("nonexistent".to_string());
+        doomed.push(absent);
         store.delete_versions(doomed).await.unwrap();
         assert_eq!(
             store.list_versions().await.unwrap(),
@@ -993,8 +1030,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_nonexistent_version() {
-        let (_temp_dir, store) = setup().await;
-        let hash = "nonexistent";
+        let (temp_dir, store) = setup().await;
+        let hash = "abcdef0123456789abcdef0123456789";
 
         match store.get_version(hash).await {
             Ok(_) => panic!("Expected error when getting non-existent version"),
@@ -1005,6 +1042,20 @@ mod tests {
                 panic!("Unexpected error when getting non-existent version: {e:?}");
             }
         }
+
+        for not_a_hash in ["nonexistent", "", "zz", "\u{20AC}0"] {
+            assert!(
+                matches!(
+                    store.get_version(not_a_hash).await,
+                    Err(OxenError::InvalidVersionHash(_))
+                ),
+                "a read is refused what is not a version file hash, got {not_a_hash:?} through"
+            );
+        }
+
+        // A hash shorter than the directory prefix has no remainder to put below it.
+        let short = store.version_dir(parse_version_hash("a").expect("a version file hash"));
+        assert_eq!(short, temp_dir.path().join("a"));
     }
 
     #[test]
@@ -1029,15 +1080,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_nonexistent_version() {
-        let (_temp_dir, store) = setup().await;
-        let hash = "nonexistent";
-
-        // Should not error when deleting non-existent version
-        store.delete_version(hash).await.unwrap();
-    }
-
-    #[tokio::test]
     async fn test_store_and_get_version_chunk() {
         let (_temp_dir, store) = setup().await;
         let data = b"test chunk data";
@@ -1052,9 +1094,10 @@ mod tests {
             .unwrap();
 
         // Verify the file exists with correct structure
-        let file_path = store.version_path(&hash);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
+        let file_path = store.version_path(digest);
         assert!(file_path.exists());
-        assert_eq!(file_path.parent().unwrap(), store.version_dir(&hash));
+        assert_eq!(file_path.parent().unwrap(), store.version_dir(digest));
 
         // Get and verify the data
         let retrieved = store.get_version_chunk(&hash, offset, size).await.unwrap();
@@ -1078,13 +1121,14 @@ mod tests {
             .await
             .unwrap();
 
-        let chunks_dir = store.version_chunks_dir(&hash);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
+        let chunks_dir = store.version_chunks_dir(digest);
         assert!(chunks_dir.exists());
 
         store.combine_version_chunks(&hash).await.unwrap();
 
         // The reassembled version file matches the original bytes...
-        let version_path = store.version_path(&hash);
+        let version_path = store.version_path(digest);
         assert!(version_path.exists());
         assert_eq!(store.get_version(&hash).await.unwrap(), data);
 

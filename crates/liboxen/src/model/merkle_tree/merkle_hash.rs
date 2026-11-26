@@ -123,11 +123,22 @@ impl HexHash {
     /// The first directory name is the first 3 characters of the hex-encoded hash. The second
     /// is the remaining characters.
     pub fn node_db_prefix(&self) -> PathBuf {
-        let hash_str = &self.0;
-        const DIR_PREFIX_LEN: usize = 3;
-        let dir_prefix = hash_str.chars().take(DIR_PREFIX_LEN).collect::<String>();
-        let dir_suffix = hash_str.chars().skip(DIR_PREFIX_LEN).collect::<String>();
-        Path::new(&dir_prefix).join(&dir_suffix)
+        self.split_after(3)
+    }
+
+    /// Produces a relative path for the 2-level directory structure used to store version files.
+    /// The first directory name is the first 2 characters of the hex-encoded hash. The second is
+    /// the remaining characters.
+    pub(crate) fn version_store_prefix(&self) -> PathBuf {
+        self.split_after(2)
+    }
+
+    /// Splits the hex-encoded hash into a two-level relative path, with `prefix_len` characters in
+    /// the first level and the rest in the second. A hash shorter than `prefix_len` leaves the
+    /// second level empty.
+    fn split_after(&self, prefix_len: usize) -> PathBuf {
+        let (dir_prefix, dir_suffix) = self.0.split_at_checked(prefix_len).unwrap_or((&self.0, ""));
+        Path::new(dir_prefix).join(dir_suffix)
     }
 }
 

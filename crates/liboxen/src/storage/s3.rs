@@ -1,5 +1,6 @@
 use crate::error::OxenError;
 use crate::model::MerkleHash;
+use crate::storage::version_store::parse_version_hash;
 use crate::tasks;
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
@@ -253,23 +254,23 @@ impl S3VersionStore {
     }
 
     /// Get the directory containing a version file
-    fn version_dir(&self, hash: &str) -> String {
-        format!("{}/{}", self.prefix, hash)
+    fn version_dir(&self, digest: MerkleHash) -> String {
+        format!("{}/{}", self.prefix, digest)
     }
 
     /// Get the full path for a version file
-    fn generate_key(&self, hash: &str) -> String {
-        format!("{}/{}", self.version_dir(hash), VERSION_FILE_NAME)
+    fn generate_key(&self, digest: MerkleHash) -> String {
+        format!("{}/{}", self.version_dir(digest), VERSION_FILE_NAME)
     }
 
     /// Get the S3 key for a chunk at a specific offset
-    fn chunk_key(&self, hash: &str, offset: u64) -> String {
-        format!("{}/chunks/{}", self.version_dir(hash), offset)
+    fn chunk_key(&self, digest: MerkleHash, offset: u64) -> String {
+        format!("{}/chunks/{}", self.version_dir(digest), offset)
     }
 
     /// Get the S3 key prefix for all chunks of a version
-    fn chunks_prefix(&self, hash: &str) -> String {
-        format!("{}/chunks/", self.version_dir(hash))
+    fn chunks_prefix(&self, digest: MerkleHash) -> String {
+        format!("{}/chunks/", self.version_dir(digest))
     }
 
     /// Stream the key of every object under `prefix`, one per item, in key order. Keys arrive page
@@ -454,7 +455,7 @@ impl VersionStore for S3VersionStore {
         size: u64,
     ) -> Result<(), OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         const MAX_PART_SIZE: usize = 5 * 1024 * 1024 * 1024; // 5 GB, S3 maximum
         const MAX_CONCURRENT_UPLOADS: usize = 16;
@@ -607,7 +608,7 @@ impl VersionStore for S3VersionStore {
     async fn store_version(&self, hash: &str, data: Bytes) -> Result<(), OxenError> {
         let client = self.client().await;
         log::debug!("Storing version to S3");
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         // Reject data that does not hash to its key before uploading anything.
         let computed = hasher::hash_buffer(&data);
@@ -637,7 +638,11 @@ impl VersionStore for S3VersionStore {
         derived_data: Bytes,
     ) -> Result<(), OxenError> {
         let client = self.client().await;
-        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+        let key = format!(
+            "{}/{}",
+            self.version_dir(parse_version_hash(orig_hash)?),
+            derived_filename
+        );
 
         client
             .put_object()
@@ -656,7 +661,7 @@ impl VersionStore for S3VersionStore {
 
     async fn get_version_size(&self, hash: &str) -> Result<u64, OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         let resp = client
             .head_object()
@@ -675,7 +680,7 @@ impl VersionStore for S3VersionStore {
 
     async fn get_version(&self, hash: &str) -> Result<Vec<u8>, OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         let resp = client
             .get_object()
@@ -702,7 +707,11 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
     ) -> Result<u64, OxenError> {
         let client = self.client().await;
-        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+        let key = format!(
+            "{}/{}",
+            self.version_dir(parse_version_hash(orig_hash)?),
+            derived_filename
+        );
 
         let resp = client
             .head_object()
@@ -723,7 +732,7 @@ impl VersionStore for S3VersionStore {
     /// holding at most `RANGE_READS_IN_FLIGHT` parts in memory.
     async fn get_version_stream(&self, hash: &str) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         let part_size = self.range_part_size;
         let first = client
@@ -796,7 +805,11 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
     ) -> Result<BoxedByteStream, OxenError> {
         let client = self.client().await;
-        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+        let key = format!(
+            "{}/{}",
+            self.version_dir(parse_version_hash(orig_hash)?),
+            derived_filename
+        );
 
         let resp = client
             .get_object()
@@ -816,7 +829,11 @@ impl VersionStore for S3VersionStore {
         derived_filename: &str,
     ) -> Result<bool, OxenError> {
         let client = self.client().await;
-        let key = format!("{}/{}", self.version_dir(orig_hash), derived_filename);
+        let key = format!(
+            "{}/{}",
+            self.version_dir(parse_version_hash(orig_hash)?),
+            derived_filename
+        );
 
         match client
             .head_object()
@@ -842,7 +859,11 @@ impl VersionStore for S3VersionStore {
 
     async fn version_location(&self, hash: &str) -> Result<VersionLocation, OxenError> {
         Ok(VersionLocation::S3 {
-            url: format!("s3://{}/{}", self.bucket, self.generate_key(hash)),
+            url: format!(
+                "s3://{}/{}",
+                self.bucket,
+                self.generate_key(parse_version_hash(hash)?)
+            ),
             region: self.region.clone(),
             endpoint_url: self.endpoint_url.clone(),
         })
@@ -873,7 +894,7 @@ impl VersionStore for S3VersionStore {
         data: Bytes,
     ) -> Result<(), OxenError> {
         let client = self.client().await;
-        let key = self.chunk_key(hash, offset);
+        let key = self.chunk_key(parse_version_hash(hash)?, offset);
 
         client
             .put_object()
@@ -897,7 +918,7 @@ impl VersionStore for S3VersionStore {
         }
 
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         // HTTP Range is inclusive on both ends: bytes=start-end means bytes [start..=end]
         let end = offset.checked_add(size - 1).ok_or_else(|| {
@@ -927,7 +948,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn list_version_chunks(&self, hash: &str) -> Result<Vec<u64>, OxenError> {
-        let prefix = self.chunks_prefix(hash);
+        let prefix = self.chunks_prefix(parse_version_hash(hash)?);
         // One hash's chunk count is bounded, so collecting the offsets to sort them is fine.
         let mut keys = pin!(self.stream_objects_with_prefix(&prefix).await?);
         let mut offsets = Vec::new();
@@ -945,7 +966,7 @@ impl VersionStore for S3VersionStore {
 
     async fn version_exists(&self, hash: &str) -> Result<bool, OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         match client
             .head_object()
@@ -970,7 +991,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn delete_version(&self, hash: &str) -> Result<(), OxenError> {
-        let prefix = format!("{}/", self.version_dir(hash));
+        let prefix = format!("{}/", self.version_dir(parse_version_hash(hash)?));
         self.delete_objects_with_prefix(&prefix).await
     }
 
@@ -1037,6 +1058,7 @@ impl VersionStore for S3VersionStore {
     }
 
     async fn combine_version_chunks(&self, hash: &str) -> Result<(), OxenError> {
+        let digest = parse_version_hash(hash)?;
         // 1. List chunk offsets (already sorted by list_version_chunks)
         let offsets = self.list_version_chunks(hash).await?;
         if offsets.is_empty() {
@@ -1045,7 +1067,7 @@ impl VersionStore for S3VersionStore {
         log::debug!("combine_version_chunks found {} chunks", offsets.len());
 
         let client = self.client().await;
-        let key = self.generate_key(hash);
+        let key = self.generate_key(parse_version_hash(hash)?);
 
         // 2. Create multipart upload
         let upload = client
@@ -1073,7 +1095,7 @@ impl VersionStore for S3VersionStore {
                 let resp = client
                     .get_object()
                     .bucket(&self.bucket)
-                    .key(self.chunk_key(hash, *offset))
+                    .key(self.chunk_key(digest, *offset))
                     .send()
                     .await?;
                 let chunk_bytes = resp
@@ -1163,7 +1185,7 @@ impl VersionStore for S3VersionStore {
             .await?;
 
         // 5. Delete chunk objects
-        self.delete_objects_with_prefix(&self.chunks_prefix(hash))
+        self.delete_objects_with_prefix(&self.chunks_prefix(parse_version_hash(hash)?))
             .await?;
 
         Ok(())
@@ -1176,7 +1198,7 @@ impl VersionStore for S3VersionStore {
         _part_size: u64,
     ) -> Result<Box<dyn VersionUpload>, OxenError> {
         let client = self.client().await;
-        let key = self.generate_key(&hash.to_string());
+        let key = self.generate_key(hash);
         let upload = client
             .create_multipart_upload()
             .bucket(&self.bucket)
@@ -1815,6 +1837,7 @@ pub(crate) mod tests {
     async fn test_store_version_chunk() {
         let (store, _tmp, _server) = setup().await;
         let hash = "abcdef1234567890abcdef1234567890";
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
         let chunk_data = Bytes::from_static(b"hello chunk");
 
         store
@@ -1827,7 +1850,7 @@ pub(crate) mod tests {
         let resp = client
             .get_object()
             .bucket(&store.bucket)
-            .key(store.chunk_key(hash, 0))
+            .key(store.chunk_key(digest, 0))
             .send()
             .await
             .expect("chunk object should exist");
@@ -1844,6 +1867,7 @@ pub(crate) mod tests {
     async fn test_store_version_chunk_multiple_offsets() {
         let (store, _tmp, _server) = setup().await;
         let hash = "abcdef1234567890abcdef1234567890";
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
 
         store
             .store_version_chunk(hash, 0, Bytes::from_static(b"chunk-0"))
@@ -1860,7 +1884,7 @@ pub(crate) mod tests {
         let body0 = client
             .get_object()
             .bucket(&store.bucket)
-            .key(store.chunk_key(hash, 0))
+            .key(store.chunk_key(digest, 0))
             .send()
             .await
             .expect("chunk at offset 0 should exist")
@@ -1874,7 +1898,7 @@ pub(crate) mod tests {
         let body1024 = client
             .get_object()
             .bucket(&store.bucket)
-            .key(store.chunk_key(hash, 1024))
+            .key(store.chunk_key(digest, 1024))
             .send()
             .await
             .expect("chunk at offset 1024 should exist")
@@ -1890,6 +1914,7 @@ pub(crate) mod tests {
     async fn test_delete_version_removes_data_and_chunks() {
         let (store, _tmp, _server) = setup().await;
         let hash = hasher::hash_buffer(b"main data");
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
         let hash = hash.as_str();
 
         // Store main data + two chunks
@@ -1917,7 +1942,7 @@ pub(crate) mod tests {
         // Verify nothing remains under the version prefix
         assert!(!store.version_exists(hash).await.unwrap());
 
-        let prefix = format!("{}/", store.version_dir(hash));
+        let prefix = format!("{}/", store.version_dir(digest));
         let remaining = list_keys(&store, &prefix).await;
         assert!(
             remaining.is_empty(),
@@ -2138,6 +2163,7 @@ pub(crate) mod tests {
         // Pre-compute the hash of the combined data
         let combined = b"chunk-0chunk-10240chunk-20480";
         let hash = hasher::hash_buffer(combined);
+        let digest: MerkleHash = hash.parse().expect("a version file hash");
 
         // Store three chunks
         store
@@ -2164,7 +2190,7 @@ pub(crate) mod tests {
         let resp = client
             .get_object()
             .bucket(&store.bucket)
-            .key(store.generate_key(&hash))
+            .key(store.generate_key(digest))
             .send()
             .await
             .expect("VERSION object should exist");
@@ -2172,7 +2198,7 @@ pub(crate) mod tests {
         assert_eq!(&body[..], combined);
 
         // Verify chunk objects were deleted
-        let chunk_keys = list_keys(&store, &store.chunks_prefix(&hash)).await;
+        let chunk_keys = list_keys(&store, &store.chunks_prefix(digest)).await;
         assert!(
             chunk_keys.is_empty(),
             "chunks should be deleted after combine, found: {chunk_keys:?}"

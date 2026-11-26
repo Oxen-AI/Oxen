@@ -425,6 +425,11 @@ pub enum OxenError {
     #[error("Version store has no data for hash {hash}")]
     VersionStoreBlobMissing { hash: String },
 
+    /// A version store was given a string that is not a version file's hash, so it refused to
+    /// turn it into a path. oxen-server maps this to HTTP 400.
+    #[error("Not a version file hash: {0}")]
+    InvalidVersionHash(StringError),
+
     /// A caller supplied a storage backend kind that isn't recognized.
     #[error("Unsupported storage kind: {0}")]
     UnsupportedStorageKind(String),
@@ -1163,6 +1168,7 @@ impl OxenError {
             OxenError::DirHashIndexMissing { .. } => true,
             OxenError::VersionStoreDataMissing { .. } => true,
             OxenError::VersionStoreBlobMissing { .. } => true,
+            OxenError::InvalidVersionHash(_) => true,
             OxenError::RemotePointsAtDifferentRepo { .. } => true,
             OxenError::RepoUuidTaken(_) => true,
             OxenError::UnknownRemoteResponseStatus(_) => true,

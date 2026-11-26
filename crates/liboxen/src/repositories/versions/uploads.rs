@@ -29,6 +29,7 @@ use crate::core::v_latest::workspaces::files;
 use crate::error::OxenError;
 use crate::model::{LocalRepository, MerkleHash};
 use crate::repositories::workspaces;
+use crate::storage::version_store::parse_version_hash;
 use crate::storage::{StorageKind, VersionLocation, VersionUpload, s3};
 use crate::tasks;
 use crate::util::fs::LineCounts;
@@ -131,7 +132,7 @@ impl Upload {
         destination: Option<WorkspaceDestination>,
         memory: u64,
     ) -> Result<UploadStart, OxenError> {
-        let expected_hash: MerkleHash = hash.parse().map_err(|_| {
+        let expected_hash = parse_version_hash(hash).map_err(|_| {
             OxenError::VersionUploadRefused(format!("'{hash}' is not a version file hash").into())
         })?;
         if size == 0 {
