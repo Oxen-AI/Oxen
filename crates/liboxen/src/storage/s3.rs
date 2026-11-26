@@ -7,6 +7,7 @@ use aws_config::timeout::TimeoutConfig;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::operation::head_object::HeadObjectError;
+use aws_sdk_s3::presigning::PresigningConfig;
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart, Delete, ObjectIdentifier};
 use aws_sdk_s3::{Client, config::Region, primitives::ByteStream};
 use aws_smithy_runtime_api::client::orchestrator::HttpResponse;
@@ -28,6 +29,7 @@ use tokio_stream::Stream;
 use tokio_util::io::StreamReader;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, Span};
+use url::Url;
 
 use super::version_store::{BoxedByteStream, VersionLocation, VersionStore, VersionUpload};
 use crate::constants::VERSION_FILE_NAME;
@@ -846,6 +848,30 @@ impl VersionStore for S3VersionStore {
             region: self.region.clone(),
             endpoint_url: self.endpoint_url.clone(),
         })
+    }
+
+    async fn read_url(
+        &self,
+        hash: MerkleHash,
+        valid_for: Duration,
+    ) -> Result<Option<Url>, OxenError> {
+        let key = self.generate_key(&hash.to_string());
+        let presigning = PresigningConfig::expires_in(valid_for).map_err(|err| {
+            OxenError::internal_error(format!("Invalid S3 presigning lifetime: {err}"))
+        })?;
+        let request = (self.client().await)
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .presigned(presigning)
+            .await
+            .map_err(|err| {
+                OxenError::internal_error(format!("S3 presigning failed for key {key}: {err}"))
+            })?;
+        let url = Url::parse(request.uri()).map_err(|err| {
+            OxenError::internal_error(format!("S3 presigned a malformed URL for key {key}: {err}"))
+        })?;
+        Ok(Some(url))
     }
 
     /// Copy a version file to a destination path on the local filesystem, creating any necessary

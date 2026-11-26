@@ -1,12 +1,16 @@
 //! Resized copies of image version files and thumbnails of video version files, made on request
 //! and cached in the version store beside the file they come from.
 
+#[cfg(feature = "ffmpeg")]
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 #[cfg(feature = "ffmpeg")]
 use std::sync::OnceLock;
+#[cfg(feature = "ffmpeg")]
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::StreamExt;
@@ -16,7 +20,9 @@ use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 use image::{ImageBuffer, Rgb};
 use tokio_stream::Stream;
 #[cfg(feature = "ffmpeg")]
-use video_rs::decode::Decoder;
+use video_rs::ffmpeg::Error as FfmpegError;
+#[cfg(feature = "ffmpeg")]
+use video_rs::{DecoderBuilder, Error as VideoError, Location, Options};
 
 use crate::constants::MAX_RESIZE_DIMENSION;
 use crate::error::OxenError;
@@ -27,6 +33,14 @@ use crate::tasks;
 
 /// The most memory decoding an image for a resize may allocate: 1 GiB.
 const MAX_RESIZE_DECODE_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// How long the URL a video's thumbnail is read through stays valid: 5 minutes.
+#[cfg(feature = "ffmpeg")]
+const VIDEO_READ_URL_LIFETIME: Duration = Duration::from_secs(5 * 60);
+
+/// The longest FFmpeg waits on one read of a video it reads by URL: 60 seconds.
+#[cfg(feature = "ffmpeg")]
+const VIDEO_URL_IO_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn handle_image_resize(
     version_store: Arc<dyn VersionStore>,
@@ -212,6 +226,91 @@ fn ensure_video_decoding_initialized() -> Result<(), OxenError> {
         .map_err(|e| OxenError::internal_error(format!("Failed to initialize video decoding: {e}")))
 }
 
+/// Why a video's thumbnail was not made.
+#[cfg(feature = "ffmpeg")]
+enum ThumbnailFailure {
+    /// FFmpeg could not open the video's source (unreachable, refused, or stalled), which says
+    /// nothing about the video itself.
+    SourceUnreadable(OxenError),
+    /// The video was read and could not be thumbnailed.
+    Video(OxenError),
+}
+
+#[cfg(feature = "ffmpeg")]
+impl From<ThumbnailFailure> for OxenError {
+    fn from(failure: ThumbnailFailure) -> Self {
+        match failure {
+            ThumbnailFailure::SourceUnreadable(err) | ThumbnailFailure::Video(err) => err,
+        }
+    }
+}
+
+#[cfg(feature = "ffmpeg")]
+impl From<OxenError> for ThumbnailFailure {
+    fn from(err: OxenError) -> Self {
+        ThumbnailFailure::Video(err)
+    }
+}
+
+/// A JPEG of the video's first frame at `source`, fit within `width` by `height`.
+/// `thumbnail.timestamp` is not yet honored.
+#[cfg(feature = "ffmpeg")]
+fn video_thumbnail_jpeg(
+    source: Location,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ThumbnailFailure> {
+    ensure_video_decoding_initialized()?;
+
+    // Over HTTP, FFmpeg verifies the server's certificate and gives up on a read that stalls.
+    let options = Options::from(HashMap::from([
+        ("tls_verify".to_string(), "1".to_string()),
+        (
+            "rw_timeout".to_string(),
+            VIDEO_URL_IO_TIMEOUT.as_micros().to_string(),
+        ),
+    ]));
+    let mut decoder = DecoderBuilder::new(source)
+        .with_options(&options)
+        .build()
+        .map_err(|e| {
+            let err =
+                OxenError::internal_error(format!("Failed to open video for thumbnailing: {e}"));
+            match e {
+                // FFmpeg read the source and found no video it can decode.
+                VideoError::BackendError(
+                    FfmpegError::InvalidData
+                    | FfmpegError::StreamNotFound
+                    | FfmpegError::DecoderNotFound,
+                ) => ThumbnailFailure::Video(err),
+                VideoError::BackendError(_) => ThumbnailFailure::SourceUnreadable(err),
+                _ => ThumbnailFailure::Video(err),
+            }
+        })?;
+
+    let (frame_width, frame_height) = decoder.size();
+    let (_timestamp, frame) = decoder
+        .decode()
+        .map_err(|e| OxenError::internal_error(format!("Failed to decode video frame: {e}")))?;
+
+    // video-rs hands back an RGB frame as a contiguous (height, width, 3) ndarray.
+    let pixels = frame
+        .as_slice()
+        .ok_or_else(|| OxenError::internal_error("Decoded video frame was not contiguous"))?;
+    let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+        ImageBuffer::from_raw(frame_width, frame_height, pixels.to_vec()).ok_or_else(|| {
+            OxenError::internal_error("Failed to build image buffer from video frame")
+        })?;
+
+    let thumb = fit_within_box(DynamicImage::ImageRgb8(img), width, height);
+
+    let mut buf = Vec::new();
+    thumb
+        .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
+        .map_err(|e| OxenError::internal_error(format!("Failed to encode thumbnail: {e}")))?;
+    Ok(buf)
+}
+
 /// Generate a video's JPEG thumbnail with video-rs (FFmpeg) and store it in the version store.
 #[cfg(feature = "ffmpeg")]
 async fn generate_video_thumbnail_version_store(
@@ -231,12 +330,6 @@ async fn generate_video_thumbnail_version_store(
         return Ok(());
     }
 
-    // video-rs decodes from a filesystem path, so materialize the video file. The guard
-    // `version_file` is held on the async side (its drop runs after the blocking generation below)
-    // so a materialized S3 temp outlives the read; the closure takes a plain path copy.
-    let version_file = version_store.materialize(video_hash, dir).await?;
-    let version_path = version_file.to_pathbuf();
-
     // The thumbnail fits inside this box, keeping the frame's aspect ratio.
     let (output_width, output_height) = match (thumbnail.width, thumbnail.height) {
         (Some(w), Some(h)) => (w, h),
@@ -245,37 +338,40 @@ async fn generate_video_thumbnail_version_store(
         (None, None) => (320, 240),
     };
 
-    // The thumbnail is taken from the first decoded frame; thumbnail.timestamp is not yet honored.
-    let buf = tasks::spawn_blocking(move || -> Result<Vec<u8>, OxenError> {
-        ensure_video_decoding_initialized()?;
+    let thumbnail_from = |source| {
+        tasks::spawn_blocking(move || video_thumbnail_jpeg(source, output_width, output_height))
+    };
 
-        let mut decoder = Decoder::new(version_path.as_path()).map_err(|e| {
-            OxenError::internal_error(format!("Failed to open video for thumbnailing: {e}"))
-        })?;
+    // A store that hands out a URL lets FFmpeg read only the byte ranges the first frame needs.
+    let from_url = match version_store
+        .read_url(video_hash.parse()?, VIDEO_READ_URL_LIFETIME)
+        .await?
+    {
+        Some(url) => match thumbnail_from(Location::Network(url)).await? {
+            Ok(buf) => Some(buf),
+            Err(ThumbnailFailure::SourceUnreadable(err)) => {
+                tracing::warn!(
+                    oxen.file_hash = %video_hash,
+                    exception.message = %err,
+                    "FFmpeg could not open a video by URL, so the whole video file is read instead"
+                );
+                None
+            }
+            Err(ThumbnailFailure::Video(err)) => return Err(err),
+        },
+        None => None,
+    };
 
-        let (width, height) = decoder.size();
-        let (_timestamp, frame) = decoder
-            .decode()
-            .map_err(|e| OxenError::internal_error(format!("Failed to decode video frame: {e}")))?;
-
-        // video-rs hands back an RGB frame as a contiguous (height, width, 3) ndarray.
-        let pixels = frame
-            .as_slice()
-            .ok_or_else(|| OxenError::internal_error("Decoded video frame was not contiguous"))?;
-        let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(width, height, pixels.to_vec()).ok_or_else(|| {
-                OxenError::internal_error("Failed to build image buffer from video frame")
-            })?;
-
-        let thumb = fit_within_box(DynamicImage::ImageRgb8(img), output_width, output_height);
-
-        let mut buf = Vec::new();
-        thumb
-            .write_to(&mut Cursor::new(&mut buf), image::ImageFormat::Jpeg)
-            .map_err(|e| OxenError::internal_error(format!("Failed to encode thumbnail: {e}")))?;
-        Ok(buf)
-    })
-    .await??;
+    let buf = match from_url {
+        Some(buf) => buf,
+        None => {
+            // The guard `version_file` is held on the async side (its drop runs after the blocking
+            // generation below) so a materialized S3 temp outlives the read; the closure takes a
+            // plain path copy.
+            let version_file = version_store.materialize(video_hash, dir).await?;
+            thumbnail_from(Location::File(version_file.to_pathbuf())).await??
+        }
+    };
 
     // Save the thumbnail image
     version_store
@@ -400,5 +496,77 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[cfg(feature = "ffmpeg")]
+    #[tokio::test]
+    async fn test_video_thumbnail_on_s3_reads_the_video_by_url() {
+        use std::sync::Arc;
+
+        use bytes::Bytes;
+        use futures::StreamExt;
+
+        use crate::model::metadata::metadata_video::VideoThumbnail;
+        use crate::storage::s3::tests::setup;
+        use crate::storage::version_store::VersionStore;
+        use crate::test;
+        use crate::util::hasher;
+
+        let (store, _bucket_dir, _server) = setup().await;
+        let video = Bytes::from(
+            std::fs::read(test::test_video_file_with_name("basketball.mp4"))
+                .expect("the test video should be readable"),
+        );
+        let hash = hasher::hash_buffer(&video);
+        store
+            .store_version(&hash, video)
+            .await
+            .expect("the S3 store should take the video");
+
+        // Reading the whole video needs a directory for its local copy, and this one cannot exist.
+        let file = tempfile::NamedTempFile::new().expect("a temp file should be creatable");
+        std::fs::write(file.path(), "this file holds text, not a video")
+            .expect("the temp file should be writable");
+        let no_dir = file.path().join("copies");
+        let thumbnail = VideoThumbnail {
+            width: Some(64),
+            height: Some(64),
+            timestamp: None,
+            thumbnail: Some(true),
+        };
+        let mut stream = super::handle_video_thumbnail(Arc::new(store), hash, thumbnail, &no_dir)
+            .await
+            .expect("the thumbnail should be made from the video's URL alone");
+        let mut jpeg = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            jpeg.extend_from_slice(&chunk.expect("the stored thumbnail should stream"));
+        }
+        let decoded = image::load_from_memory_with_format(&jpeg, image::ImageFormat::Jpeg)
+            .expect("the thumbnail should be a JPEG");
+        assert!(
+            decoded.width() <= 64 && decoded.height() <= 64,
+            "the thumbnail fits the box it was asked for, not {}x{}",
+            decoded.width(),
+            decoded.height()
+        );
+
+        // Only a source FFmpeg cannot open sends the thumbnail to the whole-file fallback.
+        let refused = "http://127.0.0.1:1/video"
+            .parse()
+            .expect("the URL should parse");
+        assert!(
+            matches!(
+                super::video_thumbnail_jpeg(video_rs::Location::Network(refused), 64, 64),
+                Err(super::ThumbnailFailure::SourceUnreadable(_))
+            ),
+            "a refused connection says nothing about the video"
+        );
+        assert!(
+            matches!(
+                super::video_thumbnail_jpeg(video_rs::Location::File(file.path().into()), 64, 64),
+                Err(super::ThumbnailFailure::Video(_))
+            ),
+            "a source FFmpeg reads and finds no video in fails without the fallback"
+        );
     }
 }
